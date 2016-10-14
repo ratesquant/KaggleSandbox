@@ -1,0 +1,227 @@
+---
+title: "Titanic Data"
+author: "Alex"
+date: "October 13, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(Hmisc)
+library(plyr)
+```
+
+## Load Data
+
+Variable Name | Description
+--------------|-------------
+Survived      | Survived (1) or died (0)
+Pclass        | Passenger's class
+Name          | Passenger's name
+Sex           | Passenger's sex
+Age           | Passenger's age
+SibSp         | Number of siblings/spouses aboard
+Parch         | Number of parents/children aboard
+Ticket        | Ticket number
+Fare          | Fare
+Cabin         | Cabin
+Embarked      | Port of embarkation
+
+```{r load_data}
+col_classes = c('numeric','numeric', 'factor', 'character', 'factor', 'numeric', 'factor', 'factor', 'character', 'numeric', 'character', 'factor')
+
+train <- read.csv('C:/Dev/Kaggle/Titanic/input/train.csv', colClasses = col_classes)
+test  <- read.csv('C:/Dev/Kaggle/Titanic/input/test.csv', colClasses = col_classes[-2])
+
+#train <- read.csv('../input/train.csv', colClasses = col_classes)
+#test  <- read.csv('../input/test.csv', colClasses = col_classes[-2])
+
+train$surv = as.factor(train$Survived)
+
+head(train)
+
+pred_ccr = function(actual, model) {
+  cm  <- table(actual, ifelse(model > 0.5, 1, 0))
+  ccr <- sum(diag(cm))/sum(cm)
+  return (ccr)
+} 
+
+plot.pred<-function(actual, model, n = 10){
+  xb = seq(0, n, 1) / n
+  xc = 0.5 *(xb[-1] + xb[-length(xb)])
+  buckets = cut(model, xb, ordered_result = TRUE, include.lowest = TRUE)
+  avg = tapply(actual, buckets, mean)
+  std = tapply(actual, buckets, sd)
+  cnt = tapply(actual, buckets, length)
+  error = 2 * std / sqrt(cnt)
+  plot(xc, avg, xlim = c(0, 1), ylim = c(0, 1), xlab = 'model', ylab = 'actual', pch = 19)
+  errbar(xc, avg, avg + error, avg - error, add = T, pch = 1)
+  abline(0, 1, lty = 2, col = 'red')
+  grid()
+}
+```
+
+## Overview
+```{r overview, fig.width = 8, fig.height = 4, dpi = 150}
+ggplot(train, aes(x = Sex, fill = surv)) +
+  geom_bar(stat='count', position='dodge') +
+  labs(x = 'Sex')
+
+ggplot(train, aes(x = Pclass, fill = surv)) +
+  geom_bar(stat='count', position='dodge') +
+  labs(x = 'Pclass')
+
+ggplot(train, aes(x = SibSp, fill = surv)) +
+  geom_bar(stat='count', position='dodge')
+
+ggplot(train, aes(x = Parch, fill = surv)) +
+  geom_bar(stat='count', position='dodge')
+
+ggplot(train, aes(x = Embarked, fill = surv)) +
+  geom_bar(stat='count', position='dodge')
+
+ggplot(train, aes(x = Age, fill = surv)) +
+  stat_density()
+
+ggplot(train, aes(x = Fare, fill = surv)) +
+  stat_density()
+
+```
+
+## Recursive Partitioning
+```{r rpart}
+library(earth)
+library(rpart)
+
+model.rp = rpart(Survived ~ Sex + Age + Pclass + SibSp + Parch + Embarked + Fare, data = train, control = rpart.control(cp = 0.01, minsplit = 20))
+
+printcp(model.rp)
+plotcp(model.rp) 
+summary(model.rp) # detailed summary of splits
+
+# plot tree
+plot(model.rp, uniform=TRUE) 
+text(model.rp, use.n=TRUE, all=TRUE, cex=.8)
+
+pred.rp = predict(model.rp)
+
+cat(paste('rpart: ', pred_ccr(train$Survived, pred.rp)))
+
+plotd(model.rp, zero.line = TRUE, vline.col =  1, vline.lwd = 2, err.lwd = 2, hist = TRUE)
+plotd(model.rp, zero.line = TRUE, vline.col =  1, vline.lwd = 2, err.lwd = 2, labels = TRUE, legend.extra = TRUE, main = 'rpart model')
+
+plot.pred(train$Survived, pred.rp)
+
+```
+
+## GBM
+```{r gbm, fig.width = 8, fig.height = 6, dpi = 150}
+library(gbm)
+
+gbm.interactions <- function(gbm_model, data, min_influence = 3, degree = 2){
+  gbm_summary = summary(gbm_model)
+  vars = gbm_summary$var[gbm_summary$rel.inf > min_influence]
+  all_combinations = combn(as.vector(vars), degree, simplify = TRUE)
+  
+  ldply(seq(dim(all_combinations)[2]), function(i) {
+    data.frame(vars = paste(all_combinations[,i], collapse = '-'), 
+               interaction_score = interact.gbm(gbm_model, data, all_combinations[,i])) 
+    })
+}
+
+
+for (degree in c(2, 3)) {
+
+  model_name = paste('gbm degree=', degree, sep = '')
+  set.seed(123)
+  
+  ntrees = 2000
+  model.gbm = gbm(Survived ~ Sex + Age + Pclass + SibSp + Parch + Embarked + Fare, 
+                  data = train, 
+                  distribution = 'bernoulli',
+                  n.trees = ntrees,
+                  shrinkage = 0.005,
+                  interaction.depth = degree,
+                  train.fraction=1.0)
+  #best_it = gbm.perf(model.gbm, method = 'test')
+  
+  plotmo(model.gbm)
+  summary(model.gbm, n.trees = ntrees) # influence
+  plot.gbm(model.gbm, i = 1:2)
+  
+  gbm.interactions(model.gbm, train, degree)
+  
+  pred.gbm = predict(model.gbm, n.trees = ntrees)
+  
+  cat(paste(model_name, pred_ccr(train$Survived, pred.gbm)))
+  
+  plotd(model.gbm, zero.line = TRUE, vline.col =  1, vline.lwd = 2, err.lwd = 2, hist = TRUE, labels = TRUE, legend.extra = TRUE, main = model_name)
+  #plotd(model.gbm, zero.line = TRUE, vline.col =  1, vline.lwd = 2, err.lwd = 2, labels = TRUE, legend.extra = TRUE, main = 'gbm model')
+  
+  plot.pred(train$Survived, pred.gbm)
+}
+
+```
+
+## Missing Age imputation
+```{r missing_age, fig.width = 8, fig.height = 6, dpi = 150}
+set.seed(123)
+  
+
+age_na_index = is.na(train$Age)
+
+ntrees = 1000
+model.gbm.age = gbm(Age ~ Survived + Sex + Pclass + SibSp + Parch + Embarked + Fare, 
+                  data = train[!age_na_index,], 
+                  distribution = 'gaussian',
+                  n.trees = ntrees,
+                  shrinkage = 0.005,
+                  interaction.depth = 2,
+                  train.fraction=1.0)
+
+plot(train[!age_na_index,]$Age, predict(model.gbm.age, n.trees = ntrees))
+grid()
+
+train_ex = train
+train_ex$Age[age_na_index] = predict(model.gbm.age, n.trees = ntrees, newdata = train[age_na_index,])
+```
+
+## Random Forest
+```{r rf, fig.width = 8, fig.height = 6, dpi = 150}
+library(randomForest)
+
+model.rf <- randomForest(surv ~ Sex + Age + Pclass + SibSp + Parch + Embarked + Fare, data = train_ex)
+
+pred.rf = predict(model.rf)
+
+cat(paste('random forest:', pred_ccr(train$Survived, as.numeric(as.character(pred.rf)))))
+
+```
+## Logistic Regression
+```{r rf, fig.width = 8, fig.height = 6, dpi = 150}
+model.glm <- glm(surv ~ Sex + Age + Pclass + SibSp + Parch + Embarked + Fare, data = train_ex)
+
+pred.rf = predict(model.rf)
+
+cat(paste('logistic regression:', pred_ccr(train$Survived, as.numeric(as.character(pred.rf)))))
+
+```
+
+## Kernel Regression
+```{r np, fig.width = 8, fig.height = 6, dpi = 150}
+library(np)
+
+model.npbw <- npcdensbw(surv ~ Sex + Age + Pclass + SibSp + Parch + Embarked + Fare, data = train_ex)
+model.np <- npconmode(bws = model.npbw)
+
+plot(model.npbw)
+
+summary(model.np)
+
+pred.np = as.numeric(as.character(model.np$yeval$surv))
+
+cat(paste('np:', pred_ccr(train$Survived, pred.np )))
+
+```

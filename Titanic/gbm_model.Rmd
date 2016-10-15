@@ -63,6 +63,18 @@ model_ccr = function(actual, model) {
   return (ccr)
 } 
 
+model_ks = function(actual, model) {
+  m1 = sort(model[actual == 1])
+  m0 = sort(model[actual == 0])
+
+  #estimate difference between cdf
+  xc = seq(0, 1, 0.01)
+  q1 = ecdf(m1)(xc)
+  q0 = ecdf(m0)(xc)
+  ks = 100 * max(abs(q1 - q0), na.rm = T)
+  return (ks)
+} 
+
 confusion_matrix = function(actual, model, threshold = 0.5) {
   pred = ifelse(model >= threshold, 1, 0)
   cm = list()
@@ -179,7 +191,8 @@ ggplot_missing <- function(x){
   ggplot(mx, aes(Var2, Var1)) + geom_raster(aes(fill = value)) +
   theme(axis.text.x  = element_text(angle=90, vjust=0.5)) + 
   scale_fill_grey(name = "", labels = c("Valid","NA")) +
-  labs(x = "Variable name",   y = "Rows")
+  labs(x = "Variable name",   y = "Rows") + 
+    ggtitle (paste('total number of missing values:',  sum(mx$value)))
 }
 
 #plot number of missing values
@@ -340,6 +353,7 @@ ggplot(age_df_gbm, aes(age_estimate, Age, color = Pclass)) +
   geom_point() + ggtitle('Age estimate using gbm')
 
 ```
+
 ### Linear Model
 ```{r missing_age_linear, fig.width = 8, fig.height = 4, dpi = 150}
 #linear model
@@ -373,7 +387,7 @@ Use kernel smoothing to estimate age. Kernel parameters are determined using cro
 ```{r missing_age_nonparam, fig.width = 8, fig.height = 6, dpi = 150}
 #model.npbw.age = npregbw(Age ~  Sex + Pclass + Siblings + Parch + Embarked + Fare, data = age_df)
 #model.npbw.age$sfactor$x
-bw_scales = c(5.7424297,  0.2465281,  2.3573055,  1.3881266, 10.3882008, 49.6081074)
+bw_scales = c(5.7424297, 0.2465281,2.3573055, 1.3881266, 10.3882008, 49.6081074)
 
 model.npbw.age = npregbw(Age ~  Sex + Pclass + Siblings + Parch + Embarked + Fare, 
           data = age_df, 
@@ -412,10 +426,12 @@ ggpairs( data.frame(np = age_pred_np, gbm = age_pred_gbm, lm = age_pred_lm) )
 
 #copy estimated ages to the train_ex data (using GBM method)
 train_ex = train 
-train_ex$Age[age_na_index] = age_pred_gbm
+train_ex$Age[is.na(train_ex$Age)] = predict(model.gbm.age, n.trees = best_it, newdata = train_ex[is.na(train_ex$Age),] ) 
 
 test_ex = test
 test_ex$Age[is.na(test_ex$Age)] = predict(model.gbm.age, n.trees = best_it, newdata = test_ex[is.na(test_ex$Age),] ) 
+full_df$Age[is.na(full_df$Age)] = predict(model.gbm.age, n.trees = best_it, newdata = full_df[is.na(full_df$Age),] ) 
+#ggplot_missing(full_df)
 
 ```
 ## Survival Models
@@ -467,7 +483,7 @@ summary(model.gbm, n.trees = best_it) # influence
 grid()
 
 par(mfrow=c(3,3))
-for(i in seq(length(all.vars(age_formula)) - 1)) {
+for(i in seq(length(all.vars(fml)) - 1)) {
   plot.gbm(model.gbm, n.trees =best_it,  i = i)
   grid()
 }
@@ -496,9 +512,10 @@ importance(model.rf)
 cat(paste('random forest:', model_ccr(train_ex$Survived, pred.rf_num)))
 plot_binmodel_predictions(train_ex$Survived, pred.rf_num)
 
-#test_results.rf = predict(model.rf, newdata = test_ex)
+test_results.rf = predict(model.rf, newdata = test_ex)
 
 ```
+
 ### Logistic Regression
 ```{r logistic, fig.width = 8, fig.height = 6, dpi = 150}
 model.glm <- glm(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare, data = train_ex, family = binomial)
@@ -599,8 +616,34 @@ test_results.np = as.numeric(as.character( npconmode(model.npbw, newdata = test_
 
 ```
 
+## Compare
+```{r compare, fig.width = 8, fig.height = 6, dpi = 100}
+
+results = list()
+results$kernel = pred.np
+results$logistic = pred.glm
+results$gbm = pred.gbm
+results$nnet = pred.nnet
+results$rf = as.numeric(as.character(pred.rf))
+results$mars = pred.mars
+results$rp = pred.rp
+
+actual = train_ex$Survived
+
+res = ldply(results, .id = 'model', function(x) {
+  c(ccr=model_ccr(actual, x ),
+    ks =model_ks(actual, x ) )
+})
+
+print(res)
+
+ggplot(res, aes(model, ccr)) + geom_bar(stat = "identity") 
+ggplot(res, aes(model, ks)) + geom_bar(stat = "identity") 
+
+```
+
 ## Submit
-```{r submit, fig.width = 8, fig.height = 6, dpi = 150}
+```{r submit, fig.width = 8, fig.height = 6, dpi = 100}
 
 #0.75598
 submit <- data.frame(PassengerId = test$PassengerId, Survived = ifelse( test_results.gbm>=0.5,1,0) )
@@ -608,6 +651,12 @@ write.csv(submit, file = "C:/Dev/Kaggle/Titanic/my_solution_gbm.csv", row.names 
 
 submit <- data.frame(PassengerId = test$PassengerId, Survived = test_results.np)
 write.csv(submit, file = "C:/Dev/Kaggle/Titanic/my_solution_np.csv", row.names = FALSE)
+
+submit <- data.frame(PassengerId = test$PassengerId, Survived =ifelse( test_results.rp>=0.5,1,0))
+write.csv(submit, file = "C:/Dev/Kaggle/Titanic/my_solution_rp.csv", row.names = FALSE)
+
+submit <- data.frame(PassengerId = test$PassengerId, Survived = test_results.rf)
+write.csv(submit, file = "C:/Dev/Kaggle/Titanic/my_solution_rf.csv", row.names = FALSE)
 
 #0.78947
 submit <- data.frame(PassengerId = test$PassengerId, Survived = ifelse( test_results.mars>=0.5,1,0))

@@ -8,6 +8,8 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
+rm(list = ls())
+
 library(reshape2)
 library(ggplot2)
 library(GGally)
@@ -48,15 +50,17 @@ test  <- read.csv('C:/Dev/Kaggle/Titanic/input/test.csv', colClasses = col_class
 
 #train <- read.csv('../input/train.csv', colClasses = col_classes)
 #test  <- read.csv('../input/test.csv', colClasses = col_classes[-2])
+test$Survived = NA
 
-train$Surv = as.factor(train$Survived)
-
-head(train)
+str(train)
 
 ```
 
 ```{r functions}
 # compute correct classification ratio
+to_numeric<-function(x){
+  as.numeric(as.character(x))
+}
 model_ccr = function(actual, model) {
   cm  <- table(actual == 1, model >= 0.5)
   ccr <- sum(diag(cm))/sum(cm)
@@ -219,25 +223,20 @@ gbm_interactions <- function(gbm_model, data, min_influence = 1, degree = 2){
 
 ## Overview
 The training data set contains some missing Age values. Male and 3rd class passengers have smaller chance to survive. It is possible to build a model without imputing missing values for Age, but some algorithms dont handle missing values or might handle them in non-transparent way.   
-```{r overview, fig.width = 8, fig.height = 6, dpi = 150}
+```{r overview, fig.width = 8, fig.height = 6, dpi = 100}
 
-p1 = ggplot_missing(train) + ggtitle('Missing values')
-p2 = ggplot_missing_count(train)
-grid.arrange(p1, p2, ncol=2)
+#combine data 
+train$Tag = "train"
+test$Tag = "test"
 
+names = intersect( names(train), names(test))
+full_df = rbind(train[,names], test[,names])
 
-p1 = ggplot(train, aes(x = Sex, fill = Surv)) +geom_bar()
-p2 = ggplot(train, aes(x = Pclass, fill = Surv)) + geom_bar()
-p3 = ggplot(train, aes(x = SibSp, fill = Surv)) + geom_bar()
-p4 = ggplot(train, aes(x = Parch, fill = Surv)) + geom_bar()
-grid.arrange(p1, p2, p3, p4, ncol=2)
+train_index = full_df$Tag == "train"
+test_index = full_df$Tag == "test"
 
+full_df$Surv = as.factor(full_df$Survived)
 
-p1 = ggplot(train, aes(x = Age, fill = Surv)) + stat_density(adjust = 0.5)
-p2 = ggplot(train, aes(x = Fare, fill = Surv)) + stat_density(adjust = 0.7)
-p3 = ggplot(train, aes(x = Embarked, fill = Surv)) + geom_bar()
-p4 = ggplot(train, aes(x = Pclass, Age)) + geom_boxplot(aes(fill = Surv)) + geom_jitter()
-grid.arrange(p1, p2, p3, p4, ncol=2)
 
 #there are two empty Embarked fields in train set, table(train$Embarked) 
 train$Embarked = as.character(train$Embarked)
@@ -245,41 +244,48 @@ train$Embarked[train$Embarked == ""] = "S"
 train$Embarked = factor(train$Embarked)
 
 #non of the people with 5 or more siblings survived, so no need to consider more levels 
-train$Siblings = as.numeric(as.character(train$SibSp))
-train$Siblings[train$Siblings>5] = 5
-train$Siblings = factor(train$Siblings)
-train$SiblingsOrdered = factor(train$Siblings,ordered = TRUE)
+full_df$Siblings = to_numeric(full_df$SibSp)
+full_df$Siblings[full_df$Siblings>5] = 5
+full_df$Siblings = factor(full_df$Siblings)
+full_df$SiblingsOrdered = factor(full_df$Siblings,ordered = TRUE)
 
-test$Siblings = as.numeric(as.character(test$SibSp))
-test$Siblings[test$Siblings>5] = 5
-test$Siblings = factor(test$Siblings)
-test$SiblingsOrdered = factor(test$Siblings,ordered = TRUE)
+full_df$Parch = to_numeric(full_df$Parch)
+full_df$Parch[full_df$Parch>5] = 5
+full_df$Parch = factor(full_df$Parch)
+full_df$ParchOrdered = factor(full_df$Parch, ordered = TRUE)
 
-train$Parch = as.numeric(as.character(train$Parch))
-train$Parch[train$Parch>5] = 5
-train$Parch = factor(train$Parch)
-train$ParchOrdered = factor(train$Parch, ordered = TRUE)
+p1 = ggplot_missing(train) + ggtitle('Missing values')
+p2 = ggplot_missing_count(train)
+grid.arrange(p1, p2, ncol=2)
 
-test$Parch = as.numeric(as.character(test$Parch))
-test$Parch[test$Parch>5] = 5
-test$Parch = factor(test$Parch)
-test$ParchOrdered = factor(test$Parch, ordered = TRUE)
+#plot
+p1 = ggplot(full_df[train_index,], aes(x = Sex, fill = Surv)) +geom_bar()
+p2 = ggplot(full_df[train_index,], aes(x = Pclass, fill = Surv)) + geom_bar()
+p3 = ggplot(full_df[train_index,], aes(x = SibSp, fill = Surv)) + geom_bar()
+p4 = ggplot(full_df[train_index,], aes(x = Parch, fill = Surv)) + geom_bar()
+grid.arrange(p1, p2, p3, p4, ncol=2)
 
-names = intersect( names(train), names(test))
-full_df = rbind(train[,names], test[,names])
+
+p1 = ggplot(full_df[train_index,], aes(x = Age, fill = Surv)) + stat_density(adjust = 0.5)
+p2 = ggplot(full_df[train_index,], aes(x = Fare, fill = Surv)) + stat_density(adjust = 0.7)
+p3 = ggplot(full_df[train_index,], aes(x = Embarked, fill = Surv)) + geom_bar()
+p4 = ggplot(full_df[train_index,], aes(x = Pclass, Age)) + geom_boxplot(aes(fill = Surv)) + geom_jitter()
+grid.arrange(p1, p2, p3, p4, ncol=2)
 
 ```
 
-## Missing Fare in test set
+## Missing Fare
 Fare is basically a function of class
 ```{r missing_fare, fig.width = 8, fig.height = 6, dpi = 150}
+
+fare_na_index = is.na(full_df$Fare)
 
 fare_formula = as.formula(Fare ~ Sex + Pclass + Siblings + Parch + Embarked)
 
 ntrees = 4000
 set.seed(123)
 model.gbm.fare = gbm(fare_formula, 
-                  data = full_df[!is.na(full_df$Fare), all.vars(fare_formula)], 
+                  data = full_df[!fare_na_index, all.vars(fare_formula)], 
                   distribution = 'gaussian',
                   n.trees = ntrees,
                   shrinkage = 0.005,
@@ -297,13 +303,15 @@ for(i in seq(length(all.vars(fare_formula)) - 1)) {
   plot.gbm(model.gbm.fare, n.trees =best_it.fare,  i = i)
   grid()
 }
- 
+
+full_df$FareEstimate = predict(model.gbm.fare, newdata = full_df, n.trees =best_it.fare)
+
+ggplot(full_df, aes(FareEstimate, Fare, color = Pclass)) + geom_point() + geom_smooth(method = 'lm')
 
 #there is missing fare in test set, estimate at 8.6
-test$Fare[is.na(test$Fare)]       = predict(model.gbm.fare, newdata = test[is.na(test$Fare),], n.trees =best_it.fare)
-full_df$Fare[is.na(full_df$Fare)] = predict(model.gbm.fare, newdata = full_df[is.na(full_df$Fare),], n.trees =best_it.fare)
+full_df$Fare[fare_na_index] = full_df$FareEstimate[fare_na_index]
 
-ggplot(full_df, aes(x = Pclass, Fare)) + geom_boxplot() + geom_jitter()
+cat(paste('missing fare estimate:', full_df$FareEstimate[fare_na_index]))
 
 ```
 
@@ -313,10 +321,9 @@ The strategy for imputing missing age variable, is to build a simple GBM model t
 ```{r missing_age, fig.width = 8, fig.height = 6, dpi = 150}
 age_na_index = is.na(full_df$Age)
 
-age_formula = as.formula(Age ~ Sex + Pclass + Siblings + Parch + Embarked + Fare)
+age_formula = as.formula(Age ~  Pclass + Siblings + Parch )
 
 age_df = full_df[!age_na_index,all.vars(age_formula)]
-age_df_estimation = full_df[age_na_index,all.vars(age_formula)]
 
 ntrees = 2000
 set.seed(123)
@@ -330,24 +337,23 @@ model.gbm.age = gbm(age_formula,
 
 
 par(mfrow = c(1, 2), las = 1)
-best_it = gbm.perf(model.gbm.age, method = 'cv')
+best_it_age = gbm.perf(model.gbm.age, method = 'cv')
 grid()
-summary(model.gbm.age, n.trees = best_it) # influence
+summary(model.gbm.age, n.trees = best_it_age) # influence
 grid()
 
 par(mfrow=c(3,3))
 for(i in seq(length(all.vars(age_formula)) - 1)) {
-  plot.gbm(model.gbm.age, n.trees =best_it,  i = i)
+  plot.gbm(model.gbm.age, n.trees =best_it_age,  i = i)
   grid()
 }
  
 cat('Two-way interactions') 
 gbm_interactions(model.gbm.age, age_df, 1, 2)
 
-age_est_gbm = predict(model.gbm.age, n.trees = best_it, newdata = age_df)
-age_pred_gbm = predict(model.gbm.age, n.trees = best_it, newdata = age_df_estimation)
+full_df$AgeEstimateGBM = predict(model.gbm.age, n.trees = best_it_age, newdata = full_df)
 
-age_df_gbm = cbind( age_df, age_estimate = age_est_gbm, model = 'gbm')
+age_df_gbm = cbind( age_df, age_estimate = full_df$AgeEstimateGBM[!age_na_index], model = 'gbm')
 
 ggplot(age_df_gbm, aes(age_estimate, Age, color = Pclass)) + 
   geom_point() + ggtitle('Age estimate using gbm')
@@ -355,27 +361,15 @@ ggplot(age_df_gbm, aes(age_estimate, Age, color = Pclass)) +
 ```
 
 ### Linear Model
-```{r missing_age_linear, fig.width = 8, fig.height = 4, dpi = 150}
-#linear model
-age_df_fit = age_df
-fare_knots = c(0, 50, 100, 150)
-fare_splines = bs(age_df_fit$Fare, knots = fare_knots, degree = 1) 
-age_df_fit$fare_spline = fare_splines[,-dim(fare_splines)[2]] 
-model.lm.age = lm(Age ~  Sex + Pclass + Siblings + Parch + Embarked + fare_spline, 
-                  data = age_df_fit)
+```{r missing_age_linear, fig.width = 8, fig.height = 4, dpi = 100}
+#linear model, exclude fare as it does not seem to be important 
+model.lm.age = lm(Age ~  Pclass + Siblings + Parch, data = age_df)
 summary(model.lm.age)
 
-age_est_lm = predict(model.lm.age, newdata = age_df_fit)
-
-#predictions
-fare_splines = bs(full_df$Fare[age_na_index], knots = fare_knots, degree = 1)
-fare_splines = fare_splines[,-dim(fare_splines)[2]]
-pred_df = full_df[age_na_index,all.vars(age_formula)]
-pred_df$fare_spline =  fare_splines 
-age_pred_lm = predict(model.lm.age, newdata = pred_df )
+full_df$AgeEstimateLM = predict(model.lm.age, newdata = full_df)
 
 #store age estimate from linear model
-age_df_lm = cbind( age_df, age_estimate = age_est_lm, model = 'lm')
+age_df_lm = cbind( age_df, age_estimate = full_df$AgeEstimateLM[!age_na_index], model = 'glm')
 
 ggplot(age_df_lm, aes(age_estimate, Age, color = Pclass)) + 
   geom_point() + ggtitle('Age estimate using linear model')
@@ -384,26 +378,27 @@ ggplot(age_df_lm, aes(age_estimate, Age, color = Pclass)) +
 
 ### Non Parametric model
 Use kernel smoothing to estimate age. Kernel parameters are determined using cross validation. This method is very slow.     
-```{r missing_age_nonparam, fig.width = 8, fig.height = 6, dpi = 150}
-#model.npbw.age = npregbw(Age ~  Sex + Pclass + Siblings + Parch + Embarked + Fare, data = age_df)
+```{r missing_age_nonparam, fig.width = 8, fig.height = 6, dpi = 100}
+#model.npbw.age = npregbw(age_formula, data = age_df)
 #model.npbw.age$sfactor$x
-bw_scales = c(5.7424297, 0.2465281,2.3573055, 1.3881266, 10.3882008, 49.6081074)
+bw_scales = c( 1.116239, 1.863234, 1.007050)
 
-model.npbw.age = npregbw(Age ~  Sex + Pclass + Siblings + Parch + Embarked + Fare, 
+model.npbw.age = npregbw(age_formula, 
           data = age_df, 
           bandwidth.compute = FALSE,
           bws = bw_scales,
           bwscaling = TRUE) 
 
 summary(model.npbw.age)
-plot(model.npbw.age, common.scale = FALSE)
+plot(model.npbw.age, common.scale = TRUE)
 
-model.np.age = npreg(model.npbw.age, newdata = age_df )
-age_est_np = predict(model.np.age)
-age_pred_np = predict(model.np.age, newdata = age_df_estimation ) 
+model.np.age = npreg(model.npbw.age)
+summary(model.np.age)
+
+full_df$AgeEstimateNP = predict(model.np.age, newdata = full_df)
 
 #store age estimate from np model
-age_df_np = cbind( age_df, age_estimate = age_est_np, model = 'np')
+age_df_np = cbind( age_df, age_estimate = full_df$AgeEstimateNP[!age_na_index], model = 'np')
 
 ggplot(age_df_np, aes(age_estimate, Age, color = Pclass)) + 
   geom_point() + ggtitle('Age estimate using kernel smoothing')
@@ -420,25 +415,18 @@ ggplot(age_df_agg, aes(age_estimate, Age, color = model, group = model)) +
 
 print(ddply(age_df_agg, .(model), function(x) c(r2 = summary(lm(x$Age~x$age_estimate))$r.squared)))
 
-ggpairs( data.frame(np = age_est_np, gbm = age_est_gbm, lm = age_est_lm, act = age_df$Age) )
-ggpairs( data.frame(np = age_pred_np, gbm = age_pred_gbm, lm = age_pred_lm) )
+#copy estimated ages to the train_ex data (using NP method)
+full_df$Age = full_df$AgeEstimateNP
 
-
-#copy estimated ages to the train_ex data (using GBM method)
-train_ex = train 
-train_ex$Age[is.na(train_ex$Age)] = predict(model.gbm.age, n.trees = best_it, newdata = train_ex[is.na(train_ex$Age),] ) 
-
-test_ex = test
-test_ex$Age[is.na(test_ex$Age)] = predict(model.gbm.age, n.trees = best_it, newdata = test_ex[is.na(test_ex$Age),] ) 
-full_df$Age[is.na(full_df$Age)] = predict(model.gbm.age, n.trees = best_it, newdata = full_df[is.na(full_df$Age),] ) 
-#ggplot_missing(full_df)
-
+Survived = full_df$Survived[train_index]
 ```
 ## Survival Models
 
 ### Recursive Partitioning
 ```{r rpart, fig.width = 8, fig.height = 6, dpi = 150}
-model.rp = rpart(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare, data = train_ex, control = rpart.control(cp = 0.01, minsplit = 20))
+model.rp = rpart(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare, 
+                 data = full_df[train_index,], 
+                 control = rpart.control(cp = 0.01, minsplit = 20))
 
 par(mfrow=c(1,1))
 printcp(model.rp)
@@ -449,14 +437,10 @@ plotcp(model.rp)
 plot(model.rp, uniform=TRUE) 
 text(model.rp, use.n=TRUE, all=TRUE, cex=.8)
 
-pred.rp = predict(model.rp)
+pred.rp = predict(model.rp, newdata = full_df)
 
-cat(paste('rpart: ', model_ccr(train_ex$Survived, pred.rp)))
-
-plot_binmodel_predictions(train_ex$Survived, pred.rp)
-
-test_results.rp = predict(model.rp, newdata = test_ex)
-
+cat(paste('rpart: ', model_ccr(Survived, pred.rp[train_index])))
+plot_binmodel_predictions(Survived, pred.rp[train_index])
 
 ```
 
@@ -468,11 +452,11 @@ set.seed(123)
 
 ntrees = 4000
 model.gbm = gbm(fml, 
-                data = train_ex[, all.vars(fml)], 
+                data = full_df[train_index, all.vars(fml)], 
                 distribution = 'bernoulli',
                 n.trees = ntrees,
                 shrinkage = 0.005,
-                 bag.fraction = 0.7,
+                bag.fraction = 0.7,
                 interaction.depth = 2,
                 cv.folds = 3)
 
@@ -489,112 +473,100 @@ for(i in seq(length(all.vars(fml)) - 1)) {
 }
 
 cat('Two-way interactions') 
-gbm_interactions(model.gbm, train_ex, 1, 2)
+gbm_interactions(model.gbm, full_df[train_index,], 1, 2)
 
-pred.gbm = predict(model.gbm, n.trees = ntrees, type = 'response')
+pred.gbm = predict(model.gbm, n.trees = ntrees, newdata = full_df, type = 'response')
 
-test_results.gbm = predict(model.gbm, n.trees = ntrees, newdata = test_ex, type = 'response')
-
-cat(paste("gbm ccr:", model_ccr(train_ex$Survived, pred.gbm)))
-
-plot_binmodel_predictions(train_ex$Survived, pred.gbm)
+cat(paste("gbm ccr:", model_ccr(Survived, pred.gbm[train_index])))
+plot_binmodel_predictions(Survived, pred.gbm[train_index])
 ```
 
 
 ### Random Forest
 ```{r rf, fig.width = 8, fig.height = 6, dpi = 150}
-model.rf <- randomForest(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare, data = train_ex)
-pred.rf = predict(model.rf)
-pred.rf_num = as.numeric(as.character(pred.rf))
+model.rf <- randomForest(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare, data =  full_df[train_index,])
+
+pred.rf = to_numeric(predict(model.rf, newdata = full_df))
 
 importance(model.rf)
 
-cat(paste('random forest:', model_ccr(train_ex$Survived, pred.rf_num)))
-plot_binmodel_predictions(train_ex$Survived, pred.rf_num)
-
-test_results.rf = predict(model.rf, newdata = test_ex)
-
+cat(paste('random forest:', model_ccr(Survived, pred.rf[train_index])))
+plot_binmodel_predictions(Survived, pred.rf[train_index])
 ```
 
 ### Logistic Regression
-```{r logistic, fig.width = 8, fig.height = 6, dpi = 150}
-model.glm <- glm(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare, data = train_ex, family = binomial)
+```{r logistic, fig.width = 8, fig.height = 6, dpi = 100}
+model.glm <- glm(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare, 
+                 data = full_df[train_index,], family = binomial)
 summary(model.glm)
-pred.glm = predict(model.glm, type = 'response')
+pred.glm = predict(model.glm, newdata = full_df, type = 'response')
 
-#plotd(model.glm, zero.line = TRUE, vline.col =  1, vline.lwd = 2, err.lwd = 2, hist = TRUE, labels = TRUE, legend.extra = TRUE, main = "logistic regression")
-
-cat(paste('logistic regression:', model_ccr(train_ex$Survived, pred.glm)))
-plot_binmodel_predictions(train_ex$Survived, pred.glm)
-
-test_results.glm = predict(model.glm, newdata = test_ex,  type = 'response')
-
+cat(paste('logistic regression:', model_ccr(Survived, pred.glm[train_index])))
+plot_binmodel_predictions(Survived, pred.glm[train_index])
 ```
 
 ### Logistic Regression with Age and Fare splines
-```{r logistic_age, fig.width = 8, fig.height = 6, dpi = 150}
-train_ex_s = train_ex
+```{r logistic_age, fig.width = 8, fig.height = 6, dpi = 100}
+full_df_spline = full_df
 
-age_spline = bs(train_ex$Age, knots = c(0, 20, 30), degree = 1)
-fare_spline = bs(train_ex$Fare, knots =  c(0, 50, 100, 150), degree = 1)
+age_spline = bs(full_df_spline$Age, knots = c(0, 20, 30), degree = 1)
+fare_spline = bs(full_df_spline$Fare, knots =  c(0, 50, 100, 150), degree = 1)
 
-train_ex_s$age_spline = age_spline[, -dim(age_spline)[2]]
-train_ex_s$fare_spline = fare_spline[, -dim(fare_spline)[2]]
+full_df_spline$AgeSpline = age_spline[, -dim(age_spline)[2]]
+full_df_spline$FareSpline = fare_spline[, -dim(fare_spline)[2]]
 
-model.glm_s <- glm(Survived ~ Sex + age_spline + Pclass + Siblings + Parch + Embarked + fare_spline, data = train_ex_s, family = binomial)
+model.glm_s <- glm(Survived ~ Sex + AgeSpline + Pclass + Siblings + Parch + Embarked + FareSpline, 
+                   data = full_df_spline[train_index,], family = binomial)
 
 summary(model.glm_s)
-pred.glm_s = predict(model.glm_s, type = 'response')
 
-cat(paste('logistic regression (spline):', model_ccr(train_ex_s$Survived, pred.glm_s)))
-plot_binmodel_predictions(train_ex$Survived, pred.glm_s)
+pred.glm_s      = predict(model.glm_s, newdata = full_df_spline, type = 'response')
+
+cat(paste('logistic regression (spline):', model_ccr(Survived, pred.glm_s[train_index])))
+plot_binmodel_predictions(Survived, pred.glm_s[train_index])
 
 ```
 
 ### N-Networks
 ```{r nnet, fig.width = 8, fig.height = 6, dpi = 150}
 set.seed(123)
-model.nnet <- nnet(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare, data = train_ex, size=6, maxit = 1000, trace=FALSE, decay = 1e-4)
-pred.nnet <- predict(model.nnet)
+model.nnet <- nnet(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare, 
+                   data = full_df[train_index,], size=6, maxit = 1000, trace=FALSE, decay = 1e-4)
+pred.nnet <- predict(model.nnet, newdata = full_df)
 
 print(model.nnet)
 
-cat(paste('Neural Networks:', model_ccr(train$Survived, pred.nnet)))
-plot_binmodel_predictions(train_ex$Survived, pred.nnet)
-
-test_results.nnet = predict(model.nnet, newdata = test_ex)
-
+cat(paste('Neural Networks:', model_ccr(Survived, pred.nnet[train_index])))
+plot_binmodel_predictions(Survived, pred.nnet[train_index])
 ```
 
 ### Multivariate Adaptive Regression Splines 
 ```{r mars, fig.width = 8, fig.height = 6, dpi = 150}
 mars_formula = formula (Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare)
-model.mars <- earth(mars_formula, data = train_ex[, all.vars(mars_formula)], glm=list(family=binomial), degree = 2)
+model.mars <- earth(mars_formula, 
+                    data = full_df[train_index, all.vars(mars_formula)], 
+                    glm=list(family=binomial), degree = 2)
 
 summary(model.mars)
 par(mfrow=c(1,1))
 plot(evimp(model.mars))
 
-pred.mars = as.vector(predict(model.mars, type = 'response'))
+pred.mars = as.vector(predict(model.mars, type = 'response', newdata = full_df))
 
-cat(paste('MARS:', model_ccr(train_ex$Survived, pred.mars)))
-plot_binmodel_predictions(train_ex$Survived, pred.mars)
-
-test_results.mars = as.vector(predict(model.mars, newdata = test_ex, type = 'response'))
-
-
+cat(paste('MARS:', model_ccr(Survived, pred.mars[train_index])))
+plot_binmodel_predictions(Survived, pred.mars[train_index])
 ```
 
 ### Kernel Regression
 ```{r np, fig.width = 8, fig.height = 6, dpi = 150}
 #precompute scale factors
-#model.npbw <- npcdensbw(Surv ~ Sex + Age + Pclass + SiblingsOrdered + ParchOrdered + Embarked + Fare, data = train_ex) 
+#model.npbw <- npcdensbw(Surv ~ Sex + Age + Pclass + SiblingsOrdered + ParchOrdered + Embarked + Fare, data =  full_df[train_index,]) 
 #model.npbw$sfactor$x
 bw_scales = c(0.07187361, 3.278909e-06, 3.442791e+00, 6.214479e-01, 4.397527e+00, 4.179354e+00, 3.655486e+00, 3.271476e+00)
 #bw_scales[3] = 4 * bw_scales[3] # increase scale factor for age to avoid overfitting
 
 model.npbw = npcdensbw(Surv ~ Sex + Age + Pclass + SiblingsOrdered + ParchOrdered + Embarked + Fare, 
-          data = train_ex, 
+          data =  full_df[train_index,], 
           bandwidth.compute = FALSE,
           bws = bw_scales,
           bwscaling = TRUE) 
@@ -607,12 +579,10 @@ model.np <- npconmode(model.npbw)
 summary(model.np)
 
 #pred.np = model.np$condens
-pred.np = as.numeric(as.character(model.np$conmode))
+pred.np =  to_numeric( npconmode(model.npbw, newdata = full_df)$conmode )
 
-cat(paste('np:', model_ccr(train_ex$Survived, pred.np )))
-plot_binmodel_predictions(train_ex$Survived, pred.np)
-
-test_results.np = as.numeric(as.character( npconmode(model.npbw, newdata = test_ex)$conmode ))
+cat(paste('np:', model_ccr(Survived, pred.np[train_index] )))
+plot_binmodel_predictions(Survived, pred.np[train_index])
 
 ```
 
@@ -620,19 +590,18 @@ test_results.np = as.numeric(as.character( npconmode(model.npbw, newdata = test_
 ```{r compare, fig.width = 8, fig.height = 6, dpi = 100}
 
 results = list()
-results$kernel = pred.np
-results$logistic = pred.glm
+results$np = pred.np
+results$glm = pred.glm
 results$gbm = pred.gbm
+results$glm_s = pred.glm_s
 results$nnet = pred.nnet
-results$rf = as.numeric(as.character(pred.rf))
+results$rf = pred.rf
 results$mars = pred.mars
 results$rp = pred.rp
 
-actual = train_ex$Survived
-
 res = ldply(results, .id = 'model', function(x) {
-  c(ccr=model_ccr(actual, x ),
-    ks =model_ks(actual, x ) )
+  c(ccr=model_ccr(Survived, x[train_index] ),
+    ks =model_ks(Survived, x[train_index] ) )
 })
 
 print(res)
@@ -645,28 +614,30 @@ ggplot(res, aes(model, ks)) + geom_bar(stat = "identity")
 ## Submit
 ```{r submit, fig.width = 8, fig.height = 6, dpi = 100}
 
-#0.75598
-submit <- data.frame(PassengerId = test$PassengerId, Survived = ifelse( test_results.gbm>=0.5,1,0) )
-write.csv(submit, file = "C:/Dev/Kaggle/Titanic/my_solution_gbm.csv", row.names = FALSE)
+#gbm = 0.77033
+#np = 0.76077
+#rp - 0.76077
+#rf - 0.76555
+#mars - 0.78947
 
-submit <- data.frame(PassengerId = test$PassengerId, Survived = test_results.np)
-write.csv(submit, file = "C:/Dev/Kaggle/Titanic/my_solution_np.csv", row.names = FALSE)
+folder = "C:/Dev/Kaggle/Titanic/"
 
-submit <- data.frame(PassengerId = test$PassengerId, Survived =ifelse( test_results.rp>=0.5,1,0))
-write.csv(submit, file = "C:/Dev/Kaggle/Titanic/my_solution_rp.csv", row.names = FALSE)
-
-submit <- data.frame(PassengerId = test$PassengerId, Survived = test_results.rf)
-write.csv(submit, file = "C:/Dev/Kaggle/Titanic/my_solution_rf.csv", row.names = FALSE)
-
-#0.78947
-submit <- data.frame(PassengerId = test$PassengerId, Survived = ifelse( test_results.mars>=0.5,1,0))
-write.csv(submit, file = "C:/Dev/Kaggle/Titanic/my_solution_mars.csv", row.names = FALSE)
-
-submit <- data.frame(PassengerId = test$PassengerId, Survived = ifelse( test_results.nnet>=0.5,1,0))
-write.csv(submit, file = "C:/Dev/Kaggle/Titanic/my_solution_nnet.csv", row.names = FALSE)
-
-submit <- data.frame(PassengerId = test$PassengerId, Survived = ifelse( test_results.glm>=0.5,1,0))
-write.csv(submit, file = "C:/Dev/Kaggle/Titanic/my_solution_glm.csv", row.names = FALSE)
-
+for (model_name in names(results) ){
+  submit <- data.frame(PassengerId = full_df$PassengerId[test_index], 
+                       Survived = ifelse( results[[model_name]][test_index]>=0.5,1,0))
+  
+  file = file.path(folder, sprintf("my_solution_%s.csv", model_name))
+  
+  write.csv(submit, file = file, row.names = FALSE)
+}
 
 ```
+
+## Parsing Names
+```{r parsing_names, fig.width = 8, fig.height = 6, dpi = 100}
+
+full_df$Name[1:10] 
+adply(full_df$Name[1:10],1, function(x) {c(title = strsplit(x, split='[,.]')[[1]][2])})
+
+```
+

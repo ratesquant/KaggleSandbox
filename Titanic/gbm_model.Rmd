@@ -618,7 +618,7 @@ ggplot(res, aes(model, ks)) + geom_bar(stat = "identity")
 #np = 0.76077
 #rp - 0.76077
 #rf - 0.76555
-#mars - 0.78947
+#mars - 0.76077
 
 folder = "C:/Dev/Kaggle/Titanic/"
 
@@ -630,6 +630,11 @@ for (model_name in names(results) ){
   
   write.csv(submit, file = file, row.names = FALSE)
 }
+
+res = ldply(results, .id = 'model', function(x) {
+  ggplot(data.frame(actual = Survived, model = x[train_index]), aes(actual, model) )
+  
+})
 
 ```
 

@@ -238,10 +238,10 @@ test_index = full_df$Tag == "test"
 full_df$Surv = as.factor(full_df$Survived)
 
 
-#there are two empty Embarked fields in train set, table(train$Embarked) 
-train$Embarked = as.character(train$Embarked)
-train$Embarked[train$Embarked == ""] = "S"
-train$Embarked = factor(train$Embarked)
+#there are two empty Embarked fields in train set, table(full_df$Embarked) 
+full_df$Embarked = as.character(full_df$Embarked)
+full_df$Embarked[full_df$Embarked == ""] = "S"
+full_df$Embarked = factor(full_df$Embarked)
 
 #non of the people with 5 or more siblings survived, so no need to consider more levels 
 full_df$Siblings = to_numeric(full_df$SibSp)
@@ -271,6 +271,38 @@ p2 = ggplot(full_df[train_index,], aes(x = Fare, fill = Surv)) + stat_density(ad
 p3 = ggplot(full_df[train_index,], aes(x = Embarked, fill = Surv)) + geom_bar()
 p4 = ggplot(full_df[train_index,], aes(x = Pclass, Age)) + geom_boxplot(aes(fill = Surv)) + geom_jitter()
 grid.arrange(p1, p2, p3, p4, ncol=2)
+
+```
+
+## Parsing Titles
+```{r parsing_titles, fig.width = 8, fig.height = 6, dpi = 100}
+
+names_df = adply(full_df$Name,1, function(x) {
+  tokens = unlist(strsplit(x, split='[,.]')) #split string
+  tokens = sapply(tokens, FUN = function(x) sub(" ", "", x))  #remove spaces
+  c( Lastname = tokens[1], 
+     Title = tokens[2],
+     Firstname = tokens[3])
+  })
+
+full_df$Lastname = names_df$Lastname
+full_df$Title = names_df$Title
+
+table(full_df$Title,full_df$Survived)
+table(full_df$Title,full_df$Sex)
+
+#combine rare titles
+full_df$Title[full_df$Title %in% c('Capt', 'Don', 'Major', 'Col', 'Sir', 'Jonkheer')] <- 'Sir'
+full_df$Title[full_df$Title %in% c('Dona', 'Lady', 'the Countess' )] <- 'Lady'
+full_df$Title[full_df$Title %in% c('Miss', 'Mlle')] <- 'Miss'
+full_df$Title[full_df$Title %in% c('Mrs', 'Mme', 'Ms')] <- 'Mrs'
+full_df$Title[full_df$Title == 'Dr' &  full_df$Sex == 'female' ] <- 'Lady'
+full_df$Title[full_df$Title == 'Dr' &  full_df$Sex == 'male' ] <- 'Sir'
+
+full_df$Title = factor(full_df$Title)
+
+#Mr and Rev - are the most unfortunate title 
+ggplot(full_df[train_index,], aes(x = Title, fill = Surv)) + geom_bar()
 
 ```
 
@@ -558,15 +590,16 @@ plot_binmodel_predictions(Survived, pred.mars[train_index])
 ```
 
 ### Kernel Regression
-```{r np, fig.width = 8, fig.height = 6, dpi = 150}
+```{r np, fig.width = 8, fig.height = 6, dpi = 100}
 #precompute scale factors
 #model.npbw <- npcdensbw(Surv ~ Sex + Age + Pclass + SiblingsOrdered + ParchOrdered + Embarked + Fare, data =  full_df[train_index,]) 
 #model.npbw$sfactor$x
 bw_scales = c(0.07187361, 3.278909e-06, 3.442791e+00, 6.214479e-01, 4.397527e+00, 4.179354e+00, 3.655486e+00, 3.271476e+00)
-#bw_scales[3] = 4 * bw_scales[3] # increase scale factor for age to avoid overfitting
+bw_scales[8] = 4 * bw_scales[8] # increase scale factor for fare to avoid overfitting
 
+np_formula = formula(Surv ~ Sex + Age + Pclass + SiblingsOrdered + ParchOrdered + Embarked + Fare)
 model.npbw = npcdensbw(Surv ~ Sex + Age + Pclass + SiblingsOrdered + ParchOrdered + Embarked + Fare, 
-          data =  full_df[train_index,], 
+          data =  full_df[train_index,all.vars(np_formula)], 
           bandwidth.compute = FALSE,
           bws = bw_scales,
           bwscaling = TRUE) 
@@ -579,11 +612,55 @@ model.np <- npconmode(model.npbw)
 summary(model.np)
 
 #pred.np = model.np$condens
-pred.np =  to_numeric( npconmode(model.npbw, newdata = full_df)$conmode )
+pred.np =  to_numeric( npconmode(model.npbw, newdata = full_df[,all.vars(np_formula)[-1]])$conmode )
+
+#looks like there is a bug in np 
+#missing_index = (length(pred.np)+1):dim(full_df)[1]
+#pred.np[missing_index] = npconmode(model.npbw, newdata = full_df[missing_index,all.vars(np_formula)[-1]])$conmode
 
 cat(paste('np:', model_ccr(Survived, pred.np[train_index] )))
 plot_binmodel_predictions(Survived, pred.np[train_index])
 
+```
+
+## GBM with Title
+Title is actualy more important than class. Sex does not matter at this point becuase it is captured by title. Basicaly Title captures both Sex and Class variables.
+```{r gbm_title, fig.width = 8, fig.height = 6, dpi = 150}
+table(full_df$Title,full_df$Sex)
+
+fml = as.formula(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title)
+#fml = as.formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare)
+set.seed(123)
+
+ntrees = 4000
+model.gbm_title = gbm(fml, 
+                data = full_df[train_index, all.vars(fml)], 
+                distribution = 'bernoulli',
+                n.trees = ntrees,
+                shrinkage = 0.005,
+                bag.fraction = 0.7,
+                interaction.depth = 2,
+                cv.folds = 3)
+
+par(mfrow = c(1, 2), las = 1)
+best_it = gbm.perf(model.gbm_title, method = 'cv')
+grid()
+summary(model.gbm_title, n.trees = best_it) # influence
+grid()
+
+par(mfrow=c(3,3))
+for(i in seq(length(all.vars(fml)) - 1)) {
+  plot.gbm(model.gbm_title, n.trees =best_it,  i = i)
+  grid()
+}
+
+cat('Two-way interactions') 
+gbm_interactions(model.gbm_title, full_df[train_index,], 1, 2)
+
+pred.gbm_title = predict(model.gbm_title, n.trees = ntrees, newdata = full_df, type = 'response')
+
+cat(paste("gbm ccr:", model_ccr(Survived, pred.gbm_title[train_index])))
+plot_binmodel_predictions(Survived, pred.gbm_title[train_index])
 ```
 
 ## Compare
@@ -593,11 +670,13 @@ results = list()
 results$np = pred.np
 results$glm = pred.glm
 results$gbm = pred.gbm
+results$gbm_title =pred.gbm_title
 results$glm_s = pred.glm_s
 results$nnet = pred.nnet
 results$rf = pred.rf
 results$mars = pred.mars
 results$rp = pred.rp
+
 
 res = ldply(results, .id = 'model', function(x) {
   c(ccr=model_ccr(Survived, x[train_index] ),
@@ -614,8 +693,8 @@ ggplot(res, aes(model, ks)) + geom_bar(stat = "identity")
 ## Submit
 ```{r submit, fig.width = 8, fig.height = 6, dpi = 100}
 
-#gbm = 0.77033
-#np = 0.76077
+#gbm = 0.77512
+#np = 0.61722
 #rp - 0.76077
 #rf - 0.76555
 #mars - 0.76077
@@ -631,18 +710,10 @@ for (model_name in names(results) ){
   write.csv(submit, file = file, row.names = FALSE)
 }
 
-res = ldply(results, .id = 'model', function(x) {
-  ggplot(data.frame(actual = Survived, model = x[train_index]), aes(actual, model) )
-  
-})
+for (model_name in names(results) ){
+  ggplot(data.frame(bucket = full_df$Pclass[train_index], error = results[[model_name]][train_index] - Survived), aes(bucket, error) ) + geom_boxplot()
+}
 
 ```
 
-## Parsing Names
-```{r parsing_names, fig.width = 8, fig.height = 6, dpi = 100}
-
-full_df$Name[1:10] 
-adply(full_df$Name[1:10],1, function(x) {c(title = strsplit(x, split='[,.]')[[1]][2])})
-
-```
 

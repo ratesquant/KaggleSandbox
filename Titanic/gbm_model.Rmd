@@ -24,6 +24,8 @@ library(rpart)
 library(randomForest)
 library(nnet)
 
+random_seed = 123
+
 ```
 
 ## Load Data
@@ -254,6 +256,10 @@ full_df$Parch[full_df$Parch>5] = 5
 full_df$Parch = factor(full_df$Parch)
 full_df$ParchOrdered = factor(full_df$Parch, ordered = TRUE)
 
+family_size = 1 + to_numeric(full_df$Parch) + to_numeric(full_df$Siblings)
+full_df$FamilySize = factor(family_size)
+full_df$FamilySizeOrdered = factor(family_size, ordered = TRUE)
+
 p1 = ggplot_missing(train) + ggtitle('Missing values')
 p2 = ggplot_missing_count(train)
 grid.arrange(p1, p2, ncol=2)
@@ -315,7 +321,7 @@ fare_na_index = is.na(full_df$Fare)
 fare_formula = as.formula(Fare ~ Sex + Pclass + Siblings + Parch + Embarked)
 
 ntrees = 4000
-set.seed(123)
+set.seed(random_seed)
 model.gbm.fare = gbm(fare_formula, 
                   data = full_df[!fare_na_index, all.vars(fare_formula)], 
                   distribution = 'gaussian',
@@ -349,16 +355,17 @@ cat(paste('missing fare estimate:', full_df$FareEstimate[fare_na_index]))
 
 ## Missing Age
 The strategy for imputing missing age variable, is to build a simple GBM model that prodicts the age based on all other variables. Non of the other variables are missing therefore the procedure is streaghtforward.  
+
 ### Generalized Boosted Regression Model
-```{r missing_age, fig.width = 8, fig.height = 6, dpi = 150}
+```{r missing_age, fig.width = 8, fig.height = 6, dpi = 100}
 age_na_index = is.na(full_df$Age)
 
-age_formula = as.formula(Age ~  Pclass + Siblings + Parch )
+age_formula = as.formula(Age ~  Pclass + Siblings + Parch)
 
 age_df = full_df[!age_na_index,all.vars(age_formula)]
 
-ntrees = 2000
-set.seed(123)
+ntrees = 5000
+set.seed(random_seed)
 model.gbm.age = gbm(age_formula, 
                   data = age_df, 
                   distribution = 'gaussian',
@@ -374,7 +381,7 @@ grid()
 summary(model.gbm.age, n.trees = best_it_age) # influence
 grid()
 
-par(mfrow=c(3,3))
+par(mfrow=c(2,2))
 for(i in seq(length(all.vars(age_formula)) - 1)) {
   plot.gbm(model.gbm.age, n.trees =best_it_age,  i = i)
   grid()
@@ -447,8 +454,8 @@ ggplot(age_df_agg, aes(age_estimate, Age, color = model, group = model)) +
 
 print(ddply(age_df_agg, .(model), function(x) c(r2 = summary(lm(x$Age~x$age_estimate))$r.squared)))
 
-#copy estimated ages to the train_ex data (using NP method)
-full_df$Age = full_df$AgeEstimateNP
+#copy estimated ages to the data (using GBM method)
+full_df$Age = full_df$AgeEstimateGBM
 
 Survived = full_df$Survived[train_index]
 ```
@@ -480,7 +487,7 @@ plot_binmodel_predictions(Survived, pred.rp[train_index])
 ```{r gbm, fig.width = 8, fig.height = 6, dpi = 150}
 fml = as.formula(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare)
 #fml = as.formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare)
-set.seed(123)
+set.seed(random_seed)
 
 ntrees = 4000
 model.gbm = gbm(fml, 
@@ -561,7 +568,7 @@ plot_binmodel_predictions(Survived, pred.glm_s[train_index])
 
 ### N-Networks
 ```{r nnet, fig.width = 8, fig.height = 6, dpi = 150}
-set.seed(123)
+set.seed(random_seed)
 model.nnet <- nnet(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare, 
                    data = full_df[train_index,], size=6, maxit = 1000, trace=FALSE, decay = 1e-4)
 pred.nnet <- predict(model.nnet, newdata = full_df)
@@ -573,21 +580,43 @@ plot_binmodel_predictions(Survived, pred.nnet[train_index])
 ```
 
 ### Multivariate Adaptive Regression Splines 
-```{r mars, fig.width = 8, fig.height = 6, dpi = 150}
+```{r mars, fig.width = 8, fig.height = 6, dpi = 100}
+set.seed(random_seed)
 mars_formula = formula (Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare)
 model.mars <- earth(mars_formula, 
                     data = full_df[train_index, all.vars(mars_formula)], 
-                    glm=list(family=binomial), degree = 2)
+                    glm=list(family=binomial), degree = 2, nfold = 3)
 
 summary(model.mars)
 par(mfrow=c(1,1))
 plot(evimp(model.mars))
+plotmo(model.mars)
 
 pred.mars = as.vector(predict(model.mars, type = 'response', newdata = full_df))
 
 cat(paste('MARS:', model_ccr(Survived, pred.mars[train_index])))
 plot_binmodel_predictions(Survived, pred.mars[train_index])
 ```
+
+### Multivariate Adaptive Regression Splines with Title
+```{r mars_title, fig.width = 8, fig.height = 6, dpi = 100}
+set.seed(random_seed)
+mars_formula = formula (Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title)
+model.mars_title <- earth(mars_formula, 
+                    data = full_df[train_index, all.vars(mars_formula)], 
+                    glm=list(family=binomial), degree = 2, nfold = 3)
+
+summary(model.mars_title)
+par(mfrow=c(1,1))
+plot(evimp(model.mars_title))
+plotmo(model.mars_title)
+
+pred.mars_title = as.vector(predict(model.mars_title, type = 'response', newdata = full_df))
+
+cat(paste('MARS:', model_ccr(Survived, pred.mars_title[train_index])))
+plot_binmodel_predictions(Survived, pred.mars_title[train_index])
+```
+
 
 ### Kernel Regression
 ```{r np, fig.width = 8, fig.height = 6, dpi = 100}
@@ -630,7 +659,7 @@ table(full_df$Title,full_df$Sex)
 
 fml = as.formula(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title)
 #fml = as.formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare)
-set.seed(123)
+set.seed(random_seed)
 
 ntrees = 4000
 model.gbm_title = gbm(fml, 
@@ -669,12 +698,13 @@ plot_binmodel_predictions(Survived, pred.gbm_title[train_index])
 results = list()
 results$np = pred.np
 results$glm = pred.glm
-results$gbm = pred.gbm
-results$gbm_title =pred.gbm_title
+results$gbm = pred.gbm #0.77512
+results$gbm_title =pred.gbm_title #0.79426
 results$glm_s = pred.glm_s
 results$nnet = pred.nnet
 results$rf = pred.rf
-results$mars = pred.mars
+results$mars = pred.mars #0.76077
+results$mars_title = pred.mars_title
 results$rp = pred.rp
 
 
@@ -713,6 +743,12 @@ for (model_name in names(results) ){
 for (model_name in names(results) ){
   ggplot(data.frame(bucket = full_df$Pclass[train_index], error = results[[model_name]][train_index] - Survived), aes(bucket, error) ) + geom_boxplot()
 }
+
+```
+
+## Cluster last names
+```{r last_names, fig.width = 8, fig.height = 6, dpi = 100}
+
 
 ```
 

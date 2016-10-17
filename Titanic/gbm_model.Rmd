@@ -81,6 +81,30 @@ model_ks = function(actual, model) {
   return (ks)
 } 
 
+trapez_rule_integration <- function(x, y){
+  index = order(x)
+  dx = diff(x[index])
+  ys = y[index]
+  yc = 0.5 * (ys[-1] + ys[-length(y)])
+  return (sum(dx * yc))
+}
+
+model_roc = function(actual, model, buckets = 101) {
+    thresholds = seq(0, 1, length.out = buckets)
+  res = ldply(thresholds, .id = "threshold", function(x) {
+    cm = confusion_matrix(actual, model, x)
+    tp = cm$true_pos/cm$pos
+    fp = cm$false_pos/cm$neg
+    data.frame(threshold = x, tp, fp)
+    })
+  }
+  
+model_auc = function(actual, model) {
+  roc = model_roc(actual, model)
+  auc = trapez_rule_integration(roc$fp, roc$tp)
+  return (auc)
+} 
+
 confusion_matrix = function(actual, model, threshold = 0.5) {
   pred = ifelse(model >= threshold, 1, 0)
   cm = list()
@@ -95,14 +119,6 @@ confusion_matrix = function(actual, model, threshold = 0.5) {
   
   return (cm)
 } 
-
-trapez_rule_integration <- function(x, y){
-  index = order(x)
-  dx = diff(x[index])
-  ys = y[index]
-  yc = 0.5 * (ys[-1] + ys[-length(y)])
-  return (sum(dx * yc))
-}
 
 #do all diagnostic plots
 plot_binmodel_predictions<-function(actual, model){
@@ -312,6 +328,53 @@ ggplot(full_df[train_index,], aes(x = Title, fill = Surv)) + geom_bar()
 
 ```
 
+## Parsing Cabins
+```{r parsing_cabins, fig.width = 8, fig.height = 6, dpi = 100}
+
+cabins_df = adply(full_df$Cabin,1, function(x) {
+  tokens = unlist(strsplit(x, split='[ ]')) #split string
+  if(length(tokens)>=1){
+    c( 
+      CabinSection = substring(tokens[1],1,1), 
+      CabinNumber = substring(tokens[1],2, nchar(tokens[1])),
+      CabinCount = length(tokens))
+  }else{
+    c(
+      CabinSection = "N", #unknown values
+      CabinNumber = 0,    
+      CabinCount = 1)
+    }
+  })
+
+#section F - seems to be important becuase model predictions are off
+cabins_df$CabinSection = as.character(cabins_df$CabinSection)
+cabins_df$CabinSection[cabins_df$CabinSection %in% c('A', 'G', 'T')] = 'AGT'
+cabins_df$CabinNumber[cabins_df$CabinNumber==""] = "0"
+
+full_df$CabinSection = as.factor(cabins_df$CabinSection)
+full_df$CabinNumber = as.factor(25*ceil(as.numeric(cabins_df$CabinNumber)/25))
+full_df$CabinCount = as.numeric(cabins_df$CabinCount)
+full_df$CabinCount[full_df$CabinCount>=2] = 2 #sample size too small
+full_df$CabinCount = as.factor(full_df$CabinCount)
+ 
+
+table(full_df$CabinSection,full_df$Survived)
+#table(full_df$CabinSection[test_index], ifelse(pred.gbm_title[test_index]>=0.5, 1, 0))
+
+table(full_df$CabinCount,full_df$Survived)
+#table(full_df$CabinCount[test_index], ifelse(pred.gbm_title[test_index]>=0.5, 1, 0))
+
+table(full_df$CabinNumber,full_df$Survived)
+#table(50*ceil(as.numeric(full_df$CabinNumber[test_index])/50), ifelse(pred.gbm_title[test_index]>=0.5, 1, 0))
+
+#Mr and Rev - are the most unfortunate title 
+ggplot(full_df[train_index,], aes(x = CabinCount, fill = Surv)) + geom_bar()
+ggplot(full_df[train_index,], aes(x = CabinSection, fill = Surv)) + geom_bar()
+ggplot(full_df[train_index,], aes(x = CabinNumber, fill = Surv)) + geom_bar()
+
+```
+
+
 ## Missing Fare
 Fare is basically a function of class
 ```{r missing_fare, fig.width = 8, fig.height = 6, dpi = 150}
@@ -320,7 +383,7 @@ fare_na_index = is.na(full_df$Fare)
 
 fare_formula = as.formula(Fare ~ Sex + Pclass + Siblings + Parch + Embarked)
 
-ntrees = 4000
+ntrees = 10000
 set.seed(random_seed)
 model.gbm.fare = gbm(fare_formula, 
                   data = full_df[!fare_na_index, all.vars(fare_formula)], 
@@ -329,6 +392,7 @@ model.gbm.fare = gbm(fare_formula,
                   shrinkage = 0.005,
                   bag.fraction = 0.7,
                   interaction.depth = 2, cv.folds = 3)
+print(model.gbm.fare)
 
 par(mfrow = c(1, 2), las = 1)
 best_it.fare = gbm.perf(model.gbm.fare, method = 'cv')
@@ -364,7 +428,7 @@ age_formula = as.formula(Age ~  Pclass + Siblings + Parch)
 
 age_df = full_df[!age_na_index,all.vars(age_formula)]
 
-ntrees = 5000
+ntrees = 10000
 set.seed(random_seed)
 model.gbm.age = gbm(age_formula, 
                   data = age_df, 
@@ -373,7 +437,7 @@ model.gbm.age = gbm(age_formula,
                   shrinkage = 0.005,
                   bag.fraction = 0.7,
                   interaction.depth = 2, cv.folds = 3)
-
+print(model.gbm.age)
 
 par(mfrow = c(1, 2), las = 1)
 best_it_age = gbm.perf(model.gbm.age, method = 'cv')
@@ -417,7 +481,7 @@ ggplot(age_df_lm, aes(age_estimate, Age, color = Pclass)) +
 
 ### Non Parametric model
 Use kernel smoothing to estimate age. Kernel parameters are determined using cross validation. This method is very slow.     
-```{r missing_age_nonparam, fig.width = 8, fig.height = 6, dpi = 100}
+```{r missing_age_nonparam, fig.width = 8, fig.height = 6, dpi = 100, eval = FALSE}
 #model.npbw.age = npregbw(age_formula, data = age_df)
 #model.npbw.age$sfactor$x
 bw_scales = c( 1.116239, 1.863234, 1.007050)
@@ -447,7 +511,7 @@ ggplot(age_df_np, aes(age_estimate, Age, color = Pclass)) +
 ### Comparison
 Looks like kernel smoothing works better in sample, use this to estimate age.
 ```{r missing_age_comparison, fig.width = 8, fig.height = 6, dpi = 150}
-age_df_agg = rbind(age_df_np, age_df_lm, age_df_gbm)
+age_df_agg = rbind(age_df_lm, age_df_gbm)
 
 ggplot(age_df_agg, aes(age_estimate, Age, color = model, group = model)) + 
   geom_point() + facet_grid(.~model) + geom_smooth(method = 'lm') + geom_abline() + ggtitle('Comparison of Age Estimates')
@@ -484,20 +548,21 @@ plot_binmodel_predictions(Survived, pred.rp[train_index])
 ```
 
 ### GBM
-```{r gbm, fig.width = 8, fig.height = 6, dpi = 150}
+```{r gbm, fig.width = 8, fig.height = 6, dpi = 100}
 fml = as.formula(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare)
 #fml = as.formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare)
 set.seed(random_seed)
 
-ntrees = 4000
+ntrees = 10000
 model.gbm = gbm(fml, 
                 data = full_df[train_index, all.vars(fml)], 
                 distribution = 'bernoulli',
                 n.trees = ntrees,
-                shrinkage = 0.005,
+                shrinkage = 0.002,
                 bag.fraction = 0.7,
                 interaction.depth = 2,
                 cv.folds = 3)
+print(model.gbm.age)
 
 par(mfrow = c(1, 2), las = 1)
 best_it = gbm.perf(model.gbm, method = 'cv')
@@ -514,7 +579,7 @@ for(i in seq(length(all.vars(fml)) - 1)) {
 cat('Two-way interactions') 
 gbm_interactions(model.gbm, full_df[train_index,], 1, 2)
 
-pred.gbm = predict(model.gbm, n.trees = ntrees, newdata = full_df, type = 'response')
+pred.gbm = predict(model.gbm, n.trees = best_it, newdata = full_df, type = 'response')
 
 cat(paste("gbm ccr:", model_ccr(Survived, pred.gbm[train_index])))
 plot_binmodel_predictions(Survived, pred.gbm[train_index])
@@ -531,6 +596,18 @@ importance(model.rf)
 
 cat(paste('random forest:', model_ccr(Survived, pred.rf[train_index])))
 plot_binmodel_predictions(Survived, pred.rf[train_index])
+```
+
+### Random Forest with Title and Cabin
+```{r rf_cabin, fig.width = 8, fig.height = 6, dpi = 150}
+model.rf_cabin <- randomForest(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title + CabinSection + CabinNumber, data =  full_df[train_index,])
+
+pred.rf_cabin = to_numeric(predict(model.rf_cabin, newdata = full_df))
+
+importance(model.rf_cabin)
+
+cat(paste('random forest:', model_ccr(Survived, pred.rf_cabin[train_index])))
+plot_binmodel_predictions(Survived, pred.rf_cabin[train_index])
 ```
 
 ### Logistic Regression
@@ -567,7 +644,7 @@ plot_binmodel_predictions(Survived, pred.glm_s[train_index])
 ```
 
 ### N-Networks
-```{r nnet, fig.width = 8, fig.height = 6, dpi = 150}
+```{r nnet, fig.width = 8, fig.height = 6, dpi = 100}
 set.seed(random_seed)
 model.nnet <- nnet(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare, 
                    data = full_df[train_index,], size=6, maxit = 1000, trace=FALSE, decay = 1e-4)
@@ -606,20 +683,41 @@ model.mars_title <- earth(mars_formula,
                     data = full_df[train_index, all.vars(mars_formula)], 
                     glm=list(family=binomial), degree = 2, nfold = 3)
 
+plot(model.mars_title)
 summary(model.mars_title)
 par(mfrow=c(1,1))
 plot(evimp(model.mars_title))
-plotmo(model.mars_title)
+#plotmo(model.mars_title)
 
 pred.mars_title = as.vector(predict(model.mars_title, type = 'response', newdata = full_df))
 
-cat(paste('MARS:', model_ccr(Survived, pred.mars_title[train_index])))
+cat(paste('MARS (title):', model_ccr(Survived, pred.mars_title[train_index])))
 plot_binmodel_predictions(Survived, pred.mars_title[train_index])
+```
+
+### Multivariate Adaptive Regression Splines with Title and Cabin
+```{r mars_title, fig.width = 8, fig.height = 6, dpi = 100}
+set.seed(random_seed)
+mars_formula = formula (Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title + CabinSection + CabinNumber)
+model.mars_cabin <- earth(mars_formula, 
+                    data = full_df[train_index, all.vars(mars_formula)], 
+                    glm=list(family=binomial), degree = 2, nfold = 3)
+
+plot(model.mars_cabin)
+summary(model.mars_cabin)
+par(mfrow=c(1,1))
+plot(evimp(model.mars_cabin))
+#plotmo(model.mars_cabin)
+
+pred.mars_cabin = as.vector(predict(model.mars_cabin, type = 'response', newdata = full_df))
+
+cat(paste('MARS (cabin):', model_ccr(Survived, pred.mars_cabin[train_index])))
+plot_binmodel_predictions(Survived, pred.mars_cabin[train_index])
 ```
 
 
 ### Kernel Regression
-```{r np, fig.width = 8, fig.height = 6, dpi = 100}
+```{r np, fig.width = 8, fig.height = 6, dpi = 100, eval = FALSE}
 #precompute scale factors
 #model.npbw <- npcdensbw(Surv ~ Sex + Age + Pclass + SiblingsOrdered + ParchOrdered + Embarked + Fare, data =  full_df[train_index,]) 
 #model.npbw$sfactor$x
@@ -661,56 +759,100 @@ fml = as.formula(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + F
 #fml = as.formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare)
 set.seed(random_seed)
 
-ntrees = 4000
+ntrees = 10000
 model.gbm_title = gbm(fml, 
                 data = full_df[train_index, all.vars(fml)], 
                 distribution = 'bernoulli',
                 n.trees = ntrees,
-                shrinkage = 0.005,
+                shrinkage = 0.002,
                 bag.fraction = 0.7,
                 interaction.depth = 2,
                 cv.folds = 3)
 
 par(mfrow = c(1, 2), las = 1)
-best_it = gbm.perf(model.gbm_title, method = 'cv')
+best_it_title = gbm.perf(model.gbm_title, method = 'cv')
 grid()
-summary(model.gbm_title, n.trees = best_it) # influence
+summary(model.gbm_title, n.trees = best_it_title) # influence
 grid()
 
 par(mfrow=c(3,3))
 for(i in seq(length(all.vars(fml)) - 1)) {
-  plot.gbm(model.gbm_title, n.trees =best_it,  i = i)
+  plot.gbm(model.gbm_title, n.trees =best_it_title,  i = i)
   grid()
 }
 
 cat('Two-way interactions') 
 gbm_interactions(model.gbm_title, full_df[train_index,], 1, 2)
 
-pred.gbm_title = predict(model.gbm_title, n.trees = ntrees, newdata = full_df, type = 'response')
+pred.gbm_title = predict(model.gbm_title, n.trees = best_it_title, newdata = full_df, type = 'response')
 
 cat(paste("gbm ccr:", model_ccr(Survived, pred.gbm_title[train_index])))
 plot_binmodel_predictions(Survived, pred.gbm_title[train_index])
 ```
 
+## GBM with Title and Cabin
+Title is actualy more important than class. Sex does not matter at this point becuase it is captured by title. Basicaly Title captures both Sex and Class variables.
+```{r gbm_cabin, fig.width = 8, fig.height = 6, dpi = 150}
+fml_cabin = as.formula(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title + CabinNumber + CabinSection)
+#fml = as.formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare)
+set.seed(random_seed)
+
+ntrees = 10000
+model.gbm_cabin = gbm(fml_cabin, 
+                data = full_df[train_index, all.vars(fml_cabin)], 
+                distribution = 'bernoulli',
+                n.trees = ntrees,
+                shrinkage = 0.002,
+                bag.fraction = 0.7,
+                interaction.depth = 2,
+                cv.folds = 3)
+print(model.gbm_cabin)
+
+par(mfrow = c(1, 2), las = 1)
+best_it_cabin = gbm.perf(model.gbm_cabin, method = 'cv')
+grid()
+summary(model.gbm_cabin, n.trees = best_it_cabin) # influence
+grid()
+
+par(mfrow=c(4,3))
+for(i in seq(length(all.vars(fml_cabin)) - 1)) {
+  plot.gbm(model.gbm_cabin, n.trees =best_it_cabin,  i = i)
+  grid()
+}
+
+cat('Two-way interactions') 
+gbm_interactions(model.gbm_cabin, full_df[train_index,], 1, 2)
+
+pred.gbm_cabin = predict(model.gbm_cabin, n.trees = best_it_cabin, newdata = full_df, type = 'response')
+
+cat(paste("gbm ccr:", model_ccr(Survived, pred.gbm_cabin[train_index])))
+plot_binmodel_predictions(Survived, pred.gbm_cabin[train_index])
+```
+
+
 ## Compare
 ```{r compare, fig.width = 8, fig.height = 6, dpi = 100}
 
 results = list()
-results$np = pred.np
+#results$np = pred.np
 results$glm = pred.glm
 results$gbm = pred.gbm #0.77512
-results$gbm_title =pred.gbm_title #0.79426
+results$gbm_title =pred.gbm_title #0.79904
+results$gbm_cabin =pred.gbm_cabin 
 results$glm_s = pred.glm_s
 results$nnet = pred.nnet
 results$rf = pred.rf
+results$rf_cabin = pred.rf_cabin
 results$mars = pred.mars #0.76077
 results$mars_title = pred.mars_title
+results$mars_cabin =pred.mars_cabin
 results$rp = pred.rp
 
 
 res = ldply(results, .id = 'model', function(x) {
-  c(ccr=model_ccr(Survived, x[train_index] ),
-    ks =model_ks(Survived, x[train_index] ) )
+  c(ccr=model_ccr(Survived, x[train_index]),
+    ks =model_ks(Survived, x[train_index]),
+    auc = model_auc(Survived, x[train_index]) )
 })
 
 print(res)
@@ -746,8 +888,21 @@ for (model_name in names(results) ){
 
 ```
 
-## Cluster last names
-```{r last_names, fig.width = 8, fig.height = 6, dpi = 100}
+## Cluster cabin numbers
+```{r titles_names, fig.width = 8, fig.height = 6, dpi = 100}
+
+name_surv = data.frame(name = full_df$CabinNumber[train_index], surv = full_df$Survived[train_index])
+
+names_agg = ddply(name_surv, .(name), function(x) c(count = length(x$surv), avg = mean(x$surv) ))
+avg_res = names_agg$avg
+names(avg_res) <- names_agg$name
+
+d = dist(avg_res)
+hc = hclust(d, method = "average")
+plot(hc)
+group = cutree(hc, k = 3)
+group_names = names(group)
+cabin_groups = data.frame(group_names, group)
 
 
 ```

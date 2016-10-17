@@ -531,12 +531,10 @@ model.rp = rpart(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + F
                  data = full_df[train_index,], 
                  control = rpart.control(cp = 0.01, minsplit = 20))
 
-par(mfrow=c(1,1))
 printcp(model.rp)
-plotcp(model.rp) 
-#summary(model.rp) # detailed summary of splits
 
-# plot tree
+par(mfrow=c(2,1))
+plotcp(model.rp) 
 plot(model.rp, uniform=TRUE) 
 text(model.rp, use.n=TRUE, all=TRUE, cex=.8)
 
@@ -544,6 +542,26 @@ pred.rp = predict(model.rp, newdata = full_df)
 
 cat(paste('rpart: ', model_ccr(Survived, pred.rp[train_index])))
 plot_binmodel_predictions(Survived, pred.rp[train_index])
+
+```
+
+### Recursive Partitioning with Title and Cabin
+```{r rpart_cabin, fig.width = 8, fig.height = 6, dpi = 100}
+model.rp_cabin = rpart(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title + CabinSection + CabinNumber, 
+                 data = full_df[train_index,], 
+                 control = rpart.control(cp = 0.005, minsplit = 5))
+
+printcp(model.rp_cabin)
+
+par(mfrow=c(2,1))
+plotcp(model.rp_cabin) 
+plot(model.rp_cabin, uniform=TRUE) 
+text(model.rp_cabin, use.n=TRUE, all=TRUE, cex=.8)
+
+pred.rp_cabin = predict(model.rp_cabin, newdata = full_df)
+
+cat(paste('rpart: ', model_ccr(Survived, pred.rp_cabin[train_index])))
+plot_binmodel_predictions(Survived, pred.rp_cabin[train_index])
 
 ```
 
@@ -696,7 +714,7 @@ plot_binmodel_predictions(Survived, pred.mars_title[train_index])
 ```
 
 ### Multivariate Adaptive Regression Splines with Title and Cabin
-```{r mars_title, fig.width = 8, fig.height = 6, dpi = 100}
+```{r mars_cabin, fig.width = 8, fig.height = 6, dpi = 100}
 set.seed(random_seed)
 mars_formula = formula (Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title + CabinSection + CabinNumber)
 model.mars_cabin <- earth(mars_formula, 
@@ -847,6 +865,7 @@ results$mars = pred.mars #0.76077
 results$mars_title = pred.mars_title
 results$mars_cabin =pred.mars_cabin
 results$rp = pred.rp
+results$rp = pred.rp_cabin
 
 
 res = ldply(results, .id = 'model', function(x) {

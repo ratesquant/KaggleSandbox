@@ -352,9 +352,12 @@ temp_df = merge(full_df, family_survival, all.x = TRUE)
 #number of surviving family members other than a person
 temp_df$surv_family_count = temp_df$family_surv 
 temp_df$surv_family_count[temp_df$Survived == 1 & temp_df$Tag == "train"] = temp_df$surv_family_count[temp_df$Survived == 1 & temp_df$Tag == "train"] - 1
+temp_df$surv_family_count[is.na(temp_df$surv_family_count)] = 0
 
 temp_df$died_family_count = temp_df$family_died 
 temp_df$died_family_count[temp_df$Survived == 0 & temp_df$Tag == "train"] = temp_df$died_family_count[temp_df$Survived == 0 & temp_df$Tag == "train"] - 1
+temp_df$died_family_count[is.na(temp_df$died_family_count)] = 0
+
 
 #table(temp_df$surv_family_count)
 #table(temp_df$died_family_count)
@@ -565,7 +568,7 @@ Survived = full_df$Survived[train_index]
 
 ### Recursive Partitioning
 ```{r rpart, fig.width = 8, fig.height = 6, dpi = 150}
-model.rp = rpart(Survived ~ Sex +  Pclass + Siblings + Fare + Title + CabinNumber + surv_family_count + died_family_count,
+model.rp = rpart(Survived ~ Sex + Pclass + Siblings + Fare + Title + CabinNumber + surv_family_count + died_family_count,
                  data = full_df[train_index,], 
                  control = rpart.control(cp = 0.01, minsplit = 20))
 
@@ -694,7 +697,7 @@ plot_binmodel_predictions(Survived, pred.np[train_index])
 ```
 
 
-## GBM
+### GBM
 ```{r gbm, fig.width = 8, fig.height = 6, dpi = 150}
 fml_name = as.formula(Survived ~ Pclass + Fare + Title + CabinNumber  + surv_family_count + died_family_count)
 #fml = as.formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare)
@@ -732,11 +735,10 @@ cat(paste("gbm ccr:", model_ccr(Survived, pred.gbm[train_index])))
 plot_binmodel_predictions(Survived, pred.gbm[train_index])
 ```
 
-## SVM 
+### SVM 
 ```{r svm, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE}
-
-svn_formula = formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + CabinNumber)
-model.svm <- svm(svn_formula, data=full_df[train_index,all.vars(svn_formula)], cost = 16, gamma = 0.09)
+svn_formula = formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + CabinNumber + surv_family_count + died_family_count)
+model.svm <- svm(svn_formula, data=full_df[train_index,all.vars(svn_formula)], cost = 1, gamma = 0.125)
 summary(model.svm)
 
 #svm_tune <- tune(svm, train.x=svn_formula,  data=full_df[train_index,],
@@ -773,7 +775,7 @@ res = ldply(results, .id = 'model', function(x) {
     ks =model_ks(Survived, x[train_index]),
     auc = model_auc(Survived, x[train_index]),
     ccr_out =model_ccr(full_df$Survived[test_index], x[test_index]),
-    na_count = sum(is.na(x[train_index])))
+    na_count = sum(is.na(x[test_index])))
 })
 
 print(res)
@@ -833,13 +835,11 @@ cabin_groups = data.frame(group_names, group)
 ### GBM (Experimental)
 ```{r experimental_gbm, fig.width = 8, fig.height = 6, dpi = 100, eval = FALSE}
 #fml_cabin = as.formula(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title + CabinNumber + CabinSection)
-fml_exp = as.formula(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title + CabinNumber + CabinSection + surv_family_count + died_family_count )
+#fml_exp = as.formula(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title + CabinNumber + CabinSection + surv_family_count + died_family_count )
 
-fml_exp = as.formula(Survived ~ Pclass + Fare + Title + CabinNumber  + surv_family_count + died_family_count)
+fml_exp = as.formula(Survived ~ Sex + Pclass + Fare + Title + CabinNumber  + surv_family_count + died_family_count)
 
 set.seed(random_seed)
-
-#0.79904 - my best score
 
 ntrees = 4000
 model.gbm_exp = gbm(fml_exp, 
@@ -867,24 +867,19 @@ cat('Two-way interactions')
 gbm_interactions(model.gbm_exp, full_df[train_index,], 1, 2)
 
 pred.gbm_exp = predict(model.gbm_exp, n.trees = best_it_exp, newdata = full_df, type = 'response')
-#max: 0.779904306220096
+#max: 0.813397129186603
 cat(paste("gbm ccr:", model_ccr(full_df$Survived[train_index], pred.gbm_exp[train_index])))
-cat(paste("gbm ccr:", model_ccr(full_df$Survived[test_index], pred.gbm_exp[test_index])))
-plot_binmodel_predictions(full_df$Survived[test_index], pred.gbm_exp[test_index])
+cat(paste("gbm ccr:", model_ccr(full_df$Survived[test_index], pred.gbm_exp[test_index]), sum(is.na(pred.gbm_exp[test_index]))))
 
-#print errors
-#act_temp = full_df[test_index, all.vars(fml_exp)]
-#mdl_temp = ifelse(pred.gbm_exp[test_index]>=0.5, 1, 0)
-#error_index = temp$Survived != mdl_temp
-#data.frame(temp[error_index,], model = pred.gbm_exp[test_index][error_index])
-
+#plot_binmodel_predictions(full_df$Survived[test_index], pred.gbm_exp[test_index])
 ```
 
 ### MARS (Experimental)
 ```{r experimental_mars, fig.width = 8, fig.height = 6, dpi = 100, eval = FALSE}
 #fml_cabin = as.formula(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title + CabinNumber + CabinSection)
+
 set.seed(random_seed)
-mars_formula_exp = formula (Survived ~ Sex +  Pclass + Siblings + Fare + Title + CabinNumber + surv_family_count + died_family_count)
+mars_formula_exp = formula (Survived ~  Pclass + Siblings + Fare + Title + CabinNumber + surv_family_count + died_family_count)
 model.mars_exp <- earth(mars_formula_exp, 
                     data = full_df[train_index, all.vars(mars_formula_exp)], 
                     glm=list(family=binomial), degree = 2, nfold = 3)
@@ -892,14 +887,13 @@ model.mars_exp <- earth(mars_formula_exp,
 #plot(model.mars_exp)
 #summary(model.mars_exp)
 #par(mfrow=c(1,1))
-#plot(evimp(model.mars_exp))
+#print(evimp(model.mars_exp))
 #plotmo(model.mars)
 
 pred.mars_exp = as.vector(predict(model.mars_exp, type = 'response', newdata = full_df))
 
-# max:  0.867021276595745
-cat(paste("MARS ccr:", model_ccr(full_df$Survived[test_index], pred.mars_exp[test_index])))
-cat(paste("MARS ccr:", sum(is.na(pred.mars_exp[test_index]))))
+# max:  0.811004784688995
+cat(paste("MARS ccr:", model_ccr(full_df$Survived[test_index], pred.mars_exp[test_index]), sum(is.na(pred.mars_exp[test_index]))))
 plot_binmodel_predictions(full_df$Survived[test_index], pred.mars_exp[test_index])
 
 #print errors
@@ -913,7 +907,7 @@ plot_binmodel_predictions(full_df$Survived[test_index], pred.mars_exp[test_index
 
 ### Random Forest (Experimental)
 ```{r rf_exp, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE}
-model.rf_exp <- randomForest(Surv ~ Sex +  Pclass + Siblings + Fare + Title + CabinNumber + surv_family_count + died_family_count, 
+model.rf_exp <- randomForest(Surv ~ Age + Sex +  Pclass + Siblings + Fare + Title + CabinNumber + surv_family_count + died_family_count, 
                              data =  full_df[train_index,],
                              ntree=2000,
                              mtry = 2)
@@ -921,7 +915,7 @@ model.rf_exp <- randomForest(Surv ~ Sex +  Pclass + Siblings + Fare + Title + Ca
 pred.rf_exp = to_numeric(predict(model.rf_exp, newdata = full_df))
 
 importance(model.rf_exp)
-# max: 0.782296650717703
+# max so far: 0.80622009569378
 cat(paste("random forest ccr:", model_ccr(full_df$Survived[test_index], pred.rf_exp[test_index])))
 plot_binmodel_predictions(full_df$Survived[test_index], pred.rf_exp[test_index])
 
@@ -932,8 +926,8 @@ plot_binmodel_predictions(full_df$Survived[test_index], pred.rf_exp[test_index])
 ```{r svm_exp, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE}
 library("e1071")
 
-svn_formula = formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + CabinNumber)
-model.svm_exp <- svm(svn_formula, data=full_df[train_index,], cost = 16, gamma = 0.09)
+svn_formula = formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + CabinNumber + surv_family_count + died_family_count)
+model.svm_exp <- svm(svn_formula, data=full_df[train_index,], cost = 1, gamma = 0.125)
 summary(model.svm_exp)
 
 #svm_tune <- tune(svm, train.x=svn_formula,  data=full_df[train_index,],
@@ -943,7 +937,7 @@ summary(model.svm_exp)
 
 
 pred.svm_exp = to_numeric(predict(model.svm_exp, newdata = full_df))
-# max: 0.791866028708134
+# max: 0.803827751196172
 cat(paste("svm ccr:", model_ccr(full_df$Survived[test_index], pred.svm_exp[test_index])))
 plot_binmodel_predictions(full_df$Survived[test_index], pred.svm_exp[test_index])
 
@@ -992,9 +986,13 @@ plot_binmodel_predictions(full_df$Survived[test_index], pred.np_ex[test_index])
 ### N-Networks Experimental
 ```{r nnet_exp, fig.width = 8, fig.height = 6, dpi = 100, eval = FALSE}
 set.seed(random_seed)
-model.nnet_exp <- nnet(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title + CabinSection + CabinNumber, 
-                   data = full_df[train_index,], size=c(6), maxit = 5000, trace=TRUE, decay = 1e-4)
+model.nnet_exp <- nnet(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare, 
+                   data = full_df[train_index,], size=6, maxit = 1000, trace=FALSE, decay = 1e-4)
 pred.nnet_exp <- predict(model.nnet_exp, newdata = full_df)
+
+#tune.nnet(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title + CabinSection + CabinNumber + surv_family_count + died_family_count, data = full_df[train_index,], size = 1:7, tunecontrol = tune.control(nrepeat = 10, cross = 3))
+
+# max: 0.779904
 
 print(model.nnet_exp)
 

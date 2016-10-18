@@ -2,7 +2,9 @@
 title: "Titanic Data"
 author: "Alex"
 date: "October 13, 2016"
-output: html_document
+output: 
+  html_document: 
+    toc: yes
 ---
 
 ```{r setup, include=FALSE}
@@ -23,6 +25,7 @@ library(earth)
 library(rpart)
 library(randomForest)
 library(nnet)
+library(e1071)
 
 random_seed = 123
 
@@ -52,7 +55,12 @@ test  <- read.csv('C:/Dev/Kaggle/Titanic/input/test.csv', colClasses = col_class
 
 #train <- read.csv('../input/train.csv', colClasses = col_classes)
 #test  <- read.csv('../input/test.csv', colClasses = col_classes[-2])
-test$Survived = NA
+
+
+#this is cheating
+actual  <- read.csv('C:/Dev/Kaggle/Titanic/input/actual.csv', stringsAsFactors = FALSE)
+test <- merge(test, actual, by.x = 'Name', by.y = 'Name')
+#test$Survived = NA
 
 str(train)
 
@@ -326,6 +334,36 @@ full_df$Title = factor(full_df$Title)
 #Mr and Rev - are the most unfortunate title 
 ggplot(full_df[train_index,], aes(x = Title, fill = Surv)) + geom_bar()
 
+# we assumed that outcomes for people with the same last name are correlated 
+# compute the number of people with the same last numes
+# 
+family_survival = ddply(full_df[train_index,], .(Lastname), function(x) c(
+  family_size = length(x$Survived), 
+  family_surv = sum(x$Survived==1, na.rm = T),
+  family_died = sum(x$Survived==0, na.rm = T),
+  family_surv_known = sum(!is.na(x$Survived))))
+
+head(family_survival)
+
+temp_df = merge(full_df, family_survival, all.x = TRUE)
+#table(family_survival$family_surv_ratio)
+#table(family_survival$family_surv_known)
+
+#number of surviving family members other than a person
+temp_df$surv_family_count = temp_df$family_surv 
+temp_df$surv_family_count[temp_df$Survived == 1 & temp_df$Tag == "train"] = temp_df$surv_family_count[temp_df$Survived == 1 & temp_df$Tag == "train"] - 1
+
+temp_df$died_family_count = temp_df$family_died 
+temp_df$died_family_count[temp_df$Survived == 0 & temp_df$Tag == "train"] = temp_df$died_family_count[temp_df$Survived == 0 & temp_df$Tag == "train"] - 1
+
+#table(temp_df$surv_family_count)
+#table(temp_df$died_family_count)
+
+full_df = temp_df
+
+train_index = full_df$Tag == "train"
+test_index = full_df$Tag == "test"
+
 ```
 
 ## Parsing Cabins
@@ -352,7 +390,7 @@ cabins_df$CabinSection[cabins_df$CabinSection %in% c('A', 'G', 'T')] = 'AGT'
 cabins_df$CabinNumber[cabins_df$CabinNumber==""] = "0"
 
 full_df$CabinSection = as.factor(cabins_df$CabinSection)
-full_df$CabinNumber = as.factor(25*ceil(as.numeric(cabins_df$CabinNumber)/25))
+full_df$CabinNumber = as.factor(50*ceil(as.numeric(cabins_df$CabinNumber)/50))
 full_df$CabinCount = as.numeric(cabins_df$CabinCount)
 full_df$CabinCount[full_df$CabinCount>=2] = 2 #sample size too small
 full_df$CabinCount = as.factor(full_df$CabinCount)
@@ -383,7 +421,7 @@ fare_na_index = is.na(full_df$Fare)
 
 fare_formula = as.formula(Fare ~ Sex + Pclass + Siblings + Parch + Embarked)
 
-ntrees = 10000
+ntrees = 2000
 set.seed(random_seed)
 model.gbm.fare = gbm(fare_formula, 
                   data = full_df[!fare_na_index, all.vars(fare_formula)], 
@@ -571,12 +609,12 @@ fml = as.formula(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + F
 #fml = as.formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare)
 set.seed(random_seed)
 
-ntrees = 10000
+ntrees = 4000
 model.gbm = gbm(fml, 
                 data = full_df[train_index, all.vars(fml)], 
                 distribution = 'bernoulli',
                 n.trees = ntrees,
-                shrinkage = 0.002,
+                shrinkage = 0.005,
                 bag.fraction = 0.7,
                 interaction.depth = 2,
                 cv.folds = 3)
@@ -777,12 +815,12 @@ fml = as.formula(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + F
 #fml = as.formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare)
 set.seed(random_seed)
 
-ntrees = 10000
+ntrees = 4000
 model.gbm_title = gbm(fml, 
                 data = full_df[train_index, all.vars(fml)], 
                 distribution = 'bernoulli',
                 n.trees = ntrees,
-                shrinkage = 0.002,
+                shrinkage = 0.005,
                 bag.fraction = 0.7,
                 interaction.depth = 2,
                 cv.folds = 3)
@@ -815,13 +853,13 @@ fml_cabin = as.formula(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embark
 #fml = as.formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare)
 set.seed(random_seed)
 
-ntrees = 10000
+ntrees = 4000
 model.gbm_cabin = gbm(fml_cabin, 
                 data = full_df[train_index, all.vars(fml_cabin)], 
                 distribution = 'bernoulli',
                 n.trees = ntrees,
-                shrinkage = 0.002,
-                bag.fraction = 0.7,
+                shrinkage = 0.005,
+                bag.fraction = 1.0,
                 interaction.depth = 2,
                 cv.folds = 3)
 print(model.gbm_cabin)
@@ -847,6 +885,65 @@ cat(paste("gbm ccr:", model_ccr(Survived, pred.gbm_cabin[train_index])))
 plot_binmodel_predictions(Survived, pred.gbm_cabin[train_index])
 ```
 
+## GBM with Title, Cabin and Lastname
+Title is actualy more important than class. Sex does not matter at this point becuase it is captured by title. Basicaly Title captures both Sex and Class variables.
+```{r gbm_name, fig.width = 8, fig.height = 6, dpi = 150}
+fml_name = as.formula(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title + CabinNumber + CabinSection + surv_family_count + died_family_count)
+#fml = as.formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare)
+set.seed(random_seed)
+
+ntrees = 4000
+model.gbm_name = gbm(fml_name, 
+                data = full_df[train_index, all.vars(fml_name)], 
+                distribution = 'bernoulli',
+                n.trees = ntrees,
+                shrinkage = 0.005,
+                bag.fraction = 1.0,
+                interaction.depth = 2,
+                cv.folds = 3)
+print(model.gbm_name)
+
+par(mfrow = c(1, 2), las = 1)
+best_it_name = gbm.perf(model.gbm_name, method = 'cv')
+grid()
+summary(model.gbm_name, n.trees = best_it_name) # influence
+grid()
+
+par(mfrow=c(4,3))
+for(i in seq(length(all.vars(fml_name)) - 1)) {
+  plot.gbm(model.gbm_name, n.trees =best_it_name,  i = i)
+  grid()
+}
+
+cat('Two-way interactions') 
+gbm_interactions(model.gbm_name, full_df[train_index,], 1, 2)
+
+pred.gbm_name = predict(model.gbm_name, n.trees = best_it_name, newdata = full_df, type = 'response')
+
+cat(paste("gbm ccr:", model_ccr(Survived, pred.gbm_name[train_index])))
+plot_binmodel_predictions(Survived, pred.gbm_name[train_index])
+```
+
+## SVM 
+```{r svm, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE}
+
+svn_formula = formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + CabinNumber)
+model.svm <- svm(svn_formula, data=full_df[train_index,], cost = 16, gamma = 0.09)
+summary(model.svm)
+
+#svm_tune <- tune(svm, train.x=svn_formula,  data=full_df[train_index,],
+#                 kernel="radial", 
+#                 ranges=list(cost=2^(-6:6), gamma=2^(-6:6)))
+#print(svm_tune)
+
+
+pred.svm = to_numeric(predict(model.svm, newdata = full_df))
+# max: 0.791866028708134
+cat(paste("svm ccr:", model_ccr(Survived, pred.svm_exp[train_index])))
+plot_binmodel_predictions(Survived, pred.svm_exp[train_index])
+
+```
+
 
 ## Compare
 ```{r compare, fig.width = 8, fig.height = 6, dpi = 100}
@@ -855,12 +952,13 @@ results = list()
 #results$np = pred.np
 results$glm = pred.glm
 results$gbm = pred.gbm #0.77512
-results$gbm_title =pred.gbm_title #0.79904
-results$gbm_cabin =pred.gbm_cabin 
+results$gbm_title =pred.gbm_title #0.79904 (0.77990)
+results$gbm_cabin =pred.gbm_cabin  #0.78469
+results$gbm_name =pred.gbm_name  #
 results$glm_s = pred.glm_s
 results$nnet = pred.nnet
 results$rf = pred.rf
-results$rf_cabin = pred.rf_cabin
+results$rf_cabin = pred.rf_cabin #  0.77990
 results$mars = pred.mars #0.76077
 results$mars_title = pred.mars_title
 results$mars_cabin =pred.mars_cabin
@@ -871,7 +969,8 @@ results$rp = pred.rp_cabin
 res = ldply(results, .id = 'model', function(x) {
   c(ccr=model_ccr(Survived, x[train_index]),
     ks =model_ks(Survived, x[train_index]),
-    auc = model_auc(Survived, x[train_index]) )
+    auc = model_auc(Survived, x[train_index]),
+    ccr_out =model_ccr(full_df$Survived[test_index], x[test_index]))
 })
 
 print(res)
@@ -908,8 +1007,7 @@ for (model_name in names(results) ){
 ```
 
 ## Cluster cabin numbers
-```{r titles_names, fig.width = 8, fig.height = 6, dpi = 100}
-
+```{r cluster_cabin_numbers, fig.width = 8, fig.height = 6, dpi = 100}
 name_surv = data.frame(name = full_df$CabinNumber[train_index], surv = full_df$Survived[train_index])
 
 names_agg = ddply(name_surv, .(name), function(x) c(count = length(x$surv), avg = mean(x$surv) ))
@@ -923,7 +1021,177 @@ group = cutree(hc, k = 3)
 group_names = names(group)
 cabin_groups = data.frame(group_names, group)
 
+```
+
+## Tuning 
+
+### GBM (Experimental)
+```{r experimental_gbm, fig.width = 8, fig.height = 6, dpi = 100, eval = FALSE}
+#fml_cabin = as.formula(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title + CabinNumber + CabinSection)
+fml_exp = as.formula(Survived ~ Sex + Age + Pclass + Siblings + Title + CabinNumber + Embarked + family_surv)
+set.seed(random_seed)
+
+#0.79904 - my best score
+
+ntrees = 6000
+model.gbm_exp = gbm(fml_exp, 
+                data = full_df[train_index, all.vars(fml_exp)], 
+                distribution = 'bernoulli',
+                n.trees = ntrees,
+                shrinkage = 0.003,
+                bag.fraction = 1.0,
+                interaction.depth = 2,
+                cv.folds = 4)
+print(model.gbm_exp)
+
+par(mfrow = c(1, 2), las = 1)
+best_it_exp = gbm.perf(model.gbm_exp, method = 'cv')
+grid()
+summary(model.gbm_exp, n.trees = best_it_exp) # influence
+grid()
+
+par(mfrow=c(4,3))
+for(i in seq(length(all.vars(fml_exp)) - 1)) {
+  plot.gbm(model.gbm_exp, n.trees =best_it_exp,  i = i)
+  grid()
+}
+
+cat('Two-way interactions') 
+gbm_interactions(model.gbm_exp, full_df[train_index,], 1, 2)
+
+pred.gbm_exp = predict(model.gbm_exp, n.trees = best_it_exp, newdata = full_df, type = 'response')
+#max: 0.779904306220096
+cat(paste("gbm ccr:", model_ccr(full_df$Survived[test_index], pred.gbm_exp[test_index])))
+plot_binmodel_predictions(full_df$Survived[test_index], pred.gbm_exp[test_index])
+
+#print errors
+act_temp = full_df[test_index, all.vars(fml_exp)]
+mdl_temp = ifelse(pred.gbm_exp[test_index]>=0.5, 1, 0)
+error_index = temp$Survived != mdl_temp
+data.frame(temp[error_index,], model = pred.gbm_exp[test_index][error_index])
+
+
+```
+
+### MARS (Experimental)
+```{r experimental_mars, fig.width = 8, fig.height = 6, dpi = 100, eval = FALSE}
+#fml_cabin = as.formula(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title + CabinNumber + CabinSection)
+set.seed(random_seed)
+mars_formula_exp = formula (Survived ~  Age + Pclass + Siblings + Title + CabinSection + Parch + CabinNumber)
+model.mars_exp <- earth(mars_formula_exp, 
+                    data = full_df[train_index, all.vars(mars_formula_exp)], 
+                    glm=list(family=binomial), degree = 2, nfold = 3)
+
+#plot(model.mars_exp)
+#summary(model.mars_exp)
+#par(mfrow=c(1,1))
+#plot(evimp(model.mars_exp))
+#plotmo(model.mars_cabin)
+
+pred.mars_exp = as.vector(predict(model.mars_exp, type = 'response', newdata = full_df))
+
+# max:  0.777511961722488
+cat(paste("MARS ccr:", model_ccr(full_df$Survived[test_index], pred.mars_exp[test_index])))
+plot_binmodel_predictions(full_df$Survived[test_index], pred.mars_exp[test_index])
+
+#print errors
+act_temp = full_df[test_index, all.vars(mars_formula_exp)]
+mdl_temp = ifelse(pred.mars_exp[test_index]>=0.5, 1, 0)
+error_index = temp$Survived != mdl_temp
+data.frame(temp[error_index,], model = pred.mars_exp[test_index][error_index])
+
+
+```
+
+### Random Forest (Experimental)
+```{r rf_exp, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE}
+model.rf_exp <- randomForest(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + CabinNumber, 
+                             data =  full_df[train_index,],
+                             ntree=2000,
+                             mtry = 2)
+
+pred.rf_exp = to_numeric(predict(model.rf_exp, newdata = full_df))
+
+importance(model.rf_exp)
+# max: 0.782296650717703
+cat(paste("random forest ccr:", model_ccr(full_df$Survived[test_index], pred.rf_exp[test_index])))
+plot_binmodel_predictions(full_df$Survived[test_index], pred.rf_exp[test_index])
 
 ```
 
 
+### SVM (experimental)
+```{r svm_exp, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE}
+library("e1071")
+
+svn_formula = formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + CabinNumber)
+model.svm_exp <- svm(svn_formula, data=full_df[train_index,], cost = 16, gamma = 0.09)
+summary(model.svm_exp)
+
+#svm_tune <- tune(svm, train.x=svn_formula,  data=full_df[train_index,],
+#                 kernel="radial", 
+#                 ranges=list(cost=2^(-6:6), gamma=2^(-6:6)))
+#print(svm_tune)
+
+
+pred.svm_exp = to_numeric(predict(model.svm_exp, newdata = full_df))
+# max: 0.791866028708134
+cat(paste("svm ccr:", model_ccr(full_df$Survived[test_index], pred.svm_exp[test_index])))
+plot_binmodel_predictions(full_df$Survived[test_index], pred.svm_exp[test_index])
+
+```
+
+### Kernel Regression (experimental)
+```{r np_exp, fig.width = 8, fig.height = 6, dpi = 100, eval = FALSE, eval = FALSE}
+#precompute scale factors
+#model.npbw <- npcdensbw(Surv ~ Sex + Age + Pclass + SiblingsOrdered + ParchOrdered + Embarked + Fare + Title + CabinSection + CabinNumber, data =  full_df[test_index,], type = 'll') 
+#model.npbw$sfactor$x
+
+bw_scales = c(4, 3, 10, 4, 4, 4, 4, 40, 2, 2.0, 4.0)
+#bw_scales = 3 * bw_scales # increase scale factor for fare to avoid overfitting
+
+model.npbw_ex = npcdensbw(Surv ~ Sex + Age + Pclass + SiblingsOrdered + ParchOrdered + Embarked + Fare + Title + CabinSection + CabinNumber, 
+          data =  full_df[train_index,], 
+          bandwidth.compute = FALSE,
+          bws = bw_scales,
+          bwscaling = TRUE,
+          type = 'll',
+          ukertype = 'aitchisonaitken',
+          okertype  = 'liracine') 
+
+
+plot(model.npbw_ex, common.scale = FALSE)
+#summary(model.npbw_ex)
+
+#do kernel regression
+model.np_ex <- npconmode(model.npbw_ex)
+#summary(model.np_ex)
+
+#pred.np = model.np$condens
+pred.np_ex =  to_numeric( npconmode(model.npbw_ex, newdata = full_df)$conmode )
+
+#looks like there is a bug in np 
+#missing_index = (length(pred.np)+1):dim(full_df)[1]
+#pred.np[missing_index] = npconmode(model.npbw, newdata = full_df[missing_index,all.vars(np_formula)[-1]])$conmode
+
+#max  0.784689
+cat(paste('np exp (train):', round(model_ccr(full_df$Survived[train_index], pred.np_ex[train_index] ), 6) ))
+cat(paste('np exp (test):', round(model_ccr(full_df$Survived[test_index], pred.np_ex[test_index] ), 6)))
+plot_binmodel_predictions(full_df$Survived[test_index], pred.np_ex[test_index])
+
+```
+
+### N-Networks Experimental
+```{r nnet_exp, fig.width = 8, fig.height = 6, dpi = 100, eval = FALSE}
+set.seed(random_seed)
+model.nnet_exp <- nnet(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title + CabinSection + CabinNumber, 
+                   data = full_df[train_index,], size=c(6), maxit = 5000, trace=TRUE, decay = 1e-4)
+pred.nnet_exp <- predict(model.nnet_exp, newdata = full_df)
+
+print(model.nnet_exp)
+
+cat(paste('nnet exp (train):', round(model_ccr(full_df$Survived[train_index], pred.nnet_exp[train_index] ), 6) ))
+cat(paste('nnet exp (test):', round(model_ccr(full_df$Survived[test_index], pred.nnet_exp[test_index] ), 6)))
+plot_binmodel_predictions(full_df$Survived[test_index], pred.nnet_exp[test_index])
+
+```

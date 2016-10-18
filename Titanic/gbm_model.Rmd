@@ -393,7 +393,7 @@ cabins_df$CabinSection[cabins_df$CabinSection %in% c('A', 'G', 'T')] = 'AGT'
 cabins_df$CabinNumber[cabins_df$CabinNumber==""] = "0"
 
 full_df$CabinSection = as.factor(cabins_df$CabinSection)
-full_df$CabinNumber = as.factor(50*ceil(as.numeric(cabins_df$CabinNumber)/50))
+full_df$CabinNumber = as.factor(40*ceil(as.numeric(cabins_df$CabinNumber)/40))
 full_df$CabinCount = as.numeric(cabins_df$CabinCount)
 full_df$CabinCount[full_df$CabinCount>=2] = 2 #sample size too small
 full_df$CabinCount = as.factor(full_df$CabinCount)
@@ -413,6 +413,39 @@ ggplot(full_df[train_index,], aes(x = CabinCount, fill = Surv)) + geom_bar()
 ggplot(full_df[train_index,], aes(x = CabinSection, fill = Surv)) + geom_bar()
 ggplot(full_df[train_index,], aes(x = CabinNumber, fill = Surv)) + geom_bar()
 
+```
+
+
+## Parsing Ticket
+```{r parsing_ticket, fig.width = 8, fig.height = 6, dpi = 100}
+
+ticket_df = adply(full_df$Ticket,1, function(x) {
+  tokens = unlist(strsplit(x, split='[ ]')) #split string
+  n = length(tokens)
+  if(n==1){
+    c(TicketPrefix = "", TicketNumber = tokens[1])
+  }else if(n>=1){
+    c(TicketPrefix = paste(tokens[-n], collapse = ''), TicketNumber = tokens[n])
+  }else{
+    c(TicketPrefix = "", TicketNumber = "0")
+    }
+  })
+
+ticket_df$TicketNumber[ticket_df$TicketNumber == ""]
+
+ticket_df$TicketPrefix[ticket_df$TicketPrefix != 'PC'] = "NA"
+
+#table(ticket_df$TicketPrefix)
+
+full_df$TicketPrefix = as.factor(ticket_df$TicketPrefix)
+full_df$TicketNumber = to_numeric(ticket_df$TicketNumber)
+full_df$TicketNumber[is.na(full_df$TicketNumber)] = 0
+
+#table(full_df$TicketPrefix,full_df$Survived)
+
+#not useful 
+ggplot(full_df[train_index,], aes(x = TicketPrefix, fill = Surv)) + geom_bar()
+ggplot(full_df[train_index,], aes(x = TicketNumber, fill = Surv)) + geom_bar()
 ```
 
 
@@ -837,7 +870,7 @@ cabin_groups = data.frame(group_names, group)
 #fml_cabin = as.formula(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title + CabinNumber + CabinSection)
 #fml_exp = as.formula(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + Title + CabinNumber + CabinSection + surv_family_count + died_family_count )
 
-fml_exp = as.formula(Survived ~ Sex + Pclass + Fare + Title + CabinNumber  + surv_family_count + died_family_count)
+fml_exp = as.formula(Survived ~ Sex + Pclass + Fare + Title + CabinNumber + surv_family_count + died_family_count)
 
 set.seed(random_seed)
 
@@ -863,8 +896,8 @@ for(i in seq(length(all.vars(fml_exp)) - 1)) {
   grid()
 }
 
-cat('Two-way interactions') 
-gbm_interactions(model.gbm_exp, full_df[train_index,], 1, 2)
+#cat('Two-way interactions') 
+#gbm_interactions(model.gbm_exp, full_df[train_index,], 1, 2)
 
 pred.gbm_exp = predict(model.gbm_exp, n.trees = best_it_exp, newdata = full_df, type = 'response')
 #max: 0.813397129186603
@@ -872,6 +905,17 @@ cat(paste("gbm ccr:", model_ccr(full_df$Survived[train_index], pred.gbm_exp[trai
 cat(paste("gbm ccr:", model_ccr(full_df$Survived[test_index], pred.gbm_exp[test_index]), sum(is.na(pred.gbm_exp[test_index]))))
 
 #plot_binmodel_predictions(full_df$Survived[test_index], pred.gbm_exp[test_index])
+
+#print errors
+#temp = full_df[test_index, ]
+#act_temp = temp$Survived
+#mdl_temp = ifelse(pred.gbm_exp[test_index]>=0.5, 1, 0)
+#error_index = act_temp != mdl_temp
+#a = data.frame(temp[error_index,], model = pred.gbm_exp[test_index][error_index])
+#write.table(a, "clipboard", sep="\t", row.names=FALSE)
+
+data.frame(full_df$Lastname[test_index], act_temp, mdl_temp, pred.gbm_exp[test_index])[error_index,]
+
 ```
 
 ### MARS (Experimental)

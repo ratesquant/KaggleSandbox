@@ -124,6 +124,7 @@ confusion_matrix = function(actual, model, threshold = 0.5) {
   
   cm$neg = sum(actual == 0)
   cm$pos = sum(actual == 1)
+  cm$ccr = (cm$true_pos + cm$true_neg) / (cm$neg + cm$pos)
   
   return (cm)
 } 
@@ -139,18 +140,26 @@ plot_binmodel_predictions<-function(actual, model){
 
 #plot ROC curve
 plot_binmodel_roc<-function(actual, model){
-  thresholds = seq(0, 1, by = 0.01)
+  dt = 0.01
+  thresholds = seq(0, 1, by = dt)
   res = ldply(thresholds, .id = "threshold", function(x) {
     cm = confusion_matrix(actual, model, x)
     tp = cm$true_pos/cm$pos
     fp = cm$false_pos/cm$neg
-    data.frame(threshold = x, tp, fp)
+    ccr = cm$ccr
+    data.frame(threshold = x, tp, fp, ccr)
   })
+  
+  fp05 = res$fp[abs(res$threshold - 0.5)<dt][1]
   
   auc = trapez_rule_integration(res$fp, res$tp)
   
-  ggplot(res, aes(fp, tp, color = threshold)) +  geom_point(size = 1) + geom_line(size = 1)  + xlim(0, 1) + ylim(0, 1) +
-  geom_abline(slope = 1, intercept = 0, colour = 'red', linetype = 2) +
+  ggplot(res, aes(fp, tp, color = threshold )) +  
+    geom_point(size = 1) + 
+    geom_line(size = 0.5)  + xlim(0, 1) + ylim(0, 1) +
+    geom_point(aes(fp, ccr), size = 1) + 
+    geom_abline(slope = 1, intercept = 0, colour = 'red', linetype = 2) +
+    geom_vline(xintercept  = fp05, colour = 'blue', linetype = 2) +
   labs(x = "false positive",   y = "true positive") +
   ggtitle(paste('auc:', round(auc, 6) ))
 }
@@ -813,8 +822,8 @@ res = ldply(results, .id = 'model', function(x) {
 
 print(res)
 
-ggplot(res, aes(model, ccr)) + geom_bar(stat = "identity") 
-ggplot(res, aes(model, ks)) + geom_bar(stat = "identity") 
+ggplot(res, aes(model, ccr)) + geom_bar(stat = "identity") + coord_flip() + coord_cartesian(ylim = c(0.9*min(res$ccr), 1.0))
+ggplot(res, aes(model, ks)) + geom_bar(stat = "identity") + coord_flip() + coord_cartesian(ylim = c(0.9*min(res$ks), 100.0))
 
 ```
 

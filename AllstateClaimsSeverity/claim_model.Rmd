@@ -70,12 +70,12 @@ train_index3 = !train_index2 & train_index         #out of sample, sample 3 and 
 #combine rare levels for categorical variables 
 #sapply(df, class)
 #sort(table(df$75))
-min_count = 1000
+min_count = 100
 tag_name = "OTHER"
 for(cn in cat_vars){
   temp = df[,cn]
   temp = as.character(temp)
-  temp[temp %in% names(which(table(temp)<min_count))] = tag_name
+  temp[temp %in% names(which(table(temp[train_index])<min_count))] = tag_name
   
   #spread observations among other factors 
   other_count = sum(temp==tag_name)
@@ -96,6 +96,7 @@ cat_vars_fake = names(which( sapply(df[,cat_vars], function(x) length(levels(x))
 cat_vars = setdiff(cat_vars, cat_vars_fake)
 cont_vars = cols[grep("cont", cols)]
 allvars = union ( cat_vars , cont_vars) 
+formula.loss = formula (paste( 'loss ~', paste(allvars, collapse = '+')) )
 formula.all = formula (paste( 'log_loss ~', paste(allvars, collapse = '+')) )
 formula.cont = formula (paste( 'log_loss ~', paste(cont_vars, collapse = '+')) )
 formula.cat = formula (paste( 'log_loss ~', paste(cat_vars, collapse = '+')) )
@@ -173,9 +174,10 @@ top 20 variables explain about 90% of variance
 top 43 variables explain about 98% of variance
 
 ### Recursive Partitioning
-```{r rpart, fig.width = 8, fig.height = 6, dpi = 150}
+rp (in/out): 0.3377 0.3378 0
+```{r rpart, fig.width = 8, fig.height = 6, dpi = 100}
 model.rp = rpart(formula.all,
-                 data = df[train_index1,], 
+                 data = df[train_index2,], 
                  control = rpart.control(cp = 0.01, minsplit = 20))
 
 printcp(model.rp)
@@ -207,6 +209,19 @@ cat(paste('rf (in/out):',
           sum(is.na(pred.rf)) ))
 ```
 
+### Box-Cox Regression
+lambda = 0.1 (log is a good choice)
+```{r boxcox, fig.width = 8, fig.height = 6, dpi = 100}
+
+par(mfrow=c(2,1))
+boxcox(formula.loss, data = df[train_index2, all.vars(formula.loss)], 
+                   lambda = seq(-0.5, 0.5, 1/10))
+grid()
+boxcox(formula.loss, data = df[train_index3, all.vars(formula.loss)], 
+                   lambda = seq(-0.5, 0.5, 1/10))
+grid()
+
+```
 ### Linear Regression
 lm (in/out): 0.5183 0.5135 0 (1244.69108)
 ```{r lm, fig.width = 8, fig.height = 6, dpi = 100}
@@ -223,11 +238,11 @@ cat(paste('lm (in/out):',
 
 ### Stepwise Regression
 15 variables
-step (in/out): 0.486 0.484 0
+step (in/out):  0.4969 0.4948 0
 
-log_loss ~ cat80 + cat101 + cat100 + cat103 + cat111 + cat114 + 
-    cont7 + cat112 + cat79 + cat57 + cat81 + cont2 + cat53 + 
-    cat44 + cat12
+log_loss ~ cat80 + cat101 + cat100 + cat103 + cat111 + 
+    cat114 + cont7 + cat112 + cat79 + cat57 + cat81 + cont2 + 
+    cat53 + cat44 + cat12 + cat72 + cat113 + cat1 + cat26 + cat87
 
 ```{r step, fig.width = 8, fig.height = 6, dpi = 100}
 model.null <- lm(log_loss ~ 1, data = df[train_index1, all.vars(formula.all)])
@@ -271,7 +286,7 @@ cat(paste('mars (in/out):',
 
 
 ### GBM
-gbm (in/out): 0.5428 0.5322 0 (1177.31384)
+gbm (in/out): 0.5428 0.5322 0 (1171.57843)
 cat80   cat80 3.159216e+01
 cat79   cat79 9.135857e+00
 cat101 cat101 7.986626e+00
@@ -292,17 +307,22 @@ cat113 cat113 1.187182e+00
 cat116 cat116 1.166922e+00
 cat44   cat44 1.159283e+00
 cat72   cat72 1.155994e+00
+try shrinkage from 0.01 to 0.001, cv.folds = 5
 ```{r gbm, fig.width = 8, fig.height = 6, dpi = 150}
 set.seed(random_seed)
 
-ntrees = 10000
+max_it = 5000
 model.gbm = gbm(formula.all, 
-                data = df[train_index2, all.vars(formula.all)], 
+                data = df[train_index, all.vars(formula.all)], 
                 distribution = 'gaussian',
-                n.trees = ntrees,
-                shrinkage = 0.01,#0.005
+                n.trees = max_it,
+                shrinkage = 0.005,#0.005
+                bag.fraction = 0.5,
                 interaction.depth = 2,
-                cv.folds = 3)
+                cv.folds = 3,
+                n.cores = 1,
+                verbose = TRUE)
+
 print(model.gbm)
 
 par(mfrow = c(1, 2), las = 1)
@@ -312,8 +332,8 @@ vars.importance = summary(model.gbm, n.trees = best_it) # influence
 print(vars.importance)
 grid()
 
-par(mfrow=c(4,4))
-for(i in seq( pmin(16, length(vars.importance$var))) ) {
+par(mfrow=c(5, 4))
+for(i in seq( pmin(20, length(vars.importance$var))) ) {
   plot.gbm(model.gbm, n.trees =best_it,  i = as.character(vars.importance$var[i]) )
   grid()
 }
@@ -323,7 +343,7 @@ for(i in seq( pmin(16, length(vars.importance$var))) ) {
 
 pred.gbm = predict(model.gbm, n.trees = best_it, newdata = df)
 
-#gbm (in/out): 0.5428 0.5322 0
+#gbm (in/out): 0.5531 0.536 0
 cat(paste('gbm (in/out):', 
           round(r_sqr(df$log_loss[train_index2],  pred.gbm[train_index2]), 4),
           round(r_sqr(df$log_loss[train_index3],  pred.gbm[train_index3]), 4),
@@ -371,7 +391,7 @@ results = list()
 #results$mars =pred.mars
 results$lm =pred.lm
 results$step =pred.step
-results$gbm =pred.gbm
+results$gbm = pred.gbm
 
 #results$np = pred.np
 #results$glm = pred.glm
@@ -382,7 +402,7 @@ results$gbm =pred.gbm
 #results$rf = pred.rf
 #results$rp = pred.rp
 
-
+#
 res = ldply(results, .id = 'model', function(x) {
   c(r2_out = r_sqr(df$log_loss[train_index3],  x[train_index3]),
     r2_in = r_sqr(df$log_loss[train_index2],  x[train_index2]),
@@ -391,7 +411,7 @@ res = ldply(results, .id = 'model', function(x) {
 
 print(res)
 
-ggplot(res, aes(model, r2_out)) + geom_bar(stat = "identity") + coord_flip() + coord_cartesian(ylim = c(0.9*min(res$r2_out), 1.0))
+ggplot(res, aes(model, r2_out)) + geom_bar(stat = "identity") + coord_flip() + coord_cartesian(ylim = c(0.9*min(res$r2_out), min(1.0, 1.1*max(res$r2_out) ) ))
 
 ```
 

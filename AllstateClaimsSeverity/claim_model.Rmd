@@ -26,6 +26,7 @@ library(rpart)
 library(randomForest)
 library(nnet)
 library(e1071)
+library(MASS)
 
 random_seed = 123
 
@@ -87,11 +88,12 @@ for(cn in cat_vars){
 }
 
 #remove variables with one level
-cat_vars_fake = names(which( sapply(df[,cat_vars], function(x) length(levels(x)) ) == 1))
 
 #define variables
 cols = names(df)
-cat_vars = setdiff( cols[grep("cat", cols)], cat_vars_fake) 
+cat_vars = cols[grep("cat", cols)] 
+cat_vars_fake = names(which( sapply(df[,cat_vars], function(x) length(levels(x)) ) == 1))
+cat_vars = setdiff(cat_vars, cat_vars_fake)
 cont_vars = cols[grep("cont", cols)]
 allvars = union ( cat_vars , cont_vars) 
 formula.all = formula (paste( 'log_loss ~', paste(allvars, collapse = '+')) )
@@ -144,21 +146,36 @@ gbm_interactions <- function(gbm_model, data, min_influence = 1, degree = 2){
 ```{r overview, fig.width = 8, fig.height = 6, dpi = 100}
 
 ggplot(df[train_index,], aes(sample = log_loss )) + stat_qq()
-ggplot(df[train_index,], aes(loss, color = cat116)) + stat_ecdf()
+ggplot(df[train_index,], aes(log_loss)) + stat_density()
 
 #plot
+#cat80, cat79, cat101, cat100, cat12
+
 ggplot(df[train_index,], aes(x = loss, fill = cat1)) +stat_density()
-ggplot(df[train_index,], aes(x = cat75, log_loss)) + geom_boxplot() + coord_flip()
-ggplot(df, aes(cat75, fill = factor(tag) )) + geom_bar() 
+
+ggplot(df[train_index,], aes(x = cat80, log_loss)) + geom_boxplot() + coord_flip()
+ggplot(df[train_index,], aes(x = cat79, log_loss)) + geom_boxplot() + coord_flip()
+ggplot(df[train_index,], aes(x = cat101, log_loss)) + geom_boxplot() + coord_flip()
+ggplot(df[train_index,], aes(x = cat100, log_loss)) + geom_boxplot() + coord_flip()
+ggplot(df[train_index,], aes(x = cat12, log_loss)) + geom_boxplot() + coord_flip()
+
+ggplot(df, aes(cat80, fill = factor(tag) )) + geom_bar()
+ggplot(df, aes(cat79, fill = factor(tag) )) + geom_bar() 
+ggplot(df, aes(cat101, fill = factor(tag) )) + geom_bar() 
+ggplot(df, aes(cat100, fill = factor(tag) )) + geom_bar() 
+ggplot(df, aes(cat12, fill = factor(tag) )) + geom_bar() 
+
 ```
 
 
 ## Loss Prediction Models
+top 20 variables explain about 90% of variance
+top 43 variables explain about 98% of variance
 
 ### Recursive Partitioning
 ```{r rpart, fig.width = 8, fig.height = 6, dpi = 150}
-model.rp = rpart(Survived ~ Sex + Pclass + Siblings + Fare + Title + CabinNumber + surv_family_count + died_family_count,
-                 data = full_df[train_index,], 
+model.rp = rpart(formula.all,
+                 data = df[train_index1,], 
                  control = rpart.control(cp = 0.01, minsplit = 20))
 
 printcp(model.rp)
@@ -168,63 +185,73 @@ plotcp(model.rp)
 plot(model.rp, uniform=TRUE) 
 text(model.rp, use.n=TRUE, all=TRUE, cex=.8)
 
-pred.rp = predict(model.rp, newdata = full_df)
+pred.rp = predict(model.rp, newdata = df)
 
-cat(paste('rpart: ', model_ccr(Survived, pred.rp[train_index])))
-plot_binmodel_predictions(Survived, pred.rp[train_index])
-
+cat(paste('rp (in/out):', 
+          round(r_sqr(df$log_loss[train_index2],  pred.rp[train_index2]), 4),
+          round(r_sqr(df$log_loss[train_index3],  pred.rp[train_index3]), 4),
+          sum(is.na(pred.rp)) ))
 ```
 
 ### Random Forest
 ```{r rf, fig.width = 8, fig.height = 6, dpi = 100}
-model.rf <- randomForest(Surv ~ Sex +  Pclass + Siblings + Fare + Title + CabinNumber + surv_family_count + died_family_count, data =  full_df[train_index,])
+model.rf <- randomForest(formula.all, data =  df[train_index1,])
 
 pred.rf = to_numeric(predict(model.rf, newdata = full_df))
 
 importance(model.rf)
 
-cat(paste('random forest:', model_ccr(Survived, pred.rf[train_index])))
-plot_binmodel_predictions(Survived, pred.rf[train_index])
+cat(paste('rf (in/out):', 
+          round(r_sqr(df$log_loss[train_index2],  pred.rf[train_index2]), 4),
+          round(r_sqr(df$log_loss[train_index3],  pred.rf[train_index3]), 4),
+          sum(is.na(pred.rf)) ))
 ```
 
 ### Linear Regression
-r2 = 0.5148
+lm (in/out): 0.5183 0.5135 0 (1244.69108)
 ```{r lm, fig.width = 8, fig.height = 6, dpi = 100}
-model.lm <- lm(formula.all, data = df[train_index2, all.vars(formula.all)])
+model.lm <- lm(formula.all, data = df[train_index1, all.vars(formula.all)])
 
 summary(model.lm)
 pred.lm = predict(model.lm, newdata = df)
 
-cat(paste('lm (full/in/out):', 
-          round(r_sqr(df$log_loss[train_index],   pred.lm[train_index]), 4), 
+cat(paste('lm (in/out):', 
           round(r_sqr(df$log_loss[train_index2],  pred.lm[train_index2]), 4),
-          round(r_sqr(df$log_loss[train_index3],  pred.lm[train_index3]), 4) ))
-
+          round(r_sqr(df$log_loss[train_index3],  pred.lm[train_index3]), 4),
+          sum(is.na(pred.lm)) ))
 ```
 
+### Stepwise Regression
+15 variables
+step (in/out): 0.486 0.484 0
 
-### N-Networks
-```{r nnet, fig.width = 8, fig.height = 6, dpi = 100}
-set.seed(random_seed)
-model.nnet <- nnet(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare, 
-                   data = full_df[train_index,], size=6, maxit = 1000, trace=FALSE, decay = 1e-4)
-pred.nnet <- predict(model.nnet, newdata = full_df)
+log_loss ~ cat80 + cat101 + cat100 + cat103 + cat111 + cat114 + 
+    cont7 + cat112 + cat79 + cat57 + cat81 + cont2 + cat53 + 
+    cat44 + cat12
 
-print(model.nnet)
+```{r step, fig.width = 8, fig.height = 6, dpi = 100}
+model.null <- lm(log_loss ~ 1, data = df[train_index1, all.vars(formula.all)])
 
-cat(paste('Neural Networks:', model_ccr(Survived, pred.nnet[train_index])))
-plot_binmodel_predictions(Survived, pred.nnet[train_index])
+model.step = stepAIC(model.null, scope = list(upper = formula.all, lower = ~1), step = 20)
+
+summary(model.step)
+#anova(model.step)
+
+pred.step = predict(model.step, newdata = df)
+
+cat(paste('step (in/out):', 
+          round(r_sqr(df$log_loss[train_index2],  pred.step[train_index2]), 4),
+          round(r_sqr(df$log_loss[train_index3],  pred.step[train_index3]), 4),
+          sum(is.na(pred.step)) ))
+
 ```
 
 ### Multivariate Adaptive Regression Splines
 ```{r mars, fig.width = 8, fig.height = 6, dpi = 100}
 set.seed(random_seed)
 
-allvars = setdiff ( names(df), c('log_loss', 'loss', 'id', 'tag') ) 
-mars_formula = formula (paste( 'log_loss ~', paste(allvars, collapse = '+')) )
-
-model.mars <- earth(mars_formula, 
-                    data = df[train_index2, all.vars(mars_formula)], 
+model.mars <- earth(formula.cont, 
+                    data = df[train_index1, all.vars(formula.cont)], 
                     degree = 2, nfold = 3, trace = 3)
 
 plot(model.mars)
@@ -236,88 +263,76 @@ plot(evimp(model.mars))
 #0.495587497528404
 pred.mars = as.vector(predict(model.mars, newdata = df))
 
-cat(paste('MARS:', r_sqr(df$log_loss[train_index],  pred.mars[train_index]) ))
-cat(paste('MARS:', r_sqr(df$log_loss[train_index1],  pred.mars[train_index1]) ))
-cat(paste('MARS:', r_sqr(df$log_loss[train_index2],  pred.mars[train_index2]) ))
-cat(paste('MARS:', r_sqr(df$log_loss[train_index3],  pred.mars[train_index3]) ))
-```
-
-
-### Kernel Regression
-```{r np, fig.width = 8, fig.height = 6, dpi = 100, eval = FALSE}
-#precompute scale factors
-#model.npbw <- npcdensbw(Surv ~ Sex + Age + Pclass + SiblingsOrdered + ParchOrdered + Embarked + Fare, data =  full_df[train_index,]) 
-#model.npbw$sfactor$x
-bw_scales = c(0.07187361, 3.278909e-06, 3.442791e+00, 6.214479e-01, 4.397527e+00, 4.179354e+00, 3.655486e+00, 3.271476e+00)
-bw_scales[8] = 4 * bw_scales[8] # increase scale factor for fare to avoid overfitting
-
-np_formula = formula(Surv ~ Sex + Age + Pclass + SiblingsOrdered + ParchOrdered + Embarked + Fare)
-model.npbw = npcdensbw(Surv ~ Sex + Age + Pclass + SiblingsOrdered + ParchOrdered + Embarked + Fare, 
-          data =  full_df[train_index,all.vars(np_formula)], 
-          bandwidth.compute = FALSE,
-          bws = bw_scales,
-          bwscaling = TRUE) 
-
-plot(model.npbw)
-summary(model.npbw)
-
-#do kernel regression
-model.np <- npconmode(model.npbw)
-summary(model.np)
-
-#pred.np = model.np$condens
-pred.np =  to_numeric( npconmode(model.npbw, newdata = full_df[,all.vars(np_formula)[-1]])$conmode )
-
-#looks like there is a bug in np 
-#missing_index = (length(pred.np)+1):dim(full_df)[1]
-#pred.np[missing_index] = npconmode(model.npbw, newdata = full_df[missing_index,all.vars(np_formula)[-1]])$conmode
-
-cat(paste('np:', model_ccr(Survived, pred.np[train_index] )))
-plot_binmodel_predictions(Survived, pred.np[train_index])
-
+cat(paste('mars (in/out):', 
+          round(r_sqr(df$log_loss[train_index2],  pred.mars[train_index2]), 4),
+          round(r_sqr(df$log_loss[train_index3],  pred.mars[train_index3]), 4),
+          sum(is.na(pred.mars)) ))
 ```
 
 
 ### GBM
+gbm (in/out): 0.5428 0.5322 0 (1177.31384)
+cat80   cat80 3.159216e+01
+cat79   cat79 9.135857e+00
+cat101 cat101 7.986626e+00
+cat100 cat100 6.942942e+00
+cat12   cat12 4.391445e+00
+cat81   cat81 4.257994e+00
+cat112 cat112 3.818140e+00
+cat114 cat114 2.438633e+00
+cont2   cont2 2.331851e+00
+cat103 cat103 2.228449e+00
+cat57   cat57 2.169527e+00
+cat53   cat53 1.922854e+00
+cont7   cont7 1.593516e+00
+cat111 cat111 1.472601e+00
+cat1     cat1 1.286359e+00
+cat108 cat108 1.218852e+00
+cat113 cat113 1.187182e+00
+cat116 cat116 1.166922e+00
+cat44   cat44 1.159283e+00
+cat72   cat72 1.155994e+00
 ```{r gbm, fig.width = 8, fig.height = 6, dpi = 150}
-fml_name = as.formula(Survived ~ Pclass + Fare + Title + CabinNumber  + surv_family_count + died_family_count)
-#fml = as.formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare)
 set.seed(random_seed)
 
-ntrees = 4000
-model.gbm = gbm(fml_name, 
-                data = full_df[train_index, all.vars(fml_name)], 
-                distribution = 'bernoulli',
+ntrees = 10000
+model.gbm = gbm(formula.all, 
+                data = df[train_index2, all.vars(formula.all)], 
+                distribution = 'gaussian',
                 n.trees = ntrees,
-                shrinkage = 0.005,
-                bag.fraction = 1.0,
+                shrinkage = 0.01,#0.005
                 interaction.depth = 2,
                 cv.folds = 3)
 print(model.gbm)
 
 par(mfrow = c(1, 2), las = 1)
-best_it_name = gbm.perf(model.gbm, method = 'cv')
+best_it = gbm.perf(model.gbm, method = 'cv')
 grid()
-summary(model.gbm, n.trees = best_it_name) # influence
+vars.importance = summary(model.gbm, n.trees = best_it) # influence
+print(vars.importance)
 grid()
 
-par(mfrow=c(4,3))
-for(i in seq(length(all.vars(fml_name)) - 1)) {
-  plot.gbm(model.gbm, n.trees =best_it_name,  i = i)
+par(mfrow=c(4,4))
+for(i in seq( pmin(16, length(vars.importance$var))) ) {
+  plot.gbm(model.gbm, n.trees =best_it,  i = as.character(vars.importance$var[i]) )
   grid()
 }
 
-cat('Two-way interactions') 
-gbm_interactions(model.gbm, full_df[train_index,], 1, 2)
+#cat('Two-way interactions') 
+#gbm_interactions(model.gbm, df[train_index1,], 5, 2)
 
-pred.gbm = predict(model.gbm, n.trees = best_it_name, newdata = full_df, type = 'response')
+pred.gbm = predict(model.gbm, n.trees = best_it, newdata = df)
 
-cat(paste("gbm ccr:", model_ccr(Survived, pred.gbm[train_index])))
-plot_binmodel_predictions(Survived, pred.gbm[train_index])
+#gbm (in/out): 0.5428 0.5322 0
+cat(paste('gbm (in/out):', 
+          round(r_sqr(df$log_loss[train_index2],  pred.gbm[train_index2]), 4),
+          round(r_sqr(df$log_loss[train_index3],  pred.gbm[train_index3]), 4),
+          sum(is.na(pred.gbm)) ))
+
 ```
 
 ### SVM 
-```{r svm, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE}
+```{r svm, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE}
 svn_formula = formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + CabinNumber + surv_family_count + died_family_count)
 model.svm <- svm(svn_formula, data=full_df[train_index,all.vars(svn_formula)], cost = 1, gamma = 0.125)
 summary(model.svm)
@@ -335,12 +350,28 @@ plot_binmodel_predictions(Survived, pred.svm[train_index])
 
 ```
 
+### N-Networks
+```{r nnet, fig.width = 8, fig.height = 6, dpi = 100, eval = FALSE}
+set.seed(random_seed)
+model.nnet <- nnet(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare, 
+                   data = full_df[train_index,], size=6, maxit = 1000, trace=FALSE, decay = 1e-4)
+pred.nnet <- predict(model.nnet, newdata = full_df)
+
+print(model.nnet)
+
+cat(paste('Neural Networks:', model_ccr(Survived, pred.nnet[train_index])))
+plot_binmodel_predictions(Survived, pred.nnet[train_index])
+```
+
 
 ## Compare
 ```{r compare, fig.width = 8, fig.height = 6, dpi = 100}
 
 results = list()
-results$mars =pred.mars
+#results$mars =pred.mars
+results$lm =pred.lm
+results$step =pred.step
+results$gbm =pred.gbm
 
 #results$np = pred.np
 #results$glm = pred.glm
@@ -355,7 +386,6 @@ results$mars =pred.mars
 res = ldply(results, .id = 'model', function(x) {
   c(r2_out = r_sqr(df$log_loss[train_index3],  x[train_index3]),
     r2_in = r_sqr(df$log_loss[train_index2],  x[train_index2]),
-    r2_sm = r_sqr(df$log_loss[train_index1],  x[train_index1]),
     na_count = sum(is.na(x[test_index])))
 })
 
@@ -371,7 +401,7 @@ ggplot(res, aes(model, r2_out)) + geom_bar(stat = "identity") + coord_flip() + c
 folder = "C:/Dev/Kaggle/AllstateClaimsSeverity/"
 
 for (model_name in names(results) ){
-  submit <- data.frame(id = df$id[test_index], 
+  submit <- data.frame(id = as.integer( as.numeric(df$id[test_index]) ), 
                        loss = exp(results[[model_name]][test_index]))
   
   submit = submit[order(submit$id),]

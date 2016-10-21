@@ -61,7 +61,7 @@ ntrain = length(train_ids)
 train_index1 = rep(FALSE, n)
 train_index2 = rep(FALSE, n)
 train_index3 = rep(FALSE, n)
-train_index1[sample(train_ids, 0.1*ntrain)] = TRUE #10% of training data
+train_index1[sample(train_ids, 0.1*ntrain)] = TRUE #10% of training data (for testins)
 train_index2[sample(train_ids, 0.5*ntrain)] = TRUE #50% of training data
 train_index3 = !train_index2 & train_index         #out of sample, sample 3 and 2 partition data
 
@@ -77,6 +77,10 @@ for(cn in cat_vars){
   temp = as.character(temp)
   temp[temp %in% names(which(table(temp[train_index])<min_count))] = tag_name
   
+  #levels that are only present in test data, move to other 
+  new_levels = setdiff( names(which(table(temp[test_index])>0)), names(which(table(temp[train_index])>0)))
+  temp[temp %in% new_levels] = tag_name
+  
   #spread observations among other factors 
   other_count = sum(temp==tag_name)
   if(other_count<min_count){ 
@@ -84,6 +88,7 @@ for(cn in cat_vars){
     levels = sample(names(level_counts), other_count, replace = TRUE, prob = level_counts/sum(level_counts))
     temp[temp==tag_name] <- levels
   }
+  
   df[,cn] = factor(temp)
 }
 
@@ -100,6 +105,13 @@ formula.loss = formula (paste( 'loss ~', paste(allvars, collapse = '+')) )
 formula.all = formula (paste( 'log_loss ~', paste(allvars, collapse = '+')) )
 formula.cont = formula (paste( 'log_loss ~', paste(cont_vars, collapse = '+')) )
 formula.cat = formula (paste( 'log_loss ~', paste(cat_vars, collapse = '+')) )
+
+
+#useless variables less then 0.1%
+least_significant = c('cat40','cont9','cat10','cat50','cat78','cont5','cat9','cat89','cat14','cat33','cat47',
+'cat95','cat77','cat8','cat45','cat54','cat17','cat61','cat74','cat66','cat24','cat18','cat43','cat30',
+'cat46','cat28','cat29','cat88','cat92','cat97','cat98','cont4')
+
 
 #sapply(df[,cont_vars], sd)
 #sapply(df[,cat_vars], function(x) length(levels(x)) )
@@ -299,7 +311,7 @@ try shrinkage from 0.01 to 0.001, cv.folds = 5
 ```{r gbm, fig.width = 8, fig.height = 6, dpi = 150}
 set.seed(random_seed)
 
-max_it = 10000
+max_it = 5000
 model.gbm = gbm(formula.all, 
                 data = df[train_index, all.vars(formula.all)], 
                 distribution = 'gaussian',
@@ -310,6 +322,9 @@ model.gbm = gbm(formula.all,
                 cv.folds = 3,
                 n.cores = 1,
                 verbose = TRUE)
+
+#do extra 1000 iterations
+#model.gbm <- gbm.more(model.gbm, 1000, verbose=TRUE)
 
 print(model.gbm)
 
@@ -339,11 +354,11 @@ cat(paste('gbm (in/out):',
 
 ```
 
-### GBM using training fraction instead of CV
+### GBM using training fraction
 ```{r gbm_train, fig.width = 8, fig.height = 6, dpi = 150}
 set.seed(random_seed)
 
-max_it = 5000
+max_it = 30000
 model.gbm_train = gbm(formula.all, 
                 data = df[train_index, all.vars(formula.all)], 
                 distribution = 'gaussian',
@@ -356,9 +371,8 @@ model.gbm_train = gbm(formula.all,
                 n.cores = 1,
                 verbose = TRUE)
 
-#do extra 100 iterations
-#model.gbm_train <- gbm.more(model.gbm_train, 1000, verbose=TRUE)
-
+#do extra 2000 iterations
+# model.gbm_train <- gbm.more(model.gbm_train, 4000, verbose=TRUE)
 print(model.gbm_train)
 
 par(mfrow = c(1, 2), las = 1)
@@ -374,6 +388,8 @@ for(i in seq( pmin(20, length(vars.importance$var))) ) {
   grid()
 }
 
+#gbm_interactions(model.gbm_train,  df[train_index, all.vars(formula.all)], 1, 2)
+
 pred.gbm_train = predict(model.gbm_train, n.trees = best_it, newdata = df)
 
 cat(paste('gbm_train (in/out):', 
@@ -382,6 +398,8 @@ cat(paste('gbm_train (in/out):',
           sum(is.na(pred.gbm_train)) ))
 
 ```
+
+### GBM: separate models for levels of cat80
 
 ### SVM 
 ```{r svm, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE}
@@ -424,6 +442,7 @@ results = list()
 results$lm =pred.lm
 results$step =pred.step
 results$gbm = pred.gbm
+results$gbm_train = pred.gbm_train
 results$rp = pred.rp
 
 #results$np = pred.np

@@ -19,7 +19,7 @@ library(gridExtra)
 
 library(gbm)
 library(np)
-library(earth)
+library(earth) 
 library(rpart)
 library(randomForest)
 library(nnet)
@@ -33,15 +33,29 @@ library(MASS)
 ```{r load_data}
 rm(list = ls())
 
-random_seed = 123
+random_seed = 12345678
 
 vars_cat = 116
 vars_num = 14
 
 col_classes = c('numeric', rep('factor', vars_cat), rep('numeric', vars_num), 'numeric')
 
-train <- read.csv('C:/Dev/Kaggle/AllstateClaimsSeverity/input/train.csv', colClasses = col_classes)
-test  <- read.csv('C:/Dev/Kaggle/AllstateClaimsSeverity/input/test.csv', colClasses = col_classes[-length(col_classes)])
+folder = 'C:/Dev/Kaggle/AllstateClaimsSeverity/input'
+
+#train <- read.csv(file.path(folder, 'train.csv'), colClasses = col_classes)
+#test  <- read.csv(file.path(folder, 'test.csv'), colClasses = col_classes[-length(col_classes)])
+#saveRDS(train, file.path(folder, 'train.rds'))
+#saveRDS(test, file.path(folder, 'test.rds'))
+
+train <- readRDS(file.path(folder, 'train.rds'))
+test <- readRDS(file.path(folder, 'test.rds'))
+
+
+#LIMIT the size of the TRAINING for TEST RUNS (actual size = 188319)
+#sample_size = 70000
+#sample_index = sample.int(dim(train)[1], size = sample_size)
+#train = train[sample_index,]
+#print(paste('sample_size', sample_size))
 
 test$loss <- NA
 train$tag = 1
@@ -93,11 +107,18 @@ for(cn in cat_vars){
   df[,cn] = factor(temp)
 }
 
-#remove variables with one level
+print(paste('min_count', min_count))
+print(table(df$tag))
 
-#define variables
+#remove variables with one level
+cat_vars_single_level = names(which(sapply(df[train_index,cat_vars], 
+                                    FUN = function(x) length(unique(x))) <= 1))
+
+#define variables 
 cat_vars_fake = names(which( sapply(df[,cat_vars], function(x) length(levels(x)) ) <= 1))
 cat_vars = setdiff(cat_vars, cat_vars_fake)
+cat_vars = setdiff(cat_vars, cat_vars_single_level)
+#cat_vars = c('cat80', 'cat79', 'cat101')
 cont_vars = cols[grep("cont", cols)]
 allvars = union ( cat_vars , cont_vars) 
 formula.loss = formula (paste( 'loss ~', paste(allvars, collapse = '+')) )
@@ -116,8 +137,12 @@ least_significant2 =  c(least_significant, 'cat13','cat115','cat73','cat104','ca
 
 formula.all_sig = formula (paste( 'log_loss ~', paste(allvars[!allvars %in% least_significant], collapse = '+')) )
 
+formula.loss_sig = formula (paste( 'loss ~', paste(allvars[!allvars %in% least_significant], collapse = '+')) )
+
 #sapply(df[,cont_vars], sd)
 #sapply(df[,cat_vars], function(x) length(levels(x)) )
+
+print(formula.all_sig)
 
 ```
 
@@ -169,10 +194,10 @@ ggplot(df[train_index,], aes(log_loss)) + stat_density()
 
 ggplot(df[train_index,], aes(x = loss, fill = cat1)) +stat_density()
 
-ggplot(df[train_index1,], aes(x = cont2, log_loss)) + geom_point() + geom_smooth()
-ggplot(df[train_index1,], aes(x = cont7, log_loss)) + geom_point() + geom_smooth()
-ggplot(df[train_index1,], aes(x = cont14, log_loss)) + geom_point() + geom_smooth()
-ggplot(df[train_index1,], aes(x = cont12, log_loss)) + geom_point() + geom_smooth()
+ggplot(df[train_index,], aes(x = cont2, log_loss)) + geom_point() + geom_smooth()
+ggplot(df[train_index,], aes(x = cont7, log_loss)) + geom_point() + geom_smooth()
+ggplot(df[train_index,], aes(x = cont14, log_loss)) + geom_point() + geom_smooth()
+ggplot(df[train_index,], aes(x = cont12, log_loss)) + geom_point() + geom_smooth()
 
 ggplot(df[train_index,], aes(x = cat80, log_loss)) + geom_boxplot() + coord_flip()
 ggplot(df[train_index,], aes(x = cat79, log_loss)) + geom_boxplot() + coord_flip()
@@ -201,8 +226,8 @@ top 43 variables explain about 98% of variance
 ### Recursive Partitioning
 rp (in/out): 0.4352 0.4271 0
 ```{r rpart, fig.width = 8, fig.height = 6, dpi = 100}
-model.rp = rpart(formula.all,
-                 data = df[train_index2,], 
+model.rp = rpart(formula.all_sig,
+                 data = df[train_index,], 
                  control = rpart.control(cp = 0.001, minsplit = 20))
 
 printcp(model.rp)
@@ -215,34 +240,16 @@ text(model.rp, use.n=TRUE, all=TRUE, cex=.8)
 pred.rp = predict(model.rp, newdata = df)
 
 cat(paste('rp (in/out):', 
-          round(r_sqr(df$log_loss[train_index2],  pred.rp[train_index2]), 4),
-          round(r_sqr(df$log_loss[train_index3],  pred.rp[train_index3]), 4),
+          round(r_sqr(df$log_loss[train_index],  pred.rp[train_index]), 4),
           sum(is.na(pred.rp)) ))
-```
-
-### Random Forest
-```{r rf, fig.width = 8, fig.height = 6, dpi = 100, eval = FALSE}
-model.rf <- randomForest(formula.all, data =  df[train_index1,])
-
-pred.rf = to_numeric(predict(model.rf, newdata = full_df))
-
-importance(model.rf)
-
-cat(paste('rf (in/out):', 
-          round(r_sqr(df$log_loss[train_index2],  pred.rf[train_index2]), 4),
-          round(r_sqr(df$log_loss[train_index3],  pred.rf[train_index3]), 4),
-          sum(is.na(pred.rf)) ))
 ```
 
 ### Box-Cox Regression
 lambda = 0.1 (log is a good choice)
-```{r boxcox, fig.width = 8, fig.height = 6, dpi = 100}
+```{r boxcox, fig.width = 8, fig.height = 6, dpi = 100, eval = FALSE}
 
 par(mfrow=c(2,1))
-boxcox(formula.loss, data = df[train_index2, all.vars(formula.loss)], 
-                   lambda = seq(-0.5, 0.5, 1/10))
-grid()
-boxcox(formula.loss, data = df[train_index3, all.vars(formula.loss)], 
+boxcox(formula.loss_sig, data = df[train_index, all.vars(formula.loss_sig)], 
                    lambda = seq(-0.5, 0.5, 1/10))
 grid()
 
@@ -256,8 +263,7 @@ summary(model.lm)
 pred.lm = predict(model.lm, newdata = df)
 
 cat(paste('lm (in/out):', 
-          round(r_sqr(df$log_loss[train_index2],  pred.lm[train_index2]), 4),
-          round(r_sqr(df$log_loss[train_index3],  pred.lm[train_index3]), 4),
+          round(r_sqr(df$log_loss[train_index],  pred.lm[train_index]), 4),
           sum(is.na(pred.lm)) ))
 ```
 
@@ -270,24 +276,24 @@ log_loss ~ cat80 + cat101 + cat100 + cat103 + cat111 +
     cat53 + cat44 + cat12 + cat72 + cat113 + cat1 + cat26 + cat87
 
 ```{r step, fig.width = 8, fig.height = 6, dpi = 100}
-model.null <- lm(log_loss ~ 1, data = df[train_index2, all.vars(formula.all_sig)])
+model.null <- lm(log_loss ~ 1, data = df[train_index, all.vars(formula.all_sig)])
 
 model.step = stepAIC(model.null, scope = list(upper = formula.all_sig, lower = ~1), step = 20)
 
-summary(model.step)
+print(summary(model.step))
 #anova(model.step)
 
 pred.step = predict(model.step, newdata = df)
 
 cat(paste('step (in/out):', 
-          round(r_sqr(df$log_loss[train_index2],  pred.step[train_index2]), 4),
-          round(r_sqr(df$log_loss[train_index3],  pred.step[train_index3]), 4),
+          round(r_sqr(df$log_loss[train_index],  pred.step[train_index]), 4),
           sum(is.na(pred.step)) ))
 
 ```
 
 ### Multivariate Adaptive Regression Splines
-```{r mars, fig.width = 8, fig.height = 6, dpi = 100}
+(1216.37048)
+```{r mars, fig.width = 8, fig.height = 6, dpi = 100, eval = FALSE}
 set.seed(random_seed)
 
 model.mars <- earth(formula.all_sig, 
@@ -304,16 +310,15 @@ plot(evimp(model.mars))
 pred.mars = as.vector(predict(model.mars, newdata = df))
 
 cat(paste('mars (in/out):', 
-          round(r_sqr(df$log_loss[train_index2],  pred.mars[train_index2]), 4),
-          round(r_sqr(df$log_loss[train_index3],  pred.mars[train_index3]), 4),
+          round(r_sqr(df$log_loss[train_index],  pred.mars[train_index]), 4),
           sum(is.na(pred.mars)) ))
 ```
 
 
 ### GBM
-gbm (in/out): 0.5428 0.5322 0 (1171.57843)
+gbm (in/out): 0.5428 0.5322 0 (1174.72754)
 try shrinkage from 0.01 to 0.001, cv.folds = 5
-```{r gbm, fig.width = 8, fig.height = 6, dpi = 150}
+```{r gbm, fig.width = 8, fig.height = 6, dpi = 100}
 set.seed(random_seed)
 formula.gbm = formula.all_sig
 
@@ -321,7 +326,7 @@ max_it = 35000
 model.gbm = gbm(formula.gbm, 
                 data = df[train_index, all.vars(formula.gbm)], 
                 distribution = 'gaussian',
-                n.trees = 5000,
+                n.trees = max_it,
                 shrinkage = 0.005,#0.005
                 bag.fraction = 0.5,
                 interaction.depth = 2,
@@ -330,7 +335,7 @@ model.gbm = gbm(formula.gbm,
                 verbose =  TRUE)
 
 #do extra 1000 iterations
-#model.gbm <- gbm.more(model.gbm, 1000, verbose=TRUE)
+#model.gbm <- gbm.more(model.gbm, 5000, verbose=TRUE)
 
 print(model.gbm)
 
@@ -341,11 +346,11 @@ vars.importance = summary(model.gbm, n.trees = best_it) # influence
 print(vars.importance)
 grid()
 
-par(mfrow=c(5, 4))
-for(i in seq( pmin(20, length(vars.importance$var))) ) {
-  plot.gbm(model.gbm, n.trees =best_it,  i = as.character(vars.importance$var[i]) )
-  grid()
-}
+# par(mfrow=c(5, 4))
+# for(i in seq( pmin(20, length(vars.importance$var))) ) {
+#   plot.gbm(model.gbm, n.trees =best_it,  i = as.character(vars.importance$var[i]) )
+#   grid()
+# }
 
 #cat('Two-way interactions') 
 #gbm_interactions(model.gbm, df[train_index1,], 5, 2)
@@ -354,17 +359,15 @@ pred.gbm = predict(model.gbm, n.trees = best_it, newdata = df)
 
 #gbm (in/out): 0.5531 0.536 0
 cat(paste('gbm (in/out):', 
-          round(r_sqr(df$log_loss[train_index2],  pred.gbm[train_index2]), 4),
-          round(r_sqr(df$log_loss[train_index3],  pred.gbm[train_index3]), 4),
+          round(r_sqr(df$log_loss[train_index],  pred.gbm[train_index]), 4),
           sum(is.na(pred.gbm)) ))
 
 ```
 
 ### GBM using training fraction
 30000 iterations for 0.005
-20000 for 0.01
 gbm_train (in/out): 0.5453 0.5486 0 (1172.82543)
-```{r gbm_train, fig.width = 8, fig.height = 6, dpi = 150}
+```{r gbm_train, fig.width = 8, fig.height = 6, dpi = 100}
 formula.gbm_train = formula.all_sig
 
 set.seed(random_seed)
@@ -393,55 +396,21 @@ vars.importance = summary(model.gbm_train, n.trees = best_it) # influence
 print(vars.importance)
 grid()
 
-par(mfrow=c(5, 4))
-for(i in seq( pmin(20, length(vars.importance$var))) ) {
-  plot.gbm(model.gbm_train, n.trees =best_it,  i = as.character(vars.importance$var[i]) )
-  grid()
-}
+#par(mfrow=c(5, 4))
+#for(i in seq( pmin(20, length(vars.importance$var))) ) {
+#  plot.gbm(model.gbm_train, n.trees =best_it,  i = as.character(vars.importance$var[i]) )
+#  grid()
+#}
 
 #gbm_interactions(model.gbm_train,  df[train_index, all.vars(formula.all)], 1, 2)
 
 pred.gbm_train = predict(model.gbm_train, n.trees = best_it, newdata = df)
 
 cat(paste('gbm_train (in/out):', 
-          round(r_sqr(df$log_loss[train_index2],  pred.gbm_train[train_index2]), 4),
-          round(r_sqr(df$log_loss[train_index3],  pred.gbm_train[train_index3]), 4),
+          round(r_sqr(df$log_loss[train_index],  pred.gbm_train[train_index]), 4),
           sum(is.na(pred.gbm_train)) ))
 
 ```
-
-### SVM 
-```{r svm, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE}
-svn_formula = formula(Surv ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare + CabinNumber + surv_family_count + died_family_count)
-model.svm <- svm(svn_formula, data=full_df[train_index,all.vars(svn_formula)], cost = 1, gamma = 0.125)
-summary(model.svm)
-
-#svm_tune <- tune(svm, train.x=svn_formula,  data=full_df[train_index,],
-#                 kernel="radial", 
-#                 ranges=list(cost=2^(-6:6), gamma=2^(-6:6)))
-#print(svm_tune)
-
-
-pred.svm = to_numeric(predict(model.svm, newdata = full_df))
-
-cat(paste("svm ccr:", model_ccr(Survived, pred.svm[train_index])))
-plot_binmodel_predictions(Survived, pred.svm[train_index])
-
-```
-
-### N-Networks
-```{r nnet, fig.width = 8, fig.height = 6, dpi = 100, eval = FALSE}
-set.seed(random_seed)
-model.nnet <- nnet(Survived ~ Sex + Age + Pclass + Siblings + Parch + Embarked + Fare, 
-                   data = full_df[train_index,], size=6, maxit = 1000, trace=FALSE, decay = 1e-4)
-pred.nnet <- predict(model.nnet, newdata = full_df)
-
-print(model.nnet)
-
-cat(paste('Neural Networks:', model_ccr(Survived, pred.nnet[train_index])))
-plot_binmodel_predictions(Survived, pred.nnet[train_index])
-```
-
 
 ## Compare
 ```{r compare, fig.width = 8, fig.height = 6, dpi = 100}
@@ -453,26 +422,17 @@ results$step =pred.step
 results$gbm = pred.gbm
 results$gbm_train = pred.gbm_train
 results$rp = pred.rp
-
-#results$np = pred.np
-#results$glm = pred.glm
-#results$glm_s = pred.glm_s
-#results$gbm = pred.gbm 
-#results$nnet = pred.nnet
-#results$svm = pred.svm
-#results$rf = pred.rf
-#results$rp = pred.rp
+results$mars = pred.mars
 
 #
 res = ldply(results, .id = 'model', function(x) {
-  c(r2_out = r_sqr(df$log_loss[train_index3],  x[train_index3]),
-    r2_in = r_sqr(df$log_loss[train_index2],  x[train_index2]),
+  c(r2 = r_sqr(df$log_loss[train_index],  x[train_index]),
     na_count = sum(is.na(x[test_index])))
 })
 
 print(res)
 
-ggplot(res, aes(model, r2_out)) + geom_bar(stat = "identity") + coord_flip() + coord_cartesian(ylim = c(0.9*min(res$r2_out), min(1.0, 1.1*max(res$r2_out) ) ))
+#ggplot(res, aes(model, r2)) + geom_bar(stat = "identity") + coord_flip() + coord_cartesian(ylim = c(0.9*min(res$r2), min(1.0, 1.1*max(res$r2) ) ))
 
 ```
 
@@ -490,6 +450,8 @@ for (model_name in names(results) ){
   file = file.path(folder, sprintf("my_solution_%s.csv", model_name))
   
   write.csv(submit, file = file, row.names = FALSE)
+  
+  print(file)
 }
 
 

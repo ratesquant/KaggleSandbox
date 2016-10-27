@@ -33,72 +33,28 @@ library(MASS)
 ```{r load_data}
 rm(list = ls())
 
-random_seed = 123
+random_seed = 12345678
 
-vars_cat = 116
-vars_num = 14
+folder = 'C:/Dev/Kaggle/AllstateClaimsSeverity/'
 
-col_classes = c('numeric', rep('factor', vars_cat), rep('numeric', vars_num), 'numeric')
+source(file.path(folder, 'claim_model_utils.R'))
 
-train <- read.csv('C:/Dev/Kaggle/AllstateClaimsSeverity/input/train.csv', colClasses = col_classes)
-test  <- read.csv('C:/Dev/Kaggle/AllstateClaimsSeverity/input/test.csv', colClasses = col_classes[-length(col_classes)])
-
-test$loss <- NA
-train$tag = 1
-test$tag = 0
-
-df = rbind(train, test)
-
-df$log_loss = log(df$loss) 
+df = load_claim_data(file.path(folder, 'input'), 30)
 
 test_index = df$tag == 0
 train_index = df$tag == 1
 
-#create a smaller samples for research
-n = dim(df)[1]
-train_ids = which(df$tag==1)
-ntrain = length(train_ids)
-train_index1 = rep(FALSE, n)
-train_index2 = rep(FALSE, n)
-train_index3 = rep(FALSE, n)
-train_index1[sample(train_ids, 0.1*ntrain)] = TRUE #10% of training data (for testins)
-train_index2[sample(train_ids, 0.5*ntrain)] = TRUE #50% of training data
-train_index3 = !train_index2 & train_index         #out of sample, sample 3 and 2 partition data
+print(table(df$tag))
 
 cols = names(df)
 cat_vars = cols[grep("cat", cols)] 
-
-#combine rare levels for categorical variables 
-#sapply(df, class)
-#sort(table(df$75))
-min_count = 100
-tag_name = "OTHER"
-for(cn in cat_vars){
-  temp = df[,cn]
-  temp = as.character(temp)
-  temp[temp %in% names(which(table(temp[train_index])<min_count))] = tag_name
-  
-  #levels that are only present in test data, move to other 
-  new_levels = setdiff( names(which(table(temp[test_index])>0)), names(which(table(temp[train_index])>0)))
-  temp[temp %in% new_levels] = tag_name
-  
-  #spread observations among other factors 
-  other_count = sum(temp==tag_name)
-  if(other_count<min_count){ 
-    level_counts = table(temp[temp != tag_name])
-    levels = sample(names(level_counts), other_count, replace = TRUE, prob = level_counts/sum(level_counts))
-    temp[temp==tag_name] <- levels
-  }
-  
-  df[,cn] = factor(temp)
-}
-#table(df$cat80)
-
+factor_vars = cols[sapply(df, class) == 'factor']
 #remove variables with one level
+cat_vars_single_level = names(which(sapply(df[train_index, factor_vars ], 
+                                    FUN = function(x) length(levels(x))) <= 1))
 
-#define variables
-cat_vars_fake = names(which( sapply(df[,cat_vars], function(x) length(levels(x)) ) == 1))
-cat_vars = setdiff(cat_vars, cat_vars_fake)
+#define variables 
+cat_vars = setdiff(cat_vars, cat_vars_single_level)
 cont_vars = cols[grep("cont", cols)]
 allvars = union ( cat_vars , cont_vars) 
 formula.loss = formula (paste( 'loss ~', paste(allvars, collapse = '+')) )
@@ -111,6 +67,7 @@ formula.cat = formula (paste( 'log_loss ~', paste(cat_vars, collapse = '+')) )
 least_significant = c('cat40','cont9','cat10','cat50','cat78','cont5','cat9','cat89','cat14','cat33','cat47',
 'cat95','cat77','cat8','cat45','cat54','cat17','cat61','cat74','cat66','cat24','cat18','cat43','cat30',
 'cat46','cat28','cat29','cat88','cat92','cat97','cat98','cont4')
+least_significant = c('') # dont exclude variables
 
 #useless variables less then 1.0%
 least_significant2 =  c(least_significant, 'cat13','cat115','cat73','cat104','cat99','cat51','cat75','cont10','cat39','cat107','cat19','cat3','cont1','cat93', 'cont8','cat7','cat65','cat106','cont6','cat67','cat71','cat85','cat16','cat96','cat41','cat102','cat86')
@@ -170,15 +127,11 @@ ggplot(df[train_index,], aes(log_loss)) + stat_density()
 
 ggplot(df[train_index,], aes(x = loss, fill = cat1)) +stat_density()
 
-ggplot(df[train_index1,], aes(x = cont2, log_loss)) + geom_point() + geom_smooth()
-ggplot(df[train_index1,], aes(x = cont7, log_loss)) + geom_point() + geom_smooth()
-ggplot(df[train_index1,], aes(x = cont14, log_loss)) + geom_point() + geom_smooth()
-ggplot(df[train_index1,], aes(x = cont12, log_loss)) + geom_point() + geom_smooth()
-
 ggplot(df[train_index,], aes(x = cat80, log_loss)) + geom_boxplot() + coord_flip()
 ggplot(df[train_index,], aes(x = cat79, log_loss)) + geom_boxplot() + coord_flip()
 ggplot(df[train_index,], aes(x = cat101, log_loss)) + geom_boxplot() + coord_flip()
 ggplot(df[train_index,], aes(x = cat100, log_loss)) + geom_boxplot() + coord_flip()
+ggplot(df[train_index,], aes(x = cat116, log_loss)) + geom_boxplot() + coord_flip()
 ggplot(df[train_index,], aes(x = cat112, log_loss)) + geom_boxplot() + coord_flip() #has other level
 ggplot(df[train_index,], aes(x = cat12, log_loss)) + geom_boxplot() + coord_flip()
 ggplot(df[train_index,], aes(x = cat81, log_loss)) + geom_boxplot() + coord_flip()
@@ -202,38 +155,40 @@ top 43 variables explain about 98% of variance
 ### Linear Regression
 lm (in/out): 0.519 0.5184 0
 ```{r lm, fig.width = 8, fig.height = 6, dpi = 100}
-model.lm <- lm(formula.all_sig, data = df[train_index, all.vars(formula.all_sig)])
+model.lm <- lm(formula.all, data = df[train_index, all.vars(formula.all)])
 
 summary(model.lm)
 pred.lm = predict(model.lm, newdata = df)
 
 cat(paste('lm (in/out):', 
-          round(r_sqr(df$log_loss[train_index2],  pred.lm[train_index2]), 4),
-          round(r_sqr(df$log_loss[train_index3],  pred.lm[train_index3]), 4),
+          round(r_sqr(df$log_loss[train_index],  pred.lm[train_index]), 4),
           sum(is.na(pred.lm)) ))
 ```
+
 ### Linear Regression: Segmented
 lm (in/out): 0.5183 0.5135 0 (1244.69108)
-```{r lm, fig.width = 8, fig.height = 6, dpi = 100}
+```{r lm_seg, fig.width = 8, fig.height = 6, dpi = 100}
 #table(df$cat80)
 
-formula.lm = update(formula.all_sig, '~. -cat80')
+formula.lm = update(formula.all, '~. -cat80')
 
 for (cat80_level in levels(df$cat80))
 {
   print(cat80_level)
   seg_index = train_index & df$cat80 == cat80_level
   
-  vars_not_in_train = names(which(sapply(df[,cat_vars], FUN = function(x){
+  vars_not_in_train = names(which(sapply(df[,factor_vars], FUN = function(x){
     train_value = unique(x[train_index & df$cat80 == cat80_level])
     test_value = unique(x[test_index & df$cat80 == cat80_level])
     length(setdiff(test_value, train_value))
     }  ) >0 ))
   
   #variables with one level
-  vars_to_remove = names(which(sapply(df[seg_index,cat_vars], FUN = function(x) length(unique(x))) <= 1))
+  vars_to_remove = names(which(sapply(df[seg_index,factor_vars], FUN = function(x) length(unique(x))) <= 1))
   vars_to_remove = union(vars_to_remove, vars_not_in_train)
   vars_to_remove = vars_to_remove[vars_to_remove %in% all.vars(formula.lm)]
+  
+  print(vars_to_remove)
   
   if(length(vars_to_remove) == 0 ) {
     formula.lm_seg = formula.lm
@@ -241,72 +196,129 @@ for (cat80_level in levels(df$cat80))
     formula.lm_seg = update(formula.lm, paste('~. -', paste(vars_to_remove, collapse = '-')) )
   }
   
-    model.lm_seg <- lm(formula.lm_seg, data = df[seg_index, all.vars(formula.lm_seg)])
+  model.lm_seg <- lm(formula.lm_seg, data = df[seg_index, all.vars(formula.lm_seg)])
   
   summary(model.lm_seg)
   
   pred.lm[df$cat80 == cat80_level] = predict(model.lm_seg, newdata = df[df$cat80 == cat80_level,])
+  
+  cat(paste('lm seg (in/out):', cat80_level, 
+          round(r_sqr(df$log_loss[train_index & df$cat80 == cat80_level],  
+                      pred.lm[train_index & df$cat80 == cat80_level]), 4),
+          sum(is.na(pred.lm[df$cat80 == cat80_level])) ))
+  
 }
 
 cat(paste('lm seg (in/out):', 
-          round(r_sqr(df$log_loss[train_index2],  pred.lm[train_index2]), 4),
-          round(r_sqr(df$log_loss[train_index3],  pred.lm[train_index3]), 4),
+          round(r_sqr(df$log_loss[train_index],  pred.lm[train_index]), 4),
           sum(is.na(pred.lm)) ))
 ```
 
+```{r error_buckets, fig.width = 8, fig.height = 6, dpi = 150}
+#important factors with many levels
+
+print(sort(sapply(df[, cat_vars], FUN = function(x) length(levels(x)))))
+
+#cat107 cat109 cat113 cat110 cat112 cat116 
+#   16     22     43     49     50    125 
+
+df$log_loss_err = df$log_loss - pred.lm
+
+ggplot(df[train_index,], aes(sample = log_loss_err )) + stat_qq()
+
+ggplot(df[train_index,], aes(x = cat116, log_loss_err)) + 
+  geom_boxplot() + coord_flip() + geom_hline(yintercept = 0, color = 'red')
+
+ggplot(df[train_index,], aes(x = cat112, log_loss_err)) + 
+  geom_boxplot() + coord_flip() + geom_hline(yintercept = 0, color = 'red')
+
+ggplot(df[train_index,], aes(x = cat110, log_loss_err)) + 
+  geom_boxplot() + coord_flip() + geom_hline(yintercept = 0, color = 'red')
+
+ggplot(df[train_index,], aes(x = cat113, log_loss_err)) + 
+  geom_boxplot() + coord_flip() + geom_hline(yintercept = 0, color = 'red')
+
+ggplot(df[train_index,], aes(x = cat100, log_loss_err)) + 
+  geom_boxplot() + coord_flip() + geom_hline(yintercept = 0, color = 'red')
+
+ggplot(df, aes(cat116, fill = factor(tag) )) + geom_bar() +  coord_flip() + facet_grid(.~cat80)
+ggplot(df, aes(cat112, fill = factor(tag) )) + geom_bar() +  coord_flip() + facet_grid(.~cat80)
+ggplot(df, aes(cat110, fill = factor(tag) )) + geom_bar() +  coord_flip() + facet_grid(.~cat80)
+
+```
 
 ### GBM: Segmented
 ```{r gbm, fig.width = 8, fig.height = 6, dpi = 150}
 set.seed(random_seed)
-formula.gbm = update(formula.all_sig, '~. -cat80')
+formula.gbm = update(formula.all, '~. -cat80')
+
+print(formula.gbm)
 
 pred.gbm = rep(NA, length(df$loss))
+
+max_it = data.frame(level = levels(df$cat80), it = c(4, 60, 12, 60)*1000)
 
 for (cat80_level in levels(df$cat80))
 {
   print(cat80_level)
   seg_index = train_index & df$cat80 == cat80_level
   
-  vars_not_in_train = names(which(sapply(df[,cat_vars], FUN = function(x){
+  vars_not_in_train = names(which(sapply(df[,factor_vars], FUN = function(x){
     train_value = unique(x[train_index & df$cat80 == cat80_level])
     test_value = unique(x[test_index & df$cat80 == cat80_level])
     length(setdiff(test_value, train_value))
     }  ) >0 ))
   
   #variables with one level
-  vars_to_remove = names(which(sapply(df[seg_index,cat_vars], FUN = function(x) length(unique(x))) <= 1))
+  vars_to_remove = names(which(sapply(df[seg_index,factor_vars], FUN = function(x) length(unique(x))) <= 1))
   vars_to_remove = union(vars_to_remove, vars_not_in_train)
   vars_to_remove = vars_to_remove[vars_to_remove %in% all.vars(formula.gbm)]
+  
+  print('variables to remove')
+  print(vars_to_remove)
   
   if(length(vars_to_remove) == 0 ) {
     formula.gbm_seg = formula.gbm
   }else {
     formula.gbm_seg = update(formula.gbm, paste('~. -', paste(vars_to_remove, collapse = '-')) )
   }
+  
+  print(formula.gbm_seg)
+  
+  max_trees = max_it$it[max_it$level == cat80_level]
+  
+  print(paste('max_trees:', max_trees))
     
     model.gbm_seg = gbm(formula.gbm_seg, 
                 data = df[seg_index, all.vars(formula.gbm_seg)], 
                 distribution = 'gaussian',
-                n.trees = 7000,
-                shrinkage = 0.005,#0.005
-                bag.fraction = 0.5,
-                interaction.depth = 2,
+                n.trees = max_trees,
+                shrinkage = 0.001,#0.005
+                bag.fraction = 0.7,
+                interaction.depth = 3,
                 cv.folds = 3,
                 n.cores = 1, 
-                verbose =  TRUE)
+                verbose =  FALSE)
   
-  print(summary(model.gbm_seg))
-  
+  par(mfrow = c(1, 2), las = 1)
   best_it = gbm.perf(model.gbm_seg, method = 'cv')
+  grid()
+  vars.importance = summary(model.gbm_seg, n.trees = best_it) # influence
+  print(vars.importance)
+  grid()
   
   print(best_it)
   
   pred.gbm[df$cat80 == cat80_level] = predict(model.gbm_seg,  n.trees = best_it, newdata = df[df$cat80 == cat80_level,])
   
+  cat(paste('gbm seg (in/out):', cat80_level, 
+          round(r_sqr(df$log_loss[train_index & df$cat80 == cat80_level],  
+                      pred.gbm[train_index & df$cat80 == cat80_level]), 4),
+          sum(is.na(pred.gbm[df$cat80 == cat80_level])) ))
+  
 }
   cat(paste('gbm seg (in/out):', 
-          round(r_sqr(df$log_loss[train_index2],  pred.gbm[train_index2]), 4),
-          round(r_sqr(df$log_loss[train_index3],  pred.gbm[train_index3]), 4),
+          round(r_sqr(df$log_loss[train_index],  pred.gbm[train_index]), 4),
           sum(is.na(pred.gbm)) ))
 
 ```
@@ -314,6 +326,7 @@ for (cat80_level in levels(df$cat80))
 
 
 ## Compare
+gbm_seg 0.5618776
 ```{r compare, fig.width = 8, fig.height = 6, dpi = 100}
 
 results = list()
@@ -322,14 +335,13 @@ results$lm_seg =pred.lm
 results$gbm_seg = pred.gbm
 
 res = ldply(results, .id = 'model', function(x) {
-  c(r2_out = r_sqr(df$log_loss[train_index3],  x[train_index3]),
-    r2_in = r_sqr(df$log_loss[train_index2],  x[train_index2]),
+  c(r2 = r_sqr(df$log_loss[train_index],  x[train_index]),
     na_count = sum(is.na(x[test_index])))
 })
 
 print(res)
 
-ggplot(res, aes(model, r2_out)) + geom_bar(stat = "identity") + coord_flip() + coord_cartesian(ylim = c(0.9*min(res$r2_out), min(1.0, 1.1*max(res$r2_out) ) ))
+#ggplot(res, aes(model, r2)) + geom_bar(stat = "identity") + coord_flip() + coord_cartesian(ylim = c(0.9*min(res$r2_out), min(1.0, 1.1*max(res$r2_out) ) ))
 
 ```
 
@@ -347,7 +359,11 @@ for (model_name in names(results) ){
   file = file.path(folder, sprintf("my_solution_%s.csv", model_name))
   
   write.csv(submit, file = file, row.names = FALSE)
+  
+  print(file)
 }
 
+setwd(folder) 
+save.image(file = "workspace.RData") #load("myfile.RData") 
 
 ```

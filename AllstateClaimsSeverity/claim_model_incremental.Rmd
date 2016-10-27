@@ -1,0 +1,261 @@
+---
+title: "Allstate Claims Severity"
+author: "Alex"
+date: "October 13, 2016"
+output: 
+  html_document: 
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(reshape2)
+library(ggplot2)
+library(GGally)
+library(Hmisc)
+library(plyr)
+library(gridExtra)
+
+library(gbm)
+library(np)
+library(earth) 
+library(rpart)
+library(randomForest)
+library(nnet)
+library(e1071)
+library(MASS)
+
+```
+
+## Load Data
+
+```{r load_data}
+rm(list = ls())
+
+random_seed = 12345678
+
+folder = 'C:/Dev/Kaggle/AllstateClaimsSeverity/'
+
+source(file.path(folder, 'claim_model_utils.R'))
+
+df = load_claim_data(file.path(folder, 'input'), 30)
+
+test_index = df$tag == 0
+train_index = df$tag == 1
+
+print(table(df$tag))
+
+cols = names(df)
+cat_vars = cols[grep("cat", cols)] 
+factor_vars = cols[sapply(df, class) == 'factor']
+#remove variables with one level
+cat_vars_single_level = names(which(sapply(df[train_index, factor_vars ], 
+                                    FUN = function(x) length(levels(x))) <= 1))
+
+#define variables 
+cat_vars = setdiff(cat_vars, cat_vars_single_level)
+cont_vars = cols[grep("cont", cols)]
+allvars = union ( cat_vars , cont_vars) 
+formula.loss = formula (paste( 'loss ~', paste(allvars, collapse = '+')) )
+formula.all = formula (paste( 'log_loss ~', paste(allvars, collapse = '+')) )
+formula.cont = formula (paste( 'log_loss ~', paste(cont_vars, collapse = '+')) )
+formula.cat = formula (paste( 'log_loss ~', paste(cat_vars, collapse = '+')) )
+
+
+#useless variables less then 0.1%
+least_significant = c('cat40','cont9','cat10','cat50','cat78','cont5','cat9','cat89','cat14','cat33','cat47',
+'cat95','cat77','cat8','cat45','cat54','cat17','cat61','cat74','cat66','cat24','cat18','cat43','cat30',
+'cat46','cat28','cat29','cat88','cat92','cat97','cat98','cont4')
+least_significant = c('') # dont exclude variables
+
+#useless variables less then 1.0%
+least_significant2 =  c(least_significant, 'cat13','cat115','cat73','cat104','cat99','cat51','cat75','cont10','cat39','cat107','cat19','cat3','cont1','cat93', 'cont8','cat7','cat65','cat106','cont6','cat67','cat71','cat85','cat16','cat96','cat41','cat102','cat86')
+
+formula.all_sig = formula (paste( 'log_loss ~', paste(allvars[!allvars %in% least_significant], collapse = '+')) )
+
+formula.loss_sig = formula (paste( 'loss ~', paste(allvars[!allvars %in% least_significant], collapse = '+')) )
+
+#sapply(df[,cont_vars], sd)
+#sapply(df[,cat_vars], function(x) length(levels(x)) )
+
+print(formula.all_sig)
+
+```
+
+```{r functions}
+
+r_sqr <-function(y, x) {
+  return( summary(lm(y ~ x))$r.squared )
+}
+#plot missing values
+ggplot_missing <- function(x){
+  mx = melt(is.na(x))
+  ggplot(mx, aes(Var2, Var1)) + geom_raster(aes(fill = value)) +
+  theme(axis.text.x  = element_text(angle=90, vjust=0.5)) + 
+  scale_fill_grey(name = "", labels = c("Valid","NA")) +
+  labs(x = "Variable name",   y = "Rows") + 
+    ggtitle (paste('total number of missing values:',  sum(mx$value)))
+}
+
+#plot number of missing values
+ggplot_missing_count <- function(x){
+  mc = adply(is.na(x), 2, sum)
+  names(mc) <- c('name', 'value')
+  ggplot(mc, aes(name, value)) + geom_bar(stat = "identity") +
+  theme(axis.text.x  = element_text(angle=90, vjust=0.5)) + 
+  labs(x = "Variable name",   y = "Missing Variables")
+}
+
+# Friedman's H-statistic to assess the relative strength of interaction effects in non-linear models. H is on the scale of [0-1] 
+gbm_interactions <- function(gbm_model, data, min_influence = 1, degree = 2){
+  gbm_summary = summary(gbm_model, plotit=FALSE)
+  vars = gbm_summary$var[gbm_summary$rel.inf > min_influence]
+  all_combinations = combn(as.vector(vars), degree, simplify = TRUE)
+  df = ldply(seq(dim(all_combinations)[2]), function(i) {
+    data.frame(vars = paste(all_combinations[,i], collapse = '-'), 
+               interaction_score = interact.gbm(gbm_model, data, all_combinations[,i])) 
+    })
+  return ( df[order(df$interaction_score, decreasing = TRUE),] )
+}
+```
+
+## Overview
+```{r overview, fig.width = 8, fig.height = 6, dpi = 100}
+
+ggplot(df[train_index,], aes(sample = log_loss )) + stat_qq()
+ggplot(df[train_index,], aes(log_loss, fill = factor(cat80))) + stat_density(adjust = 0.3)
+ggplot(df[train_index,], aes(log_loss, fill = factor(cat79))) + stat_density(adjust = 0.3)
+ggplot(df[train_index,], aes(log_loss, fill = factor(cat101))) + stat_density(adjust = 0.3)
+ggplot(df[train_index,], aes(log_loss, fill = factor(cat116))) + stat_density(adjust = 0.3)
+
+ggpairs(df[train_index, c('cat80', 'cat79')])
+
+#plot
+#cat80, cat79, cat101, cat100, cat12
+
+ggplot(df[train_index,], aes(x = loss, fill = cat1)) +stat_density()
+
+ggplot(df[train_index,], aes(x = cont2, log_loss)) + geom_point() + geom_smooth()
+ggplot(df[train_index,], aes(x = cont7, log_loss)) + geom_point() + geom_smooth()
+ggplot(df[train_index,], aes(x = cont14, log_loss)) + geom_point() + geom_smooth()
+ggplot(df[train_index,], aes(x = cont12, log_loss)) + geom_point() + geom_smooth()
+
+ggplot(df[train_index,], aes(x = cat80, log_loss)) + geom_boxplot() + coord_flip()
+ggplot(df[train_index,], aes(x = cat79, log_loss)) + geom_boxplot() + coord_flip()
+ggplot(df[train_index,], aes(x = cat101, log_loss)) + geom_boxplot() + coord_flip()
+ggplot(df[train_index,], aes(x = cat100, log_loss)) + geom_boxplot() + coord_flip()
+ggplot(df[train_index,], aes(x = cat112, log_loss)) + geom_boxplot() + coord_flip() #has other level
+ggplot(df[train_index,], aes(x = cat12, log_loss)) + geom_boxplot() + coord_flip()
+ggplot(df[train_index,], aes(x = cat81, log_loss)) + geom_boxplot() + coord_flip()
+
+ggplot(df, aes(cat80, fill = factor(tag) )) + geom_bar()
+ggplot(df, aes(cat79, fill = factor(tag) )) + geom_bar() 
+ggplot(df, aes(cat101, fill = factor(tag) )) + geom_bar() 
+ggplot(df, aes(cat100, fill = factor(tag) )) + geom_bar()
+ggplot(df, aes(cat112, fill = factor(tag) )) + geom_bar() 
+ggplot(df, aes(cat12, fill = factor(tag) )) + geom_bar() 
+
+table(df$cat15)
+
+```
+
+## Loss Prediction Models
+top 20 variables explain about 90% of variance
+top 43 variables explain about 98% of variance
+
+
+### GBM fit
+gbm_train (in/out): 0.5453 0.5486 0 (1172.82543)
+```{r gbm_train, fig.width = 8, fig.height = 6, dpi = 100}
+formula.gbm_train = formula.all
+
+set.seed(random_seed)
+
+max_it = 85000
+model.gbm_train = gbm(formula.gbm_train, 
+                data = df[train_index, all.vars(formula.gbm_train)], 
+                distribution = 'gaussian',
+                n.trees = max_it,
+                shrinkage = 0.005, #0.005
+                bag.fraction = 0.5,
+                interaction.depth = 2,
+                cv.folds = 0,
+                train.fraction = 0.5,
+                n.cores = 1,
+                verbose = TRUE)
+
+#do extra 2000 iterations
+# model.gbm_train <- gbm.more(model.gbm_train, 4000, verbose=TRUE)
+print(model.gbm_train)
+
+par(mfrow = c(1, 2), las = 1)
+best_it = gbm.perf(model.gbm_train, method = 'test')
+grid()
+vars.importance = summary(model.gbm_train, n.trees = best_it) # influence
+print(vars.importance)
+grid()
+
+par(mfrow=c(5, 4))
+for(i in seq( pmin(20, length(vars.importance$var))) ) {
+  plot.gbm(model.gbm_train, n.trees =best_it,  i = as.character(vars.importance$var[i]) )
+  grid()
+}
+
+#          vars interaction_score
+#   cat1-cat100      1.438754e-01
+#  cat80-cat101      1.042298e-01
+#  cat101-cat81      8.494113e-02
+#   cat80-cont2      7.718293e-02
+#   cat80-cat12      7.676167e-02
+#   cat79-cont2      5.906710e-02
+#gbm_interactions(model.gbm_train,  df[train_index, all.vars(formula.all)], 2, 2)
+
+pred.gbm_inc = predict(model.gbm_train, n.trees = best_it, newdata = df)
+
+cat(paste('gbm_train (in/out):', 
+          round(r_sqr(df$log_loss[train_index],  pred.gbm_inc[train_index]), 4),
+          sum(is.na(pred.gbm_inc)) ))
+
+```
+
+## Compare
+```{r compare, fig.width = 8, fig.height = 6, dpi = 100}
+
+results = list()
+#results$mars =pred.mars
+#results$rp = pred.rp
+results$gbm_inc = pred.gbm_inc
+
+#
+res = ldply(results, .id = 'model', function(x) {
+  c(r2 = r_sqr(df$log_loss[train_index],  x[train_index]),
+    na_count = sum(is.na(x[test_index])))
+})
+
+print(res)
+
+#ggplot(res, aes(model, r2)) + geom_bar(stat = "identity") + coord_flip() + coord_cartesian(ylim = c(0.9*min(res$r2), min(1.0, 1.1*max(res$r2) ) ))
+
+```
+
+## Submit
+```{r submit, fig.width = 8, fig.height = 6, dpi = 100}
+
+folder = "C:/Dev/Kaggle/AllstateClaimsSeverity/"
+
+for (model_name in names(results) ){
+  submit <- data.frame(id = as.integer( as.numeric(df$id[test_index]) ), 
+                       loss = exp(results[[model_name]][test_index]))
+  
+  submit = submit[order(submit$id),]
+  
+  file = file.path(folder, sprintf("my_solution_%s.csv", model_name))
+  
+  write.csv(submit, file = file, row.names = FALSE)
+  
+  print(file)
+}
+
+
+```

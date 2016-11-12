@@ -61,6 +61,7 @@ formula.loss = formula (paste( 'loss ~', paste(allvars, collapse = '+')) )
 formula.all = formula (paste( 'log_loss ~', paste(allvars, collapse = '+')) )
 formula.cont = formula (paste( 'log_loss ~', paste(cont_vars, collapse = '+')) )
 formula.cat = formula (paste( 'log_loss ~', paste(cat_vars, collapse = '+')) )
+formula.factor = formula (paste( 'log_loss ~', paste(factor_vars, collapse = '+')) )
 
 
 #useless variables less then 0.1%
@@ -164,21 +165,62 @@ table(df$cat15)
 top 20 variables explain about 90% of variance
 top 43 variables explain about 98% of variance
 
+### Recursive Partitioning
+rp: 0.4078 (0.624794407701577)
+```{r rpart, fig.width = 8, fig.height = 6, dpi = 100}
+model.rp = rpart(formula.factor,
+                 data = df[train_index, all.vars(formula.factor)], 
+                 control = rpart.control(cp = 0.001, minsplit = 20))
 
-### GBM fit
+printcp(model.rp)
+
+par(mfrow=c(2,1))
+plotcp(model.rp) 
+plot(model.rp, uniform=TRUE) 
+text(model.rp, use.n=TRUE, all=TRUE, cex=.8)
+
+pred.rp = predict(model.rp, newdata = df)
+
+cat(paste('rp (in/out):', 
+          round(r_sqr(df$log_loss[train_index],  pred.rp[train_index]), 4),
+          sum(is.na(pred.rp)) ))
+
+df$log_loss_error_rp = df$log_loss - pred.rp
+
+print(paste('error std', sd(df$log_loss_error_rp[train_index])))
+```
+
+### Random Forest
+```{r rf, fig.width = 8, fig.height = 6, dpi = 150}
+model.rf <- randomForest(formula.factor, 
+                             data = df[train_index, all.vars(formula.factor)],
+                             ntree=20)
+
+pred.rf = to_numeric(predict(model.rf, newdata = df))
+
+importance(model.rf)
+
+cat(paste('rf (in/out):', 
+          round(r_sqr(df$log_loss[train_index],  pred.rf[train_index]), 4),
+          sum(is.na(pred.rf)) ))
+
+```
+
+### GBM incremental
 gbm_train (in/out): 0.5453 0.5486 0 (1172.82543)
 ```{r gbm_train, fig.width = 8, fig.height = 6, dpi = 100}
-formula.gbm_train = formula.all
+
+formula.gbm_train = update(formula.all, "log_loss_error_rp ~ .")
 
 set.seed(random_seed)
 
-max_it = 85000
+max_it = 10000
 model.gbm_train = gbm(formula.gbm_train, 
                 data = df[train_index, all.vars(formula.gbm_train)], 
                 distribution = 'gaussian',
                 n.trees = max_it,
                 shrinkage = 0.005, #0.005
-                bag.fraction = 0.5,
+                bag.fraction = 0.7,
                 interaction.depth = 2,
                 cv.folds = 0,
                 train.fraction = 0.5,
@@ -186,7 +228,7 @@ model.gbm_train = gbm(formula.gbm_train,
                 verbose = TRUE)
 
 #do extra 2000 iterations
-# model.gbm_train <- gbm.more(model.gbm_train, 4000, verbose=TRUE)
+# model.gbm_train <- gbm.more(model.gbm_train, 60000, verbose=TRUE)
 print(model.gbm_train)
 
 par(mfrow = c(1, 2), las = 1)
@@ -211,11 +253,13 @@ for(i in seq( pmin(20, length(vars.importance$var))) ) {
 #   cat79-cont2      5.906710e-02
 #gbm_interactions(model.gbm_train,  df[train_index, all.vars(formula.all)], 2, 2)
 
-pred.gbm_inc = predict(model.gbm_train, n.trees = best_it, newdata = df)
+pred.gbm_inc = pred.rp + predict(model.gbm_train, n.trees = best_it, newdata = df)
 
 cat(paste('gbm_train (in/out):', 
           round(r_sqr(df$log_loss[train_index],  pred.gbm_inc[train_index]), 4),
           sum(is.na(pred.gbm_inc)) ))
+
+print(paste('error std', sd( df$log_loss[train_index] - pred.gbm_inc[train_index])))
 
 ```
 

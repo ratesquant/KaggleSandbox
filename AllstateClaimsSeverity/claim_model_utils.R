@@ -1,4 +1,4 @@
-load_claim_data = function(folder, min_count = 100, max_cat_levels = 10) {
+load_claim_data = function(folder, min_count = 100, max_cat_levels = 10, scale_by_count = FALSE) {
 	vars_cat = 116
 	vars_num = 14
 
@@ -34,13 +34,22 @@ load_claim_data = function(folder, min_count = 100, max_cat_levels = 10) {
 	cat_vars = cols[grep("cat", cols)] 
 	
 	## Convert variables with many levels to numerical	 
-	cat_vars_toconvert = cat_vars[which( sapply(df[, cat_vars], FUN = function(x) length(levels(x))) >= max_cat_levels)]	
+	cat_vars_toconvert = cat_vars[which( sapply(df[, cat_vars], FUN = function(x) length(levels(x))) > max_cat_levels)]	
 	print( sort(sapply(df[, cat_vars_toconvert], FUN = function(x) length(levels(x)))) )
 	for(cv in cat_vars_toconvert){
-	print(sort(table(df[, cv])))
-	a = reorder(df[, cv], df[, cv], FUN = length)
-	levels(a) <- seq(length(levels(a)))
-	df[, cv] = as.numeric(a)
+	  print(cv)
+	  print(sort(table(df[, cv])))
+	  a = reorder(df[, cv], df[, cv], FUN = length)
+	  
+	  if(scale_by_count){
+	    #convert to numbers by increasing count, scale by count
+	    levels(a) <- cumsum(table(a))
+	    df[, cv] = as.numeric(as.character(a)) / length(a)
+	  }else{
+  	  #convert to numbers by increasing count
+  	  levels(a) <- seq(length(levels(a)))
+  	  df[, cv] = as.numeric(a)
+	  }
 	}
 
 	#combine rare levels for categorical variables 

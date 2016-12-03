@@ -10,6 +10,8 @@ output:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
+rm(list = ls())
+
 library(reshape2)
 library(ggplot2)
 library(GGally)
@@ -32,7 +34,6 @@ library(MASS)
 ## Load Data
 
 ```{r load_data}
-rm(list = ls())
 
 random_seed = 12345678
 
@@ -40,7 +41,7 @@ folder = 'C:/Dev/Kaggle/AllstateClaimsSeverity/'
 
 source(file.path(folder, 'claim_model_utils.R'))
 
-df = load_claim_data(file.path(folder, 'input'), min_count = 30, max_cat_levels = 4, scale_by_count = FALSE)
+df = load_claim_data(file.path(folder, 'input'), min_count = 100, max_cat_levels = 7, scale_by_count = FALSE)
 
 test_index = df$tag == 0
 train_index = df$tag == 1
@@ -158,6 +159,24 @@ corrplot.mixed(con_corr, lower="number", upper="ellipse")
 top 20 variables explain about 90% of variance
 top 43 variables explain about 98% of variance
 
+### Random Forest
+```{r rf, fig.width = 8, fig.height = 6, dpi = 100, eval = FALSE}
+
+formula.rf = formula.all
+
+model.rf <- randomForest(formula.rf, 
+                             data =df[train_index, all.vars(formula.rf)],
+                             ntree=500)
+  
+summary(model.rf)
+  
+pred.rf = predict(model.rf, newdata = df)
+  
+cat(paste('rf (in/out):', 
+          round(r_sqr(df$log_loss[train_index],  pred.rf[train_index]), 4),
+          sum(is.na(pred.lm)) ))
+```
+
 ### Linear Regression
 lm (in/out): 0.519 0.5184 0
 ```{r lm, fig.width = 8, fig.height = 6, dpi = 100}
@@ -267,7 +286,7 @@ print(formula.gbm)
 
 pred.gbm = rep(NA, length(df$loss))
 
-max_it = data.frame(level = levels(df$cat80), it = c(10, 100, 20, 100)*1000)
+max_it = data.frame(level = levels(df$cat80), it = c(7, 100, 20, 100)*1000)
 
 for (cat80_level in levels(df$cat80))
 {
@@ -307,7 +326,7 @@ for (cat80_level in levels(df$cat80))
                 n.trees = max_trees,
                 shrinkage = 0.001,#0.005
                 bag.fraction = 0.5,
-                interaction.depth = 3,
+                interaction.depth = 2,
                 cv.folds = 3,
                 train.fraction = 1.0,
                 n.cores = 1, 
@@ -335,7 +354,7 @@ for (cat80_level in levels(df$cat80))
   
   cat(paste('gbm seg (in/out):', cat80_level, 
           round(r_sqr(df$log_loss[train_index & df$cat80 == cat80_level],  
-                      pred.gbm[train_index & df$cat80 == cat80_level]), 4),
+                      pred.gbm[train_index & df$cat80 == cat80_level]), 6),
           sum(is.na(pred.gbm[df$cat80 == cat80_level])) ))
   
 }

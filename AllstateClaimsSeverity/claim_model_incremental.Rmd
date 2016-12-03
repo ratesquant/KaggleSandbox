@@ -39,10 +39,12 @@ folder = 'C:/Dev/Kaggle/AllstateClaimsSeverity/'
 
 source(file.path(folder, 'claim_model_utils.R'))
 
-df = load_claim_data(file.path(folder, 'input'), 30)
+df = load_claim_data(file.path(folder, 'input'), min_count = 20, max_cat_levels = 10, scale_by_count = FALSE)
 
 test_index = df$tag == 0
 train_index = df$tag == 1
+
+#train_index[2000:length(train_index)] = 0
 
 print(table(df$tag))
 
@@ -70,17 +72,10 @@ least_significant = c('cat40','cont9','cat10','cat50','cat78','cont5','cat9','ca
 'cat46','cat28','cat29','cat88','cat92','cat97','cat98','cont4')
 least_significant = c('') # dont exclude variables
 
-#useless variables less then 1.0%
-least_significant2 =  c(least_significant, 'cat13','cat115','cat73','cat104','cat99','cat51','cat75','cont10','cat39','cat107','cat19','cat3','cont1','cat93', 'cont8','cat7','cat65','cat106','cont6','cat67','cat71','cat85','cat16','cat96','cat41','cat102','cat86')
-
 formula.all_sig = formula (paste( 'log_loss ~', paste(allvars[!allvars %in% least_significant], collapse = '+')) )
-
-formula.loss_sig = formula (paste( 'loss ~', paste(allvars[!allvars %in% least_significant], collapse = '+')) )
 
 #sapply(df[,cont_vars], sd)
 #sapply(df[,cat_vars], function(x) length(levels(x)) )
-
-print(formula.all_sig)
 
 ```
 
@@ -170,7 +165,7 @@ rp: 0.4078 (0.624794407701577)
 ```{r rpart, fig.width = 8, fig.height = 6, dpi = 100}
 model.rp = rpart(formula.factor,
                  data = df[train_index, all.vars(formula.factor)], 
-                 control = rpart.control(cp = 0.001, minsplit = 20))
+                 control = rpart.control(cp = 0.0002, minsplit = 20))
 
 printcp(model.rp)
 
@@ -191,12 +186,12 @@ print(paste('error std', sd(df$log_loss_error_rp[train_index])))
 ```
 
 ### Random Forest
-```{r rf, fig.width = 8, fig.height = 6, dpi = 150}
+```{r rf, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE}
 model.rf <- randomForest(formula.factor, 
                              data = df[train_index, all.vars(formula.factor)],
-                             ntree=20)
+                             ntree=500)
 
-pred.rf = to_numeric(predict(model.rf, newdata = df))
+pred.rf = predict(model.rf, newdata = df)
 
 importance(model.rf)
 
@@ -204,46 +199,51 @@ cat(paste('rf (in/out):',
           round(r_sqr(df$log_loss[train_index],  pred.rf[train_index]), 4),
           sum(is.na(pred.rf)) ))
 
+df$log_loss_error_rf = df$log_loss - pred.rf
 ```
 
 ### GBM incremental
 gbm_train (in/out): 0.5453 0.5486 0 (1172.82543)
 ```{r gbm_train, fig.width = 8, fig.height = 6, dpi = 100}
 
-formula.gbm_train = update(formula.all, "log_loss_error_rp ~ .")
+formula.gbm_inc = update(formula.all, "log_loss_error_rp ~ .")
 
 set.seed(random_seed)
 
-max_it = 10000
-model.gbm_train = gbm(formula.gbm_train, 
-                data = df[train_index, all.vars(formula.gbm_train)], 
+max_it = 100*1000
+model.gbm_inc = gbm(formula.gbm_inc, 
+                data = df[train_index, all.vars(formula.gbm_inc)], 
                 distribution = 'gaussian',
                 n.trees = max_it,
-                shrinkage = 0.005, #0.005
-                bag.fraction = 0.7,
+                shrinkage = 0.001, #0.005
+                bag.fraction = 0.5,
                 interaction.depth = 2,
-                cv.folds = 0,
-                train.fraction = 0.5,
+                cv.folds = 3,
+                train.fraction = 1.0,
                 n.cores = 1,
-                verbose = TRUE)
+                verbose = FALSE)
 
 #do extra 2000 iterations
 # model.gbm_train <- gbm.more(model.gbm_train, 60000, verbose=TRUE)
-print(model.gbm_train)
+print(model.gbm_inc)
 
-par(mfrow = c(1, 2), las = 1)
-best_it = gbm.perf(model.gbm_train, method = 'test')
+#show best iteration
+best_it = gbm.perf(model.gbm_inc, method = 'cv')
+print(best_it)
 grid()
-vars.importance = summary(model.gbm_train, n.trees = best_it) # influence
+
+#show importance
+par(mfrow = c(1,1), las = 1)
+vars.importance = summary(model.gbm_inc, n.trees = best_it) # influence
 print(vars.importance)
 grid()
 
-par(mfrow=c(5, 4))
-for(i in seq( pmin(20, length(vars.importance$var))) ) {
-  plot.gbm(model.gbm_train, n.trees =best_it,  i = as.character(vars.importance$var[i]) )
+#show 16 most important variables
+for(i in seq( pmin(16, length(vars.importance$var))) ) {
+  plot.gbm(model.gbm_inc, n.trees =best_it,  i = as.character(vars.importance$var[i]) )
   grid()
 }
-
+  
 #          vars interaction_score
 #   cat1-cat100      1.438754e-01
 #  cat80-cat101      1.042298e-01
@@ -253,7 +253,7 @@ for(i in seq( pmin(20, length(vars.importance$var))) ) {
 #   cat79-cont2      5.906710e-02
 #gbm_interactions(model.gbm_train,  df[train_index, all.vars(formula.all)], 2, 2)
 
-pred.gbm_inc = pred.rp + predict(model.gbm_train, n.trees = best_it, newdata = df)
+pred.gbm_inc = pred.rp + predict(model.gbm_inc, n.trees = best_it, newdata = df)
 
 cat(paste('gbm_train (in/out):', 
           round(r_sqr(df$log_loss[train_index],  pred.gbm_inc[train_index]), 4),
@@ -268,7 +268,8 @@ print(paste('error std', sd( df$log_loss[train_index] - pred.gbm_inc[train_index
 
 results = list()
 #results$mars =pred.mars
-#results$rp = pred.rp
+results$rp = pred.rp
+#results$rf = pred.rf
 results$gbm_inc = pred.gbm_inc
 
 #

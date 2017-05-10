@@ -33,10 +33,13 @@ rm(list = ls())
 
 random_seed = 12345678
 
-folder = 'C:/Dev/Kaggle/House Prices/'
+#working_folder = 'C:/Dev/Kaggle/'
+working_folder = file.path(Sys.getenv("HOME"), '/source/github/KaggleSandbox/')
 
-train <- read.csv(file.path(folder, 'train.csv'))
-test  <- read.csv(file.path(folder, 'test.csv')) # 1459   80
+source(file.path(working_folder, 'Utils/common.R'))
+
+train <- read.csv(file.path(working_folder,'House Prices/train.csv'))
+test  <- read.csv(file.path(working_folder,'House Prices/test.csv')) # 1459   80
 test$SalePrice <- NA
 df = rbind(train, test)
 df$SalePrice = 1e-3 * df$SalePrice

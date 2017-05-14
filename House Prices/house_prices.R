@@ -1,6 +1,5 @@
 library(reshape2)
 library(ggplot2)
-library(GGally)
 library(Hmisc)
 library(plyr)
 library(gridExtra)
@@ -9,27 +8,20 @@ library(gbm)
 library(np)
 library(earth) 
 library(rpart)
+library(party)
+library(caret)
 library(randomForest)
 library(nnet)
 library(e1071)
 library(MASS)
 
+rm(list = ls())
+
 r_sqr <-function(y, x) {
   return( summary(lm(y ~ x))$r.squared )
 }
 
-gbm_interactions <- function(gbm_model, data, min_influence = 1, degree = 2){
-  gbm_summary = summary(gbm_model, plotit=FALSE)
-  vars = gbm_summary$var[gbm_summary$rel.inf > min_influence]
-  all_combinations = combn(as.vector(vars), degree, simplify = TRUE)
-  df = ldply(seq(dim(all_combinations)[2]), function(i) {
-    data.frame(vars = paste(all_combinations[,i], collapse = '-'), 
-               interaction_score = interact.gbm(gbm_model, data, all_combinations[,i])) 
-  })
-  return ( df[order(df$interaction_score, decreasing = TRUE),] )
-}
-
-rm(list = ls())
+# Read Data ---- 
 
 random_seed = 12345678
 
@@ -44,7 +36,13 @@ test$SalePrice <- NA
 df = rbind(train, test)
 df$SalePrice = 1e-3 * df$SalePrice
 
-#new variables
+test_index = is.na(df$SalePrice)
+train_index = !test_index
+
+#saveRDS(train, file.path(folder, 'train.rds'))
+#saveRDS(test, file.path(folder, 'test.rds'))
+
+# new variables ----
 df$X1stFlrRatio = df$X1stFlrSF/df$GrLivArea
 df$GrLivAreaRatio = 1.0 - (df$X1stFlrSF + df$X2ndFlrSF)/df$GrLivArea
 df$nfloors = as.numeric(df$X2ndFlrSF>0) + as.numeric(df$X1stFlrSF>0)
@@ -54,11 +52,7 @@ df$GarageAreaRatio = df$GarageArea/df$GrLivArea
 
 #df$SalePriceLog = log(df$SalePriceLog) 
 
-test_index = is.na(df$SalePrice)
-train_index = !test_index
 
-#saveRDS(train, file.path(folder, 'train.rds'))
-#saveRDS(test, file.path(folder, 'test.rds'))
 
 ## GBM ---- 
 #year and month of sale, lot square footage, and number of bedrooms
@@ -66,11 +60,12 @@ cat_vars = c('Neighborhood', 'GarageFinish', 'KitchenQual', 'ExterQual', 'BsmtQu
 con_vars = c('OverallQual', 'GrLivArea', 'TotalBsmtRatio', 'GarageCars', 'BsmtFinRatio', 'LotArea', 'nfloors','X1stFlrRatio', 'GrLivAreaRatio', 'GarageAreaRatio')
 
 allvars = union ( cat_vars , con_vars) 
+allvars = names(df)[!(names(df) %in% c('SalePrice'))]
 formula.all = formula (paste( 'SalePrice ~', paste(allvars, collapse = '+')) )
 
 #0.15061
 var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
-var.monotone[allvars %in% c('GrLivArea', 'GarageCars', 'LotArea', 'TotalBsmtRatio', 'BsmtFinRatio', 'LotArea')] = 1
+var.monotone[allvars %in% c('GrLivArea', 'GarageCars', 'LotArea', 'TotalBsmtRatio', 'BsmtFinRatio')] = 1
 max_it = 32 * 1024
 model.gbm = gbm(formula.all, 
                     data = df[train_index, all.vars(formula.all)], 
@@ -94,12 +89,16 @@ grid()
 par(mfrow = c(1,1), las = 1)
 vars.importance = summary(model.gbm, n.trees = best_it) # influence
 print(vars.importance)
+#write.clipboard(vars.importance, sep = '\t')
 grid()
 
-plot.gbm(model.gbm, n.trees =best_it,  i = as.character('GrLivAreaRatio') ) #vars.importance$var[2]
-grid()
 gbm_interactions(model.gbm,  df[train_index, all.vars(formula.all)], 2, 2)
+plot_gbminteractions(a)
 
+plots = plot_gbmpartial(model.gbm, best_it, as.character(vars.importance$var)[vars.importance$rel.inf>5], output_type = 'link')
+marrangeGrob(plots, nrow=2, ncol=2)
+
+#predict
 pred.gbm = predict(model.gbm, n.trees = best_it, newdata = df)
 
 plot(df$SalePrice[train_index], predict(model.gbm, n.trees =best_it))
@@ -111,7 +110,8 @@ res = ldply(results, .id = 'model', function(x) {
   c(r2 = r_sqr(df$SalePrice[train_index],  x[train_index]),
     na_count = sum(is.na(x[test_index])))
 })
-print(res) #0.9189278
+print(res) #0.9189278, 0.9535332
+
 
 ## print solution ---- 
 for (model_name in names(results) ){

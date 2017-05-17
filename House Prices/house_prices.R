@@ -21,23 +21,6 @@ r_sqr <-function(y, x) {
   return( summary(lm(y ~ x))$r.squared )
 }
 
-rms_log <-function(y, x) {
-  return ( sqrt( mean(log(y+1) - log(x+1))^2 ))
-}
-
-box_cox_fun <-function(x, lambda) {
-  if(lambda == 0)
-    return ( log(x) )
-  else
-    return( (x^lambda - 1) / lambda )
-}
-
-box_cox_fun_inv <-function(x, lambda) {
-  if(lambda == 0)
-    return ( exp(x) )
-  else
-    return( (x * lambda + 1)^(1/lambda) )
-}
 
 # READ DATA ---- 
 
@@ -59,7 +42,7 @@ train_index = !test_index
 
 #saveRDS(train, file.path(folder, 'train.rds'))
 #saveRDS(test, file.path(folder, 'test.rds'))
-boxcox_lambda = -0.25
+
 
 # new variables ----
 df$X1stFlrRatio = df$X1stFlrSF/df$GrLivArea
@@ -73,8 +56,8 @@ df$LotAreaLog = log(df$LotArea)
 df$GrLivAreaLog = log(df$GrLivArea) 
 df$LotFrontageRatio = df$LotFrontage/sqrt(df$LotArea)
 df$SalePriceNorm = df$SalePrice/df$GrLivArea
-df$SalePriceLog = log(df$SalePrice)
-df$SalePriceLogNorm = log(df$SalePriceNorm)
+df$SalePriceLog = log(df$SalePrice + 1)
+df$SalePriceLogNorm = log(df$SalePrice + 1) - log(df$GrLivArea + 1)
 
 df$GarageYrBltPrior1980 = factor(df$GarageYrBlt<1980)
 df$YearBuiltPrior1970 = factor(df$YearBuilt<1970)
@@ -95,8 +78,6 @@ ggplot(df, aes(sample = GrLivAreaLog )) + stat_qq()
 ggplot(df, aes(sample = OpenPorchSF )) + stat_qq()
 
 ggplot(df, aes(x = log(SalePrice/GrLivArea)  )) + stat_ecdf()
-ggplot(df, aes(sample = box_cox_fun(SalePrice + 30,-0.2) )) + stat_qq()
-ggplot(df, aes(sample = box_cox_fun(SalePrice,-0.25) )) + stat_qq()
 
 ggplot(df, aes(sample = LotFrontage )) + stat_qq()
 ggplot(df, aes(sample = LotFrontage/sqrt(LotArea) )) + stat_qq()
@@ -119,9 +100,9 @@ ggplot(df, aes(YrSold - YearRemodAdd, SalePrice)) + geom_point()
 ## FIT MODEL ---- 
 #year and month of sale, lot square footage, and number of bedrooms
 cat_vars = c('Neighborhood', 'BsmtQual', 'GarageFinish', 'KitchenQual', 'FireplaceQu', 'GarageType', 'GarageQual', 'GarageCond', 'ExterQual',  'MasVnrType', 'TotRmsAbvGrd', 
-             'Functional', 'RoofMatl', 'LandSlope', 'OverallCond', 'SaleCondition', 'Fence', 'CentralAir','BsmtCond', 
-             'LandContour', 'BldgType', 'MoSold', 'FullBath', 'BsmtFullBath','BsmtHalfBath', 'Condition1', 'RoofStyle', 'Foundation', 
-             'LotConfig','LotShape', 'ExterCond', 'Exterior1st','Exterior2nd', 'BsmtFinType1','BsmtFinType2', 'MSZoning', 'PavedDrive',  'Fireplaces', 'Alley', 'HouseStyle')
+             'Functional', 'RoofMatl', 'OverallCond', 'SaleCondition', 'Fence', 'CentralAir','BsmtCond', 
+             'LandContour', 'BldgType', 'MoSold', 'FullBath', 'BsmtFullBath', 'Condition1', 'RoofStyle', 'Foundation', 
+             'LotConfig','LotShape', 'ExterCond', 'Exterior1st','Exterior2nd', 'BsmtFinType1','BsmtFinType2', 'MSZoning', 'PavedDrive',  'Fireplaces', 'HouseStyle')
 con_vars = c('OverallQual', 'GrLivAreaLog', 'TotalBsmtRatio', 'BsmtFinRatio', 'GarageCars', 'X1stFlrRatio', 'X3rdFlrRatio', 'LotAreaLog', 'MasVnrArea', 
              'LotFrontageRatio', 'GarageAreaRatio', 'OpenPorchSFRatio', 'ScreenPorchRatio', 'WoodDeckSFRatio', 'RemodAge', 'GarageAge', 'HouseAge')
 
@@ -133,14 +114,15 @@ con_vars = c('OverallQual', 'GrLivAreaLog', 'TotalBsmtRatio', 'BsmtFinRatio', 'G
 
 allvars = union ( cat_vars , con_vars) 
 #allvars = names(df) %!in% c('SalePrice')
-formula.all = formula (paste( 'SalePriceNorm ~', paste(allvars, collapse = '+')) )
+formula.all = formula (paste( 'SalePriceLog ~', paste(allvars, collapse = '+')) )
 
 var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
-var.monotone[allvars %in% c('OverallQual','OverallCond', 'LotAreaLog', 'GarageCars', 'BsmtFinRatio', 'ScreenPorch', 
-                            'TotalBsmtRatio', 'BsmtFullBath', 'GarageAreaRatio', 'WoodDeckSFRatio', 'OpenPorchSFRatio', 'ScreenPorchRatio')] = 1
-var.monotone[allvars %in% c( 'RemodAge', 'GarageAge', 'HouseAge', 'GrLivAreaLog', 'X3rdFlrRatio')] = -1
+#var.monotone[allvars %in% c('OverallQual','OverallCond', 'LotAreaLog', 'GarageCars', 'BsmtFinRatio', 'ScreenPorch', 
+#                            'TotalBsmtRatio', 'BsmtFullBath', 'GarageAreaRatio', 'WoodDeckSFRatio', 'OpenPorchSFRatio', 'ScreenPorchRatio')] = 1
+#var.monotone[allvars %in% c( 'RemodAge', 'GarageAge', 'HouseAge', 'GrLivAreaLog', 'X3rdFlrRatio', 'LotFrontageRatio',
+#                             'X1stFlrRatio')] = -1
 
-max_it = 64 * 1024 #64k is for s=0.001, 
+max_it = 40 * 1000 #64k is for s=0.001, 
 set.seed(random_seed)
 model.gbm = gbm(formula.all, 
                     data = df[train_index, all.vars(formula.all)], 
@@ -160,7 +142,8 @@ model.gbm = gbm(formula.all,
 best_it = gbm.perf(model.gbm, method = 'cv')
 print(best_it)
 grid()
-pred.gbm = df$GrLivArea * predict(model.gbm, n.trees = best_it, newdata = df)
+pred.gbm = predict(model.gbm, n.trees = best_it, newdata = df)
+pred.gbm = exp(pred.gbm) - 1
 
 #show importance
 vars.importance = summary(model.gbm, n.trees = best_it, plotit=FALSE) # influence
@@ -246,7 +229,7 @@ marrangeGrob(plots, nrow=4, ncol=4)
 plot_df = data.frame(actual = pred.gbm[train_index], model = df$SalePrice[train_index], size = df$GrLivArea[train_index])
 plot_df$error = plot_df$actual - plot_df$model
 p1 = ggplot(plot_df, aes(model, actual)) + geom_point() + geom_smooth(method = 'loess', span = 0.2) + geom_abline(slope = 1, color = 'red')
-p2 = ggplot(plot_df, aes(model/size, actual/size)) + geom_point() + geom_smooth(method = 'loess', span = 0.2) + geom_abline(slope = 1, color = 'red')
+p2 = ggplot(plot_df, aes(log(model+1), log(actual+1))) + geom_point() + geom_smooth(method = 'loess', span = 0.2) + geom_abline(slope = 1, color = 'red')
 p3 = ggplot(plot_df, aes(model, abs(error)/sd(error))) + geom_point() + geom_smooth(method = 'loess', span = 0.2)
 p4 = ggplot(plot_df, aes(model, error)) + geom_point() + geom_smooth(method = 'loess', span = 0.2)
 grid.arrange(p1, p2, p3, p4)
@@ -257,14 +240,11 @@ results = list()
 results$gbm = pred.gbm
 
 res = ldply(results, .id = 'model', function(x) {
-  c(r2 = r_sqr(df$SalePrice[train_index],  x[train_index]),
-    rms_log = rms_log(1e3*df$SalePrice[train_index],  1e3*x[train_index]),
+  c(rms_log = rms_log(df$SalePrice[train_index],  x[train_index]),
     na_count = sum(is.na(x[test_index])))
 })
 print(res) #0.9419065 (non-mon), 0.9535332 (full)
-#0.12773 (best yet!) - 0.932936
-#0.12832
-#        -Heating
+#0.12558 - best so far
 
 
 ## print solution ---- 

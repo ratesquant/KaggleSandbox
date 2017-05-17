@@ -4,6 +4,10 @@
 '%!in%' <- function(x,y)!('%in%'(x,y))
 '%!in_set%' <- function(x,y)(x[!'%in%'(x,y)])
 
+rms_log <-function(y, x) {
+  return ( sqrt( mean ( (log(y+1) - log(x+1))^2 )))
+}
+
 
 normalize_data <- function(x){
   ecdf_norm<-function(x) {

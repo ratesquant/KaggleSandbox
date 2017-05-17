@@ -1,4 +1,24 @@
 
+## misc utils ----------
+
+'%!in%' <- function(x,y)!('%in%'(x,y))
+'%!in_set%' <- function(x,y)(x[!'%in%'(x,y)])
+
+
+normalize_data <- function(x){
+  ecdf_norm<-function(x) {
+    n = length(x)
+    y = (seq(n)-0.5)/n
+    y[order(x)] = y
+    return (y)
+  }
+  
+  x = data.frame(c1 = rnorm(10), c2 = rnorm(10), c3 = sample(LETTERS[1:4], 10, replace = TRUE) )
+  sapply(x, function (col) { ecdf_norm(col) })
+  
+}
+
+## GBM plotting functions ----------
 
 gbm_interactions <- function(gbm_model, data, iter, min_influence = 1, degree = 2){
   gbm_summary = summary(gbm_model, plotit=FALSE)

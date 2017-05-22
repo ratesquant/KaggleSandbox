@@ -14,6 +14,7 @@ library(randomForest)
 library(nnet)
 library(e1071)
 library(MASS)
+library(corrplot)
 
 rm(list = ls())
 
@@ -51,7 +52,10 @@ df$BsmtFinRatio = df$BsmtFinSF1/df$GrLivArea
 df$TotalBsmtRatio = df$TotalBsmtSF/df$GrLivArea
 df$GarageAreaRatio = df$GarageArea/df$GrLivArea
 df$MasVnrAreaRatio = df$MasVnrArea/df$GrLivArea
+df$MasVnrAreaLog = log(df$MasVnrArea + 1)
 df$GarageAreaNorm = ifelse(df$GarageCars > 0,  df$GarageArea/ df$GarageCars, 0)
+df$GarageAreaLog = log(df$GarageArea + 1)
+df$GarageAreaNormLog = log(df$GarageAreaNorm + 1)
 df$LotAreaLog = log(df$LotArea) 
 df$GrLivAreaLog = log(df$GrLivArea) 
 df$LotFrontageRatio = df$LotFrontage/sqrt(df$LotArea)
@@ -66,11 +70,14 @@ df$GarageAge = df$YrSold - df$GarageYrBlt
 df$HouseAge = df$YrSold - df$YearBuilt
 df$RemodAgeRatio = df$RemodAge/df$HouseAge
 df$GarageAgeRatio = df$GarageAge/df$HouseAge
+df$GarageAgeRel = df$HouseAge - df$GarageAge
 df$OpenPorchSFRatio = df$OpenPorchSF/df$GrLivArea
 df$WoodDeckSFRatio = df$WoodDeckSF/df$GrLivArea
 df$ScreenPorchRatio = df$ScreenPorch/df$GrLivArea
-df$RoomAvgArea =  df$GrLivArea / df$TotRmsAbvGrd
+df$LowQualFinSFRatio = df$LowQualFinSF/df$GrLivArea
+df$LowQualFinSFLog = log(df$LowQualFinSF + 1)
 
+df$RoomAvgArea =  df$GrLivArea / df$TotRmsAbvGrd
 
 ggplot(df, aes(sample = log(SalePrice/GrLivArea) )) + stat_qq()
 ggplot(df, aes(sample = RoomAvgArea )) + stat_qq()
@@ -85,59 +92,55 @@ ggplot(df, aes(sample = GarageArea )) + stat_qq()
 ggplot(df, aes(sample = MasVnrArea )) + stat_qq()
 ggplot(df, aes(SalePriceNorm, MasVnrAreaRatio)) + geom_point() + geom_smooth(method = 'loess', span = 0.2)
 ggplot(df, aes(sqrt(LotArea), LotFrontage/sqrt(LotArea))) + geom_point() + geom_smooth(method = 'loess', span = 0.2)
-ggplot(df, aes(LotFrontage, sqrt(GarageArea))) + geom_point()
+ggplot(df, aes(LotFrontage, sqrt(LotArea))) + geom_point()
 ggplot(df, aes(GarageAreaNorm, GarageCars )) + geom_point()
+ggplot(df, aes(LowQualFinSF/GrLivArea, GrLivArea )) + geom_point()
 
 ggplot(df, aes(GrLivArea, SalePriceNorm)) + geom_point()
 ggplot(df, aes(YrSold - YearRemodAdd, residual)) + geom_point()
-ggplot(df, aes(YrSold - YearRemodAdd, SalePrice)) + geom_point()
+ggplot(df, aes(GarageAgeRel, GarageAge)) + geom_point()
+ggplot(df, aes(HouseAge, HouseAge - RemodAge)) + geom_point()
 
-
-#added ExteriorCond
-
-#boxcox(SalePrice ~ OverallQual + GrLivArea, data = df, lambda = seq(-0.5, 0.5, length = 10))
 
 ## FIT MODEL ---- 
 #year and month of sale, lot square footage, and number of bedrooms
-cat_vars = c('Neighborhood', 'BsmtQual', 'GarageFinish', 'KitchenQual', 'FireplaceQu', 'GarageType', 'GarageQual', 'GarageCond', 'ExterQual',  'MasVnrType', 'TotRmsAbvGrd', 
+cat_vars = c('Neighborhood', 'BsmtQual', 'GarageFinish', 'KitchenQual', 'FireplaceQu', 'GarageType', 'GarageQual', 'GarageCond', 'ExterQual', 'TotRmsAbvGrd', 
              'Functional', 'RoofMatl', 'OverallCond', 'SaleCondition', 'Fence', 'CentralAir','BsmtCond', 
-             'LandContour', 'BldgType', 'MoSold', 'FullBath', 'BsmtFullBath', 'Condition1', 'RoofStyle', 'Foundation', 
-             'LotConfig','LotShape', 'ExterCond', 'Exterior1st','Exterior2nd', 'BsmtFinType1','BsmtFinType2', 'MSZoning', 'PavedDrive',  'Fireplaces', 'HouseStyle')
-con_vars = c('OverallQual', 'GrLivAreaLog', 'TotalBsmtRatio', 'BsmtFinRatio', 'GarageCars', 'X1stFlrRatio', 'X3rdFlrRatio', 'LotAreaLog', 'MasVnrArea', 
-             'LotFrontageRatio', 'GarageAreaRatio', 'OpenPorchSFRatio', 'ScreenPorchRatio', 'WoodDeckSFRatio', 'RemodAge', 'GarageAge', 'HouseAge')
+             'LandContour', 'MoSold', 'FullBath', 'BsmtFullBath', 'Condition1', 'Foundation', 
+             'LotConfig', 'ExterCond', 'Exterior1st','Exterior2nd', 'BsmtFinType1','BsmtFinType2', 'MSZoning',  'Fireplaces', 'HouseStyle')
+con_vars = c('OverallQual', 'GrLivAreaLog', 'TotalBsmtRatio', 'BsmtFinRatio', 'GarageCars', 'LotAreaLog', 
+             'OpenPorchSFRatio', 'ScreenPorchRatio', 'WoodDeckSFRatio', 'RemodAge', 'HouseAge', 
+             'YrSold', 'LowQualFinSFLog')
 
-# try SalePriceLogNorm - consisten with scoring algo
-#quesinable vars: MasVnrAreaRatio
+#removed: LotFrontageRatio
+#quesinable vars: MasVnrAreaRatio, MasVnrArea, LotFrontageRatio
 #corr_matrix = cor(df[,con_vars], use="complete.obs")
 #corrplot(corr_matrix, method="number")
-
 
 allvars = union ( cat_vars , con_vars) 
 #allvars = names(df) %!in% c('SalePrice')
 formula.all = formula (paste( 'SalePriceLog ~', paste(allvars, collapse = '+')) )
 
 var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
-#var.monotone[allvars %in% c('OverallQual','OverallCond', 'LotAreaLog', 'GarageCars', 'BsmtFinRatio', 'ScreenPorch', 
-#                            'TotalBsmtRatio', 'BsmtFullBath', 'GarageAreaRatio', 'WoodDeckSFRatio', 'OpenPorchSFRatio', 'ScreenPorchRatio')] = 1
-#var.monotone[allvars %in% c( 'RemodAge', 'GarageAge', 'HouseAge', 'GrLivAreaLog', 'X3rdFlrRatio', 'LotFrontageRatio',
-#                             'X1stFlrRatio')] = -1
+var.monotone[allvars %in% c('OverallQual','OverallCond', 'GarageCars', 'ScreenPorch', 'LotAreaLog', 'GrLivAreaLog',
+                            'BsmtFullBath','WoodDeckSFRatio', 'OpenPorchSFRatio', 'ScreenPorchRatio', 'TotRmsAbvGrd', 'BsmtFinRatio', 'MasVnrAreaLog')] = 1
+var.monotone[allvars %in% c('RemodAge', 'HouseAge', 'GarageAge', 'GarageAgeRel')] = -1
 
 max_it = 40 * 1000 #64k is for s=0.001, 
-set.seed(random_seed)
+#set.seed(random_seed)
 model.gbm = gbm(formula.all, 
-                    data = df[train_index, all.vars(formula.all)], 
-                    distribution = 'gaussian',
-                    n.trees = max_it,
-                    shrinkage = 0.001, #0.001
-                    bag.fraction = 0.5,
-                    interaction.depth = 2,
-                    cv.folds = 10,
-                    train.fraction = 1.0,
-                    var.monotone = var.monotone,
-                    n.cores = 4,
-                    verbose = FALSE)
+                data = df[train_index, all.vars(formula.all)], 
+                distribution = 'gaussian',
+                n.trees = max_it,
+                shrinkage = 0.001, #0.001
+                bag.fraction = 0.5,
+                interaction.depth = 2,
+                cv.folds = 10,
+                train.fraction = 1.0,
+                var.monotone = var.monotone,
+                n.cores = 4,
+                verbose = FALSE)
 #model.gbm <- gbm.more(model.gbm,max_it)
-
 #show best iteration
 best_it = gbm.perf(model.gbm, method = 'cv')
 print(best_it)
@@ -152,8 +155,8 @@ print(vars.importance)
 #write.clipboard(vars.importance, sep = '\t')
 
 #plot interactions
-level2_interactions = gbm_interactions(model.gbm,  df[train_index, all.vars(formula.all)], iter = best_it, 1, 2)
-plot_gbminteractions(level2_interactions)
+#level2_interactions = gbm_interactions(model.gbm,  df[train_index, all.vars(formula.all)], iter = best_it, 1, 2)
+#plot_gbminteractions(level2_interactions)
 
 plots = plot_gbmpartial(model.gbm, best_it, as.character(vars.importance$var)[vars.importance$rel.inf>.1], output_type = 'link')
 marrangeGrob(plots, nrow=5, ncol=5)
@@ -162,12 +165,56 @@ marrangeGrob(plots, nrow=5, ncol=5)
 plots = plot_gbmpartial(model.gbm, best_it, as.character(vars.importance$var)[vars.importance$rel.inf<=.1], output_type = 'link')
 marrangeGrob(plots, nrow=4, ncol=4)
 
+#correlation for model vars
+df_num = df[train_index, !sapply(df, is.factor )]
+df_num = df_num[,names(df_num) %in% all.vars(formula.all)]
+df_num$Residual = df_num$SalePrice - pred.gbm[train_index]  
+corr_matrix = cor(df_num, use="complete.obs")
+corrplot(corr_matrix, type="lower", order ="hclust",  addrect=3)
+
+#correlation for non-model vars
+df_num = df[train_index, !sapply(df, is.factor )]
+df_num = df_num[,names(df_num) %!in% all.vars(formula.all)]
+df_num$Residual = df_num$SalePrice - pred.gbm[train_index]  
+corr_matrix = cor(df_num, use="complete.obs")
+corrplot(corr_matrix, type="lower", order ="hclust", addrect=3)
+
+#fit model to residuals
+df_res = df[train_index,]
+df_res$Residual = log(pred.gbm[train_index]+1) - log(df$SalePrice[train_index]+1)
+formula.res = formula (paste( 'Residual ~', paste(names(df_res) %!in_set% c('Id', 'SalePrice', 'SalePriceLogNorm', 'Residual', 'SalePriceNorm', all.vars(formula.all)), collapse = '+')) )
+res_it = 20*1024
+model.gbm.res = gbm(formula.res, 
+                data = df_res[,all.vars(formula.res)], 
+                distribution = 'gaussian',
+                n.trees = res_it,
+                shrinkage = 0.001, #0.001
+                bag.fraction = 0.5,
+                interaction.depth = 2,
+                train.fraction = 1.0,
+                n.cores = 4,
+                verbose = FALSE)
+
+vars.importance.res = summary(model.gbm.res, n.trees = res_it, plotit=FALSE) # influence
+plot_gbminfluence(vars.importance.res)
+print(vars.importance.res)
+
+plots = plot_gbmpartial(model.gbm.res, res_it, as.character(vars.importance.res$var)[vars.importance.res$rel.inf>2], output_type = 'link')
+marrangeGrob(plots, nrow=5, ncol=5)
+
 # PREDICT ----
 #pred.gbm = box_cox_fun_inv(predict(model.gbm, n.trees = best_it, newdata = df), boxcox_lambda)
 
 #profiles with respect to model vars (should match well)
 plots <- llply(all.vars(formula.all), function(vname){
-  plot_result = plot_profile(pred.gbm[train_index], df$SalePrice[train_index], df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  plot_result = plot_profile(pred.gbm[train_index], df$SalePrice[train_index], df[train_index, vname], bucket_count = 20, min_obs = 3, error_band ='normal') + ggtitle(vname)
+  return (plot_result)
+})
+marrangeGrob(plots, nrow=4, ncol=4)
+
+#profiles with respect to model vars (norm) (should match well)
+plots <- llply(all.vars(formula.all), function(vname){
+  plot_result = plot_profile(log(pred.gbm[train_index]+1), log(df$SalePrice[train_index]+1), df[train_index, vname], bucket_count = 20, min_obs = 10, error_band ='normal') + ggtitle(vname)
   return (plot_result)
 })
 marrangeGrob(plots, nrow=4, ncol=4)
@@ -186,7 +233,7 @@ marrangeGrob(plots, nrow=4, ncol=4)
 
 #profiles (norm) with respect to extra vars
 plots <- llply(names(df)[-1] %!in_set% all.vars(formula.all), function(vname){
-  plot_result = plot_profile(pred.gbm[train_index]/df$GrLivArea, df$SalePrice[train_index]/df$GrLivArea, df[train_index, vname], bucket_count = 10, min_obs = 3, error_band ='normal') + ggtitle(vname)
+  plot_result = plot_profile(log(pred.gbm[train_index]+1), log(df$SalePrice[train_index]+1), df[train_index, vname], bucket_count = 20, min_obs = 3, error_band ='normal') + ggtitle(vname)
   return (plot_result)
 })
 marrangeGrob(plots, nrow=4, ncol=4)
@@ -216,7 +263,7 @@ plots <- llply(names(df)[-1] %!in_set% all.vars(formula.all), function(vname){
 marrangeGrob(plots, nrow=4, ncol=4)
 
 #profiles for large errors (model vars)
-#write.clipboard(df[abs(df$SalePrice - pred.gbm)> 100 & !is.na(df$SalePrice), ])
+#write.clipboard(df[abs(log(df$SalePrice+1) - log(pred.gbm+1))> 0.2 & !is.na(df$SalePrice), ])
 index_error = abs(df$SalePrice - pred.gbm)> 25 & !is.na(df$SalePrice)
 plots <- llply(all.vars(formula.all), function(vname){
   plot_result = plot_profile(pred.gbm[index_error], df$SalePrice[index_error], df[index_error, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
@@ -244,7 +291,9 @@ res = ldply(results, .id = 'model', function(x) {
     na_count = sum(is.na(x[test_index])))
 })
 print(res) #0.9419065 (non-mon), 0.9535332 (full)
+#0.09507986
 #0.12558 - best so far
+#0.12644, 0.12643, 0.12667,  0.12672, 0.12810
 
 
 ## print solution ---- 

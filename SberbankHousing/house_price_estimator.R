@@ -3,6 +3,7 @@ library(ggplot2)
 library(Hmisc)
 library(plyr)
 library(gridExtra)
+library(corrplot)
 
 library(gbm)
 library(np)
@@ -14,6 +15,8 @@ library(randomForest)
 library(nnet)
 library(e1071)
 library(MASS)
+library(lubridate)
+
 
 rm(list = ls())
 
@@ -40,7 +43,32 @@ train_index = !test_index
 
 # Variables  ---- 
 
+df$sample =  factor(ifelse(train_index, 'train', 'test'))
 df$price_log =  log( df$price_doc + 1)
+df$full_sq_log = log(df$full_sq + 1)
+df$area_m_log = log(df$area_m + 1)
+df$max_floor_adj = pmax(df$max_floor, df$floor)
+df$floor_diff = df$max_floor_adj - df$floor 
+df$sale_year = year(as.Date(as.character(df$timestamp)))
+df$sale_month = month(as.Date(as.character(df$timestamp)))
+
+#filter out outliers
+train_index = train_index & df$full_sq <= max(df$full_sq[test_index])
+train_index = train_index & (df$num_room <= 10  | is.na(df$num_room))
+train_index = train_index & (df$max_floor <= 60 | is.na(df$max_floor))
+train_index = train_index & (df$floor <= 50 | is.na(df$floor))
+
+#green_zone_km, railroad_km, mosque_km, kindergarten_km 
+
+ggplot(df[train_index,], aes(log(area_m), price_log)) + geom_point() + geom_smooth()
+ggplot(df, aes(kindergarten_km, color = sample)) + geom_density()
+ggplot(df, aes(metro_min_avto, metro_min_walk, color = sample)) + geom_point()
+ggplot(df[train_index,], aes(floor, price_log)) + geom_point() + geom_smooth()
+ggplot(df[train_index,], aes(metro_min_avto)) + stat_ecdf()
+ggplot(df, aes(log(area_m), color = sample)) + stat_ecdf()
+
+summary(df[train_index,'exhibition_km'])
+summary(df[test_index,'exhibition_km'])
 
 #timestamp: date of transaction
 #full_sq: total area in square meters, including loggias, balconies and other non-residential areas
@@ -55,21 +83,36 @@ df$price_log =  log( df$price_doc + 1)
 #product_type: owner-occupier purchase or investment
 #sub_area: name of the district
 
-cat_vars = c()
-con_vars = c()
+#candidates
+can_vars = c('full_sq_log', 'num_room', 'cafe_count_5000_price_2500', 'sport_count_3000',
+'num_room', 'cafe_count_5000_price_2500', 'cafe_count_5000_price_high', 'sport_count_3000','cafe_count_2000','build_year','ttk_km','theater_km','museum_km','catering_km','exhibition_km',
+'metro_min_avto','cafe_count_5000','cafe_count_3000','floor',
+'max_floor','metro_km_avto','mosque_km','public_healthcare_km','state',
+'green_zone_km','bulvar_ring_km','mkad_km','kindergarten_km','life_sq','nuclear_reactor_km','cafe_count_2000_price_2500',
+'railroad_km','big_road2_km', 'product_type','green_part_5000','power_transmission_line_km','indust_part','sadovoe_km','swim_pool_km','hospice_morgue_km','workplaces_km','office_sqm_1500',
+'exhibition_km','trc_sqm_5000','kitch_sq','trc_count_1500', 'max_floor_adj', 'sale_year', 'sale_month','area_m_log', 'exhibition_km')
 
+
+cat_vars = c()
+con_vars = c('full_sq_log', 'num_room', 'cafe_count_5000_price_2500', 'sport_count_3000', 'floor', 'max_floor_adj', 
+             'mkad_km', 'metro_min_avto', 'green_zone_km', 'railroad_km', 'mosque_km','kindergarten_km', 'sale_year', 'sale_month', 
+             'cafe_count_5000_price_high', 'build_count_brick','green_part_5000', 'area_m_log','exhibition_km')
+non_vars = c('price_log', 'price_doc', 'id', 'timestamp', 'sub_area', 'sample')
+
+#corr_matrix = cor(df[,con_vars], use="complete.obs")
+#corrplot(corr_matrix, method="number")
 
 # Regression  ---- 
 allvars = union ( cat_vars , con_vars) 
-allvars = names(df) %!in_set% c('price_log', 'price_doc', 'id', 'timestamp', 'sub_area')
+#allvars = names(df) %!in_set% non_vars
 formula.all = formula (paste( 'price_log ~', paste(allvars, collapse = '+')) )
 
 var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
-#var.monotone[allvars %in% c()] =  1
-#var.monotone[allvars %in% c()] = -1
+var.monotone[allvars %in% c('full_sq_log', 'num_room', 'cafe_count_5000_price_2500','cafe_count_5000_price_high', 'sport_count_3000', 'mosque_km')] =  1
+var.monotone[allvars %in% c('mkad_km','metro_min_avto', 'kindergarten_km', 'green_zone_km')] = -1
 
-max_it = 500*1024 #64k is for s=0.001, 
-set.seed(random_seed)
+max_it = 50*1024 #64k is for s=0.001, 
+#set.seed(random_seed)
 model.gbm = gbm(formula.all, 
                 data = df[train_index, all.vars(formula.all)], 
                 distribution = 'gaussian',
@@ -77,15 +120,17 @@ model.gbm = gbm(formula.all,
                 shrinkage = 0.001, #0.001
                 bag.fraction = 0.5,
                 interaction.depth = 2,
-                cv.folds = 5,
-                train.fraction = 1.0,
+                #cv.folds = 5,
+                train.fraction = 0.5,
                 var.monotone = var.monotone,
                 n.cores = 4,
                 verbose = FALSE)
 #model.gbm <- gbm.more(model.gbm,max_it)
 
 #show best iteration
-best_it = gbm.perf(model.gbm, method = 'cv')
+#best_it = gbm.perf(model.gbm, method = 'cv')
+#gbm.perf(model.gbm, method = 'test',oobag.curve = TRUE)
+best_it = gbm.perf(model.gbm, method = 'test') 
 print(best_it)
 grid()
 pred.gbm = exp(predict(model.gbm, n.trees = best_it, newdata = df)) - 1.0
@@ -95,9 +140,48 @@ vars.importance = summary(model.gbm, n.trees = best_it, plotit=FALSE) # influenc
 plot_gbminfluence(vars.importance)
 print(vars.importance)
 
+#partial dependence
 plots = plot_gbmpartial(model.gbm, best_it, as.character(vars.importance$var)[vars.importance$rel.inf>.1], output_type = 'link')
 marrangeGrob(plots, nrow=5, ncol=5)
 
+
+#profiles (norm) with respect to model vars
+plots <- llply(names(df) %in_set% all.vars(formula.all), function(vname){
+  plot_result = plot_profile(log(pred.gbm[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  return (plot_result)
+})
+marrangeGrob(plots, nrow=4, ncol=4)
+#str(df[train_index,all.vars(formula.all)])
+
+#profiles (norm) with respect to candidate vars
+plots <- llply(can_vars %!in_set% c(all.vars(formula.all), non_vars), function(vname){
+  plot_result = plot_profile(log(pred.gbm[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  return (plot_result)
+})
+marrangeGrob(plots, nrow=4, ncol=4)
+
+#profiles (norm) with respect to candidate vars for low price
+index = train_index & (!is.na(df$price_doc) | log(df$price_doc+1) < 9) 
+plots <- llply(can_vars %!in_set% c(all.vars(formula.all), non_vars), function(vname){
+  plot_result = plot_profile(log(pred.gbm[index]+1), log(df$price_doc[index]+1), df[index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  return (plot_result)
+})
+marrangeGrob(plots, nrow=4, ncol=4)
+
+
+#profiles (res) with respect to candidate vars
+plots <- llply(can_vars %!in_set% c(all.vars(formula.all), non_vars), function(vname){
+  plot_result = plot_profile(log(pred.gbm[train_index]+1)-log(df$price_doc[train_index]+1), 0*df$price_doc[train_index], df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  return (plot_result)
+})
+marrangeGrob(plots, nrow=4, ncol=4)
+
+#compare residuals
+plot_df = data.frame(actual = pred.gbm[train_index], model = df$price_doc[train_index])
+plot_df$error = plot_df$actual - plot_df$model
+p1 = ggplot(plot_df, aes(model, actual)) + geom_point(size = 0.2) + geom_smooth() + geom_abline(slope = 1, color = 'red')
+p2 = ggplot(plot_df, aes(log(model+1), log(actual+1))) + geom_point(size = 0.2) + geom_smooth() + geom_abline(slope = 1, color = 'red')
+grid.arrange(p1, p2)
 
 
 # Solution  ---- 
@@ -110,6 +194,8 @@ res = ldply(results, .id = 'model', function(x) {
     na_count = sum(is.na(x[test_index])))
 })
 print(res)
+#
+#
 
 ## print solution ---- 
 for (model_name in names(results) ){
@@ -121,3 +207,31 @@ for (model_name in names(results) ){
   print(file)
 }
 
+
+###  Fit residuals to remaining vars ---- 
+formula.res = formula (paste( 'price_log_res ~', paste(names(df) %!in_set% c(all.vars(formula.all), non_vars), collapse = '+')) )
+df.res = df[train_index,]
+df.res$price_log_res = log(pred.gbm[train_index]+1)-log(df$price_doc[train_index]+1)
+#write.clipboard(df.res[log(pred.gbm[train_index]+1)<7,])
+
+max_it = 10*1000 #80 sec for 1k it
+
+model.gbm.res = gbm(formula.res, 
+                data = df.res[, all.vars(formula.res)], 
+                distribution = 'gaussian',
+                n.trees = max_it,
+                shrinkage = 0.001, #0.001
+                bag.fraction = 0.5,
+                interaction.depth = 2,
+                train.fraction = 0.5,
+                n.cores = 4,
+                verbose = FALSE)
+
+best_it_res = gbm.perf(model.gbm.res, method = 'test') 
+print(best_it_res)
+grid()
+
+#show importance
+vars.importance.res = summary(model.gbm.res, n.trees = best_it_res, plotit=FALSE) # influence
+plot_gbminfluence(vars.importance.res)
+print(vars.importance.res)

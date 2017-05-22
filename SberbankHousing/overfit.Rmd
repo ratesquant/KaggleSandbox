@@ -1,0 +1,241 @@
+---
+title: "Overfitting"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(reshape2)
+library(ggplot2)
+library(Hmisc)
+library(plyr)
+library(gridExtra)
+library(corrplot)
+
+library(gbm)
+library(np)
+library(earth) 
+library(rpart)
+library(party)
+library(caret)
+library(randomForest)
+library(nnet)
+library(e1071)
+library(MASS)
+library(lubridate)
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load data
+```{r load_data}
+rm(list = ls())
+
+# READ DATA ---- 
+
+max_it = 10 #64k is for s=0.001, 
+
+random_seed = 12345678
+
+set.seed(random_seed)
+
+#working_folder = 'C:/Dev/Kaggle/'
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
+source(file.path(working_folder, 'Utils/common.R'))
+
+train <- read.csv(file.path(working_folder,'SberbankHousing/train.csv'))
+test  <- read.csv(file.path(working_folder,'SberbankHousing/test.csv')) # 1459   80
+test$price_doc <- NA
+df = rbind(train, test)
+df$price_doc = 1e-3 * df$price_doc
+test_index = is.na(df$price_doc)
+train_index = !test_index
+
+# Variables  ---- 
+
+df$sample =  factor(ifelse(train_index, 'train', 'test'))
+df$price_log =  log( df$price_doc + 1)
+df$full_sq_log = log(df$full_sq + 1)
+df$area_m_log = log(df$area_m + 1)
+df$max_floor_adj = pmax(df$max_floor, df$floor)
+df$floor_diff = df$max_floor_adj - df$floor 
+df$sale_year = year(as.Date(as.character(df$timestamp)))
+df$sale_month = month(as.Date(as.character(df$timestamp)))
+df$state_adj = pmin(df$state, 4)
+
+#filter out outliers
+train_index = train_index & df$full_sq <= max(df$full_sq[test_index])
+train_index = train_index & (df$num_room <= 10  | is.na(df$num_room))
+train_index = train_index & (df$max_floor <= 60 | is.na(df$max_floor))
+train_index = train_index & (df$floor <= 50 | is.na(df$floor))
+
+
+```
+
+## GBM on all vars (degree = 2)
+```{r gbm2, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=FALSE}
+start_time <- proc.time()
+
+non_vars = c('price_log', 'price_doc', 'id', 'timestamp', 'sample')
+
+formula.all = formula (paste( 'price_log ~', paste(names(df) %!in_set% c(non_vars), collapse = '+')) )
+
+model.gbm2 = gbm(formula.all, 
+                data = df[train_index, all.vars(formula.all)], 
+                distribution = 'gaussian',
+                n.trees = max_it,
+                shrinkage = 0.001, #0.001
+                bag.fraction = 0.5,
+                interaction.depth = 2,
+                #cv.folds = 5,
+                train.fraction = 0.5,
+                n.cores = 4,
+                verbose = FALSE)
+#show best iteration
+best_it2 = gbm.perf(model.gbm2, method = 'test') 
+print(best_it2)
+grid()
+pred.gbm2 = exp(predict(model.gbm2, n.trees = best_it2, newdata = df)) - 1.0
+
+#show importance
+vars.importance2 = summary(model.gbm2, n.trees = best_it2, plotit=FALSE) # influence
+plot_gbminfluence(vars.importance2)
+print(vars.importance2)
+
+sig_vars = as.character(vars.importance2$var)[vars.importance2$rel.inf>=.1]
+
+#partial dependence
+print('sig variables')
+plots = plot_gbmpartial(model.gbm2, best_it2, sig_vars, output_type = 'link')
+marrangeGrob(plots, nrow=5, ncol=5)
+
+#profiles (norm) with respect to model vars
+plots <- llply(names(df) %in_set% sig_vars, function(vname){
+  plot_result = plot_profile(log(pred.gbm2[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  return (plot_result)
+})
+marrangeGrob(plots, nrow=4, ncol=4)
+
+print((proc.time() - start_time)[3])
+```
+
+## GBM on all vars (degree = 3)
+```{r gbm3, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=FALSE}
+start_time <- proc.time()
+
+model.gbm3 = gbm(formula.all, 
+                data = df[train_index, all.vars(formula.all)], 
+                distribution = 'gaussian',
+                n.trees = max_it,
+                shrinkage = 0.001, #0.001
+                bag.fraction = 0.5,
+                interaction.depth = 3,
+                #cv.folds = 5,
+                train.fraction = 0.5,
+                n.cores = 4,
+                verbose = FALSE)
+#show best iteration
+best_it3 = gbm.perf(model.gbm3, method = 'test') 
+print(best_it3)
+grid()
+pred.gbm3 = exp(predict(model.gbm3, n.trees = best_it3, newdata = df)) - 1.0
+
+#show importance
+vars.importance3 = summary(model.gbm3, n.trees = best_it3, plotit=FALSE) # influence
+plot_gbminfluence(vars.importance3)
+print(vars.importance3)
+
+sig_vars = as.character(vars.importance3$var)[vars.importance3$rel.inf>=.1]
+
+#partial dependence
+plots = plot_gbmpartial(model.gbm3, best_it3, sig_vars, output_type = 'link')
+marrangeGrob(plots, nrow=5, ncol=5)
+
+#profiles (norm) with respect to model vars
+plots <- llply(names(df) %in_set% sig_vars, function(vname){
+  plot_result = plot_profile(log(pred.gbm3[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  return (plot_result)
+})
+marrangeGrob(plots, nrow=4, ncol=4)
+
+print((proc.time() - start_time)[3])
+```
+
+## GBM on all vars (degree = 3, CV)
+```{r gbm_cv, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=FALSE}
+start_time <- proc.time()
+
+model.gbm_cv = gbm(formula.all, 
+                data = df[train_index, all.vars(formula.all)], 
+                distribution = 'gaussian',
+                n.trees = max_it,
+                shrinkage = 0.001, #0.001
+                bag.fraction = 0.5,
+                interaction.depth = 3,
+                cv.folds = 5,
+                train.fraction = 1.0,
+                n.cores = 4,
+                verbose = FALSE)
+#show best iteration
+best_it_cv = gbm.perf(model.gbm_cv, method = 'cv') 
+print(best_it_cv)
+grid()
+pred.gbm_cv = exp(predict(model.gbm_cv, n.trees = best_it_cv, newdata = df)) - 1.0
+
+#show importance
+vars.importance_cv = summary(model.gbm_cv, n.trees = best_it_cv, plotit=FALSE) # influence
+plot_gbminfluence(vars.importance_cv)
+print(vars.importance_cv)
+
+sig_vars = as.character(vars.importance_cv$var)[vars.importance_cv$rel.inf>=.1]
+
+#partial dependence
+plots = plot_gbmpartial(model.gbm_cv, best_it_cv, sig_vars, output_type = 'link')
+marrangeGrob(plots, nrow=5, ncol=5)
+
+#profiles (norm) with respect to model vars
+plots <- llply(names(df) %in_set% sig_vars, function(vname){
+  plot_result = plot_profile(log(pred.gbm_cv[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  return (plot_result)
+})
+marrangeGrob(plots, nrow=4, ncol=4)
+
+print((proc.time() - start_time)[3])
+```
+
+## GBM on all vars (degree = 3, CV)
+```{r gbm, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=FALSE}
+
+# Solution  ---- 
+results = list()
+results$gbm2 = pred.gbm2
+results$gbm3 = pred.gbm3
+results$gbm_cv = pred.gbm_cv
+
+res = ldply(results, .id = 'model', function(x) {
+  c(rms_log = rms_log(1e3*df$price_doc[train_index],  1e3*x[train_index]),
+    na_count = sum(is.na(x[test_index])))
+})
+print(res)
+#
+#
+
+for (model_name in names(results) ) {
+  plot_df = data.frame(actual = df$price_doc[train_index], model = results[[model_name]][train_index])
+  plot_df$error = plot_df$actual - plot_df$model
+  p1 = ggplot(plot_df, aes(model, actual)) + geom_point(size = 0.2) + geom_smooth() + geom_abline(slope = 1, color = 'red')
+  p2 = ggplot(plot_df, aes(log(model+1), log(actual+1))) + geom_point(size = 0.2) + geom_smooth() + geom_abline(slope = 1, color = 'red')
+  print(grid.arrange(p1, p2))
+}
+
+
+## print solution ---- 
+for (model_name in names(results) ){
+  submit <- data.frame(id = as.integer( as.numeric(df$id[test_index]) ), price_doc = 1e3*results[[model_name]][test_index])
+  submit = submit[order(submit$id),]
+  file = file.path(working_folder, sprintf("SberbankHousing/my_solution_fullfit_%s.csv", model_name))
+  write.csv(submit, file = file, row.names = FALSE)
+  #zip(paste(file, '.zip', sep = ''), file, flags = "-9jX")
+  print(file)
+}
+```

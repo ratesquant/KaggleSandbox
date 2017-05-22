@@ -51,6 +51,7 @@ df$max_floor_adj = pmax(df$max_floor, df$floor)
 df$floor_diff = df$max_floor_adj - df$floor 
 df$sale_year = year(as.Date(as.character(df$timestamp)))
 df$sale_month = month(as.Date(as.character(df$timestamp)))
+df$state_adj = pmin(df$state, 4)
 
 #filter out outliers
 train_index = train_index & df$full_sq <= max(df$full_sq[test_index])
@@ -65,10 +66,10 @@ ggplot(df, aes(kindergarten_km, color = sample)) + geom_density()
 ggplot(df, aes(metro_min_avto, metro_min_walk, color = sample)) + geom_point()
 ggplot(df[train_index,], aes(floor, price_log)) + geom_point() + geom_smooth()
 ggplot(df[train_index,], aes(metro_min_avto)) + stat_ecdf()
-ggplot(df, aes(log(area_m), color = sample)) + stat_ecdf()
+ggplot(df, aes(build_count_brick, color = sample)) + stat_ecdf()
 
-summary(df[train_index,'exhibition_km'])
-summary(df[test_index,'exhibition_km'])
+summary(df[train_index,'sport_count_5000'])
+summary(df[test_index,'sport_count_5000'])
 
 #timestamp: date of transaction
 #full_sq: total area in square meters, including loggias, balconies and other non-residential areas
@@ -83,6 +84,7 @@ summary(df[test_index,'exhibition_km'])
 #product_type: owner-occupier purchase or investment
 #sub_area: name of the district
 
+
 #candidates
 can_vars = c('full_sq_log', 'num_room', 'cafe_count_5000_price_2500', 'sport_count_3000',
 'num_room', 'cafe_count_5000_price_2500', 'cafe_count_5000_price_high', 'sport_count_3000','cafe_count_2000','build_year','ttk_km','theater_km','museum_km','catering_km','exhibition_km',
@@ -90,14 +92,18 @@ can_vars = c('full_sq_log', 'num_room', 'cafe_count_5000_price_2500', 'sport_cou
 'max_floor','metro_km_avto','mosque_km','public_healthcare_km','state',
 'green_zone_km','bulvar_ring_km','mkad_km','kindergarten_km','life_sq','nuclear_reactor_km','cafe_count_2000_price_2500',
 'railroad_km','big_road2_km', 'product_type','green_part_5000','power_transmission_line_km','indust_part','sadovoe_km','swim_pool_km','hospice_morgue_km','workplaces_km','office_sqm_1500',
-'exhibition_km','trc_sqm_5000','kitch_sq','trc_count_1500', 'max_floor_adj', 'sale_year', 'sale_month','area_m_log', 'exhibition_km')
+'exhibition_km','trc_sqm_5000','kitch_sq','trc_count_1500', 'max_floor_adj', 'sale_year', 'sale_month','area_m_log', 'exhibition_km', 'sub_area')
 
+#checked and have very little influence (<0.1)
+dum_vars = c('big_market_raion', 'incineration_raion', 'oil_chemistry_raion', 'railroad_terminal_raion', 'thermal_power_plant_raion','nuclear_reactor_raion','radiation_raion')
 
-cat_vars = c()
+cat_vars = c('product_type', 'state_adj', 
+             'detention_facility_raion', 'ecology')
+
 con_vars = c('full_sq_log', 'num_room', 'cafe_count_5000_price_2500', 'sport_count_3000', 'floor', 'max_floor_adj', 
              'mkad_km', 'metro_min_avto', 'green_zone_km', 'railroad_km', 'mosque_km','kindergarten_km', 'sale_year', 'sale_month', 
-             'cafe_count_5000_price_high', 'build_count_brick','green_part_5000', 'area_m_log','exhibition_km')
-non_vars = c('price_log', 'price_doc', 'id', 'timestamp', 'sub_area', 'sample')
+             'cafe_count_5000_price_high', 'build_count_brick','green_part_5000', 'area_m_log','exhibition_km', 'kitch_sq', 'prom_part_3000', 'cafe_sum_500_max_price_avg')
+non_vars = c('price_log', 'price_doc', 'id', 'timestamp', 'sample')
 
 #corr_matrix = cor(df[,con_vars], use="complete.obs")
 #corrplot(corr_matrix, method="number")
@@ -108,7 +114,7 @@ allvars = union ( cat_vars , con_vars)
 formula.all = formula (paste( 'price_log ~', paste(allvars, collapse = '+')) )
 
 var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
-var.monotone[allvars %in% c('full_sq_log', 'num_room', 'cafe_count_5000_price_2500','cafe_count_5000_price_high', 'sport_count_3000', 'mosque_km')] =  1
+var.monotone[allvars %in% c('full_sq_log', 'num_room', 'cafe_count_5000_price_2500','cafe_count_5000_price_high', 'sport_count_3000', 'mosque_km','state_adj')] =  1
 var.monotone[allvars %in% c('mkad_km','metro_min_avto', 'kindergarten_km', 'green_zone_km')] = -1
 
 max_it = 50*1024 #64k is for s=0.001, 
@@ -141,7 +147,11 @@ plot_gbminfluence(vars.importance)
 print(vars.importance)
 
 #partial dependence
-plots = plot_gbmpartial(model.gbm, best_it, as.character(vars.importance$var)[vars.importance$rel.inf>.1], output_type = 'link')
+plots = plot_gbmpartial(model.gbm, best_it, as.character(vars.importance$var)[vars.importance$rel.inf>=.1], output_type = 'link')
+marrangeGrob(plots, nrow=5, ncol=5)
+
+#vars to remove
+plots = plot_gbmpartial(model.gbm, best_it, as.character(vars.importance$var)[vars.importance$rel.inf<.1], output_type = 'link')
 marrangeGrob(plots, nrow=5, ncol=5)
 
 
@@ -159,6 +169,8 @@ plots <- llply(can_vars %!in_set% c(all.vars(formula.all), non_vars), function(v
   return (plot_result)
 })
 marrangeGrob(plots, nrow=4, ncol=4)
+plot_profile(log(pred.gbm[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, 'sub_area'], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle('sub_area')
+
 
 #profiles (norm) with respect to candidate vars for low price
 index = train_index & (!is.na(df$price_doc) | log(df$price_doc+1) < 9) 
@@ -177,7 +189,7 @@ plots <- llply(can_vars %!in_set% c(all.vars(formula.all), non_vars), function(v
 marrangeGrob(plots, nrow=4, ncol=4)
 
 #compare residuals
-plot_df = data.frame(actual = pred.gbm[train_index], model = df$price_doc[train_index])
+plot_df = data.frame(actual = df$price_doc[train_index], model = pred.gbm[train_index])
 plot_df$error = plot_df$actual - plot_df$model
 p1 = ggplot(plot_df, aes(model, actual)) + geom_point(size = 0.2) + geom_smooth() + geom_abline(slope = 1, color = 'red')
 p2 = ggplot(plot_df, aes(log(model+1), log(actual+1))) + geom_point(size = 0.2) + geom_smooth() + geom_abline(slope = 1, color = 'red')
@@ -212,7 +224,7 @@ for (model_name in names(results) ){
 formula.res = formula (paste( 'price_log_res ~', paste(names(df) %!in_set% c(all.vars(formula.all), non_vars), collapse = '+')) )
 df.res = df[train_index,]
 df.res$price_log_res = log(pred.gbm[train_index]+1)-log(df$price_doc[train_index]+1)
-#write.clipboard(df.res[log(pred.gbm[train_index]+1)<7,])
+#write.clipboard(df.res[log(df$price_doc[train_index]+1)<8,])
 
 max_it = 10*1000 #80 sec for 1k it
 

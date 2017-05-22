@@ -1,6 +1,8 @@
 ---
 title: "Overfitting"
-output: html_document
+output:
+  html_document: default
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -23,6 +25,8 @@ library(e1071)
 library(MASS)
 library(lubridate)
 
+library(knitr)
+
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
@@ -32,7 +36,9 @@ rm(list = ls())
 
 # READ DATA ---- 
 
-max_it = 10 #64k is for s=0.001, 
+inf_lowlimit = 1e-4
+
+max_it = 10*1000 #64k is for s=0.001, 
 
 random_seed = 12345678
 
@@ -99,22 +105,22 @@ pred.gbm2 = exp(predict(model.gbm2, n.trees = best_it2, newdata = df)) - 1.0
 
 #show importance
 vars.importance2 = summary(model.gbm2, n.trees = best_it2, plotit=FALSE) # influence
-plot_gbminfluence(vars.importance2)
-print(vars.importance2)
+plot_gbminfluence(vars.importance2[vars.importance2$rel.inf>inf_lowlimit,])
+kable(vars.importance2[vars.importance2$rel.inf>inf_lowlimit,])
 
 sig_vars = as.character(vars.importance2$var)[vars.importance2$rel.inf>=.1]
 
 #partial dependence
 print('sig variables')
 plots = plot_gbmpartial(model.gbm2, best_it2, sig_vars, output_type = 'link')
-marrangeGrob(plots, nrow=5, ncol=5)
+marrangeGrob(plots, nrow=3, ncol=3)
 
 #profiles (norm) with respect to model vars
 plots <- llply(names(df) %in_set% sig_vars, function(vname){
   plot_result = plot_profile(log(pred.gbm2[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
   return (plot_result)
 })
-marrangeGrob(plots, nrow=4, ncol=4)
+marrangeGrob(plots, nrow=3, ncol=3)
 
 print((proc.time() - start_time)[3])
 ```
@@ -142,21 +148,21 @@ pred.gbm3 = exp(predict(model.gbm3, n.trees = best_it3, newdata = df)) - 1.0
 
 #show importance
 vars.importance3 = summary(model.gbm3, n.trees = best_it3, plotit=FALSE) # influence
-plot_gbminfluence(vars.importance3)
-print(vars.importance3)
+plot_gbminfluence(vars.importance3[vars.importance3$rel.inf>inf_lowlimit,])
+kable(vars.importance3[vars.importance3$rel.inf>inf_lowlimit,])
 
 sig_vars = as.character(vars.importance3$var)[vars.importance3$rel.inf>=.1]
 
 #partial dependence
 plots = plot_gbmpartial(model.gbm3, best_it3, sig_vars, output_type = 'link')
-marrangeGrob(plots, nrow=5, ncol=5)
+marrangeGrob(plots, nrow=3, ncol=3)
 
 #profiles (norm) with respect to model vars
 plots <- llply(names(df) %in_set% sig_vars, function(vname){
   plot_result = plot_profile(log(pred.gbm3[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
   return (plot_result)
 })
-marrangeGrob(plots, nrow=4, ncol=4)
+marrangeGrob(plots, nrow=3, ncol=3)
 
 print((proc.time() - start_time)[3])
 ```
@@ -184,21 +190,21 @@ pred.gbm_cv = exp(predict(model.gbm_cv, n.trees = best_it_cv, newdata = df)) - 1
 
 #show importance
 vars.importance_cv = summary(model.gbm_cv, n.trees = best_it_cv, plotit=FALSE) # influence
-plot_gbminfluence(vars.importance_cv)
-print(vars.importance_cv)
+plot_gbminfluence(vars.importance_cv[vars.importance_cv$rel.inf>inf_lowlimit,])
+kable(vars.importance_cv[vars.importance_cv$rel.inf>inf_lowlimit,])
 
 sig_vars = as.character(vars.importance_cv$var)[vars.importance_cv$rel.inf>=.1]
 
 #partial dependence
 plots = plot_gbmpartial(model.gbm_cv, best_it_cv, sig_vars, output_type = 'link')
-marrangeGrob(plots, nrow=5, ncol=5)
+marrangeGrob(plots, nrow=3, ncol=3)
 
 #profiles (norm) with respect to model vars
 plots <- llply(names(df) %in_set% sig_vars, function(vname){
   plot_result = plot_profile(log(pred.gbm_cv[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
   return (plot_result)
 })
-marrangeGrob(plots, nrow=4, ncol=4)
+marrangeGrob(plots, nrow=3, ncol=3)
 
 print((proc.time() - start_time)[3])
 ```
@@ -225,7 +231,7 @@ for (model_name in names(results) ) {
   plot_df$error = plot_df$actual - plot_df$model
   p1 = ggplot(plot_df, aes(model, actual)) + geom_point(size = 0.2) + geom_smooth() + geom_abline(slope = 1, color = 'red')
   p2 = ggplot(plot_df, aes(log(model+1), log(actual+1))) + geom_point(size = 0.2) + geom_smooth() + geom_abline(slope = 1, color = 'red')
-  print(grid.arrange(p1, p2))
+  print(grid.arrange(p1, p2, ncol = 2))
 }
 
 

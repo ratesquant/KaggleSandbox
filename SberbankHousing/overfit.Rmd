@@ -35,10 +35,9 @@ knitr::opts_chunk$set(echo = TRUE)
 rm(list = ls())
 
 # READ DATA ---- 
+max_it_mult = 1000
 
-inf_lowlimit = 1e-4
-
-max_it = 10*1000 #64k is for s=0.001, 
+inf_lowlimit = 1e-3
 
 random_seed = 12345678
 
@@ -48,6 +47,8 @@ set.seed(random_seed)
 working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 
 source(file.path(working_folder, 'Utils/common.R'))
+
+insignificant_vars_file = file.path(working_folder, 'insignificant_vars.rds')
 
 train <- read.csv(file.path(working_folder,'SberbankHousing/train.csv'))
 test  <- read.csv(file.path(working_folder,'SberbankHousing/test.csv')) # 1459   80
@@ -75,6 +76,11 @@ train_index = train_index & (df$num_room <= 10  | is.na(df$num_room))
 train_index = train_index & (df$max_floor <= 60 | is.na(df$max_floor))
 train_index = train_index & (df$floor <= 50 | is.na(df$floor))
 
+if(file.exists(insignificant_vars_file)){
+  insignificant_vars.rds = readRDS(insignificant_vars_file)
+}else{
+  insignificant_vars.rds = c()
+}
 
 ```
 
@@ -84,7 +90,9 @@ start_time <- proc.time()
 
 non_vars = c('price_log', 'price_doc', 'id', 'timestamp', 'sample')
 
-formula.all = formula (paste( 'price_log ~', paste(names(df) %!in_set% c(non_vars), collapse = '+')) )
+formula.all = formula (paste( 'price_log ~', paste(names(df) %!in_set% c(non_vars, insignificant_vars.rds), collapse = '+')) )
+
+max_it = 50*max_it_mult #64k is for s=0.001, 
 
 model.gbm2 = gbm(formula.all, 
                 data = df[train_index, all.vars(formula.all)], 
@@ -129,6 +137,8 @@ print((proc.time() - start_time)[3])
 ```{r gbm3, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=FALSE}
 start_time <- proc.time()
 
+max_it = 50*max_it_mult #64k is for s=0.001, 
+
 model.gbm3 = gbm(formula.all, 
                 data = df[train_index, all.vars(formula.all)], 
                 distribution = 'gaussian',
@@ -171,6 +181,8 @@ print((proc.time() - start_time)[3])
 ```{r gbm_cv, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=FALSE}
 start_time <- proc.time()
 
+max_it = 60*max_it_mult #64k is for s=0.001, 
+
 model.gbm_cv = gbm(formula.all, 
                 data = df[train_index, all.vars(formula.all)], 
                 distribution = 'gaussian',
@@ -193,6 +205,8 @@ vars.importance_cv = summary(model.gbm_cv, n.trees = best_it_cv, plotit=FALSE) #
 plot_gbminfluence(vars.importance_cv[vars.importance_cv$rel.inf>inf_lowlimit,])
 kable(vars.importance_cv[vars.importance_cv$rel.inf>inf_lowlimit,])
 
+saveRDS(vars.importance_cv$var[vars.importance_cv$rel.inf<inf_lowlimit], insignificant_vars_file)
+
 sig_vars = as.character(vars.importance_cv$var)[vars.importance_cv$rel.inf>=.1]
 
 #partial dependence
@@ -209,8 +223,8 @@ marrangeGrob(plots, nrow=3, ncol=3)
 print((proc.time() - start_time)[3])
 ```
 
-## GBM on all vars (degree = 3, CV)
-```{r gbm, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=FALSE}
+## Summary
+```{r res_print, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=FALSE}
 
 # Solution  ---- 
 results = list()

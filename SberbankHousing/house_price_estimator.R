@@ -71,6 +71,8 @@ ggplot(df, aes(build_count_brick, color = sample)) + stat_ecdf()
 summary(df[train_index,'sport_count_5000'])
 summary(df[test_index,'sport_count_5000'])
 
+plot(df$price_doc/10000, df$price_doc/10000 - floor(df$price_doc/10000))
+
 #timestamp: date of transaction
 #full_sq: total area in square meters, including loggias, balconies and other non-residential areas
 #life_sq: living area in square meters, excluding loggias, balconies and other non-residential areas
@@ -97,12 +99,12 @@ can_vars = c('full_sq_log', 'num_room', 'cafe_count_5000_price_2500', 'sport_cou
 #checked and have very little influence (<0.1)
 dum_vars = c('big_market_raion', 'incineration_raion', 'oil_chemistry_raion', 'railroad_terminal_raion', 'thermal_power_plant_raion','nuclear_reactor_raion','radiation_raion')
 
-cat_vars = c('product_type', 'state_adj', 
-             'detention_facility_raion', 'ecology')
+cat_vars = c('product_type','sub_area')
 
-con_vars = c('full_sq_log', 'num_room', 'cafe_count_5000_price_2500', 'sport_count_3000', 'floor', 'max_floor_adj', 
-             'mkad_km', 'metro_min_avto', 'green_zone_km', 'railroad_km', 'mosque_km','kindergarten_km', 'sale_year', 'sale_month', 
-             'cafe_count_5000_price_high', 'build_count_brick','green_part_5000', 'area_m_log','exhibition_km', 'kitch_sq', 'prom_part_3000', 'cafe_sum_500_max_price_avg')
+con_vars = c('full_sq_log', 'num_room', 'floor', 'max_floor_adj', 
+             'mkad_km', 'metro_min_avto', 'green_zone_km', 'railroad_km', 'mosque_km','kindergarten_km', 'workplaces_km', 'sale_year',  
+             'green_part_5000', 'exhibition_km', 'kitch_sq',
+             'cafe_sum_500_max_price_avg', 'sadovoe_km', 'life_sq', 'office_sqm_1500', 'fitness_km', 'public_transport_station_km', 'floor_diff')
 non_vars = c('price_log', 'price_doc', 'id', 'timestamp', 'sample')
 
 #corr_matrix = cor(df[,con_vars], use="complete.obs")
@@ -114,8 +116,8 @@ allvars = union ( cat_vars , con_vars)
 formula.all = formula (paste( 'price_log ~', paste(allvars, collapse = '+')) )
 
 var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
-var.monotone[allvars %in% c('full_sq_log', 'num_room', 'cafe_count_5000_price_2500','cafe_count_5000_price_high', 'sport_count_3000', 'mosque_km','state_adj')] =  1
-var.monotone[allvars %in% c('mkad_km','metro_min_avto', 'kindergarten_km', 'green_zone_km')] = -1
+#var.monotone[allvars %in% c('full_sq_log', 'num_room', 'mosque_km')] =  1
+#var.monotone[allvars %in% c('mkad_km','metro_min_avto', 'kindergarten_km', 'green_zone_km')] = -1
 
 max_it = 50*1024 #64k is for s=0.001, 
 #set.seed(random_seed)

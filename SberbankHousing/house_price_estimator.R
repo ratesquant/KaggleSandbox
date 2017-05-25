@@ -42,8 +42,6 @@ test_index = is.na(df$price_doc)
 train_index = !test_index
 
 # Variables  ---- 
-
-df$sample =  factor(ifelse(train_index, 'train', 'test'))
 df$price_log =  log( df$price_doc + 1)
 df$full_sq_log = log(df$full_sq + 1)
 df$area_m_log = log(df$area_m + 1)
@@ -51,13 +49,16 @@ df$max_floor_adj = pmax(df$max_floor, df$floor)
 df$floor_diff = df$max_floor_adj - df$floor 
 df$sale_year = year(as.Date(as.character(df$timestamp)))
 df$sale_month = month(as.Date(as.character(df$timestamp)))
+df$sale_time = df$sale_year + (df$sale_month - 1) / 12 
 df$state_adj = pmin(df$state, 4)
 
 #filter out outliers
+train_index = train_index & df$full_sq <= max(df$full_sq[test_index], na.rm = T) & df$full_sq >= 10
 train_index = train_index & df$full_sq <= max(df$full_sq[test_index])
 train_index = train_index & (df$num_room <= 10  | is.na(df$num_room))
 train_index = train_index & (df$max_floor <= 60 | is.na(df$max_floor))
 train_index = train_index & (df$floor <= 50 | is.na(df$floor))
+df$sample =  factor(ifelse(train_index, 'train', 'test'))
 
 #green_zone_km, railroad_km, mosque_km, kindergarten_km 
 
@@ -94,17 +95,17 @@ can_vars = c('full_sq_log', 'num_room', 'cafe_count_5000_price_2500', 'sport_cou
 'max_floor','metro_km_avto','mosque_km','public_healthcare_km','state',
 'green_zone_km','bulvar_ring_km','mkad_km','kindergarten_km','life_sq','nuclear_reactor_km','cafe_count_2000_price_2500',
 'railroad_km','big_road2_km', 'product_type','green_part_5000','power_transmission_line_km','indust_part','sadovoe_km','swim_pool_km','hospice_morgue_km','workplaces_km','office_sqm_1500',
-'exhibition_km','trc_sqm_5000','kitch_sq','trc_count_1500', 'max_floor_adj', 'sale_year', 'sale_month','area_m_log', 'exhibition_km', 'sub_area')
+'exhibition_km','trc_sqm_5000','kitch_sq','trc_count_1500', 'max_floor_adj', 'sale_time', 'area_m_log', 'exhibition_km', 'sub_area')
 
 #checked and have very little influence (<0.1)
 dum_vars = c('big_market_raion', 'incineration_raion', 'oil_chemistry_raion', 'railroad_terminal_raion', 'thermal_power_plant_raion','nuclear_reactor_raion','radiation_raion')
 
 cat_vars = c('product_type','sub_area')
 
-con_vars = c('full_sq_log', 'num_room', 'floor', 'max_floor_adj', 
-             'mkad_km', 'metro_min_avto', 'green_zone_km', 'railroad_km', 'mosque_km','kindergarten_km', 'workplaces_km', 'sale_year',  
-             'green_part_5000', 'exhibition_km', 'kitch_sq',
-             'cafe_sum_500_max_price_avg', 'sadovoe_km', 'life_sq', 'office_sqm_1500', 'fitness_km', 'public_transport_station_km', 'floor_diff')
+con_vars = c('full_sq', 'num_room', 'floor', 'max_floor_adj', 
+             'mkad_km', 'metro_min_avto', 'green_zone_km', 'railroad_km', 'mosque_km','kindergarten_km', 'workplaces_km', 'sale_time',  
+             'green_part_5000', 'exhibition_km', 'kitch_sq','sport_count_3000','cafe_count_5000_price_2500',
+             'cafe_sum_500_max_price_avg', 'sadovoe_km', 'office_sqm_1500', 'fitness_km', 'public_transport_station_km', 'floor_diff')
 non_vars = c('price_log', 'price_doc', 'id', 'timestamp', 'sample')
 
 #corr_matrix = cor(df[,con_vars], use="complete.obs")
@@ -116,8 +117,8 @@ allvars = union ( cat_vars , con_vars)
 formula.all = formula (paste( 'price_log ~', paste(allvars, collapse = '+')) )
 
 var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
-#var.monotone[allvars %in% c('full_sq_log', 'num_room', 'mosque_km')] =  1
-#var.monotone[allvars %in% c('mkad_km','metro_min_avto', 'kindergarten_km', 'green_zone_km')] = -1
+var.monotone[allvars %in% c('full_sq','full_sq_log', 'num_room')] =  1
+var.monotone[allvars %in% c('sadovoe_km','metro_min_avto', 'public_transport_station_km', 'fitness_km')] = -1
 
 max_it = 50*1024 #64k is for s=0.001, 
 #set.seed(random_seed)
@@ -138,10 +139,25 @@ model.gbm = gbm(formula.all,
 #show best iteration
 #best_it = gbm.perf(model.gbm, method = 'cv')
 #gbm.perf(model.gbm, method = 'test',oobag.curve = TRUE)
-best_it = gbm.perf(model.gbm, method = 'test') 
+best_it = gbm.perf(model.gbm, method = 'test') #best_it = model.gbm$n.trees
 print(best_it)
 grid()
 pred.gbm = exp(predict(model.gbm, n.trees = best_it, newdata = df)) - 1.0
+
+## this is special adjustment for 2016 sale prices, we compute price difference between 2014 and 2015 and than add that to the model prices  
+## partial dependance for sale year looks monotonically increasing 
+df_temp = df
+adj_index = test_index & df$sale_time >= 2015.5
+df_temp$sale_time[adj_index] = df$sale_time[adj_index] - 1.0 
+ggplot(df, aes(sale_time, color = sample)) + geom_density(adjust = 0.1)
+ggplot(df_temp, aes(sale_time, color = sample)) + geom_density()
+pred.gbm_1y = predict(model.gbm, n.trees = best_it, newdata = df_temp)
+df_temp$sale_time[adj_index] = df$sale_time[adj_index] - 2.0 
+ggplot(df_temp, aes(sale_time, color = sample)) + geom_density()
+pred.gbm_2y = predict(model.gbm, n.trees = best_it, newdata = df_temp)
+plot(pred.gbm_1y - pred.gbm_2y)
+pred.gbm = exp(pred.gbm_1y + (pred.gbm_1y - pred.gbm_2y) ) - 1.0
+
 
 #show importance
 vars.importance = summary(model.gbm, n.trees = best_it, plotit=FALSE) # influence

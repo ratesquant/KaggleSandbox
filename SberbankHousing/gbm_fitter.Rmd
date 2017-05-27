@@ -40,9 +40,8 @@ rm(list = ls())
 
 # READ DATA ---- 
 max_it_mult = 1000
-out_of_time_adjust = FALSE
 
-inf_lowlimit = 1e-2
+inf_lowlimit = 0.1
 
 random_seed = 12345678
 
@@ -52,8 +51,6 @@ set.seed(random_seed)
 working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 
 source(file.path(working_folder, 'Utils/common.R'))
-
-insignificant_vars_file = file.path(working_folder, 'SberbankHousing/insignificant_vars.csv')
 
 macro <- read.csv(file.path(working_folder,'SberbankHousing/macro.csv'))
 train <- read.csv(file.path(working_folder,'SberbankHousing/train.csv'))
@@ -87,8 +84,7 @@ df$state_adj = pmin(df$state, 4)
 
 #merge with macro
 macro$date = as.Date(as.character(macro$timestamp))
-df  =  merge(df[,names(df) != 'timestamp'], macro[,c('date', 'eurrub', 'usdrub', 'micex_cbi_tr', 'rent_price_2room_bus')], by.x = 'date', by.y = 'date', all.x = TRUE)
-dfm =  merge(df[,names(df) != 'timestamp'], macro[,names(macro) != 'timestamp'], by.x = 'date', by.y = 'date', all.x = TRUE)
+df  =  merge(df[,names(df) != 'timestamp'], macro[,names(macro) != 'timestamp'], by.x = 'date', by.y = 'date', all.x = TRUE)
 
 test_index = is.na(df$price_doc)
 train_index = !test_index
@@ -108,18 +104,10 @@ df$sample[test_index] = 'test'
 df$sample = factor(df$sample)
 table(df$sample)
 
-if(file.exists(insignificant_vars_file)){
-  insignificant_vars = read.csv(insignificant_vars_file)
-  insignificant_vars = as.character(insignificant_vars$x)
-  print(insignificant_vars)
-}else{
-  insignificant_vars = c()
-}
+non_vars = c('price_log', 'price_doc', 'id', 'timestamp', 'sample', 'date') #exclude sale_year and month
 
-non_vars = c('price_log', 'price_doc', 'id', 'timestamp', 'sample', 'sale_year', 'sale_month', 'date') #exclude sale_year and month
-
-sig_vars = as.character(read.csv(file.path(working_folder, 'SberbankHousing/sig_vars.csv'))[,1])
-sig_vars_macro = as.character(read.csv(file.path(working_folder, 'SberbankHousing/sig_vars_macro.csv'))[,1])
+sig_vars = as.character(read.csv(file.path(working_folder, 'SberbankHousing/sig_vars.csv'), header = FALSE)[,1])
+sig_vars_macro = as.character(read.csv(file.path(working_folder, 'SberbankHousing/sig_vars_macro.csv'), header = FALSE)[,1])
 
 print(sig_vars)
 print(sig_vars_macro)
@@ -145,11 +133,9 @@ table(df$sample)
 
 
 #macro plots
-ggplot(macro, aes(date, oil_urals)) + geom_point()
-ggplot(macro, aes(date, unemployment)) + geom_point()
-ggplot(macro, aes(date, mortgage_rate)) + geom_point()
-ggplot(macro, aes(date, gdp_annual_growth)) + geom_point()
-ggplot(macro, aes(date, usdrub)) + geom_point()
+macro_melt = melt(macro[, c('date', sig_vars_macro)], id.vars = 'date')
+
+ggplot(macro_melt, aes(date, value, group = variable, color = variable)) + geom_line() + facet_wrap(~variable, scales = 'free') + theme(legend.position = 'none')
 ```
 
 
@@ -193,52 +179,53 @@ print((proc.time() - start_time)[3])
 
 ```
 
-## Regression with Macro
+## GBM without CV
 ```{r gbm_sig_model, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE, echo=TRUE}
 start_time <- proc.time()
 
-allvars =  c(names(dfm)) %!in_set% c(non_vars)
+allvars =  unique(c(sig_vars, sig_vars_macro) %!in_set% c(non_vars, 'sub_area'))
+
 formula.all = formula (paste( 'price_log ~', paste(allvars, collapse = '+')) )
 
 print(formula.all)
+print(length(allvars))
 
+var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
+var.monotone[allvars %in% c('full_sq','full_sq_log', 'num_room','state', 'usdrub','eurrub', 'kitch_sq')] =  1
+var.monotone[allvars %in% c('metro_min_walk', 'fitness_km')] =  -1
 
-max_it = 60*1000 #64k is for s=0.001, 
+max_it = 10*max_it_mult #64k is for s=0.001, 
 
 model.gbm_all = gbm(formula.all, 
-                data = dfm[train_index, all.vars(formula.all)], 
+                data = df[train_index, all.vars(formula.all)], 
                 distribution = 'gaussian',
                 n.trees = max_it,
                 shrinkage = 0.001, #0.001
                 bag.fraction = 0.5,
                 interaction.depth = 2,#3
-                train.fraction = 0.7,
+                train.fraction = 0.5,
+                var.monotone = var.monotone,
                 n.cores = 4,
-                verbose = TRUE)
+                verbose = FALSE)
+
 #show best iteration
 best_it_all = gbm.perf(model.gbm_all, method = 'test') 
 print(best_it_all)
 grid()
-pred.gbm_all = exp(predict(model.gbm_all, n.trees = best_it_all, newdata = dfm)) - 1.0
-
-#plot interactions
-level2_interactions = gbm_interactions(model.gbm_all,  dfm[train_index, all.vars(formula.all)], iter = best_it_all, 1, 2)
-plot_gbminteractions(level2_interactions[level2_interactions$interaction_score>1e-4,])
-kable(level2_interactions[level2_interactions$interaction_score>1e-4,])
+pred.gbm_all = exp(predict(model.gbm_all, n.trees = best_it_all, newdata = df)) - 1.0
 
 #show importance
 vars.importance_all = summary(model.gbm_all, n.trees = best_it_all, plotit=FALSE) # influence
 plot_gbminfluence(vars.importance_all[vars.importance_all$rel.inf>inf_lowlimit,])
 kable(vars.importance_all[vars.importance_all$rel.inf>inf_lowlimit,])
+kable(vars.importance_all[vars.importance_all$rel.inf<inf_lowlimit,])
 
-vars.importance_all[vars.importance_all$rel.inf>inf_lowlimit & vars.importance_all$var %in% names(macro),]
+imp_vars = as.character(vars.importance_all$var)[vars.importance_all$rel.inf>=.1]
 
-sig_vars = as.character(vars.importance_all$var)[vars.importance_all$rel.inf>=.1]
-
-plots = plot_gbmpartial(model.gbm_all, best_it_all, sig_vars, output_type = 'link')
+plots = plot_gbmpartial(model.gbm_all, best_it_all, imp_vars, output_type = 'link')
 marrangeGrob(plots, nrow=3, ncol=3)
 
-plots <- llply(names(df) %in_set% sig_vars, function(vname){
+plots <- llply(names(df) %in_set% imp_vars, function(vname){
   plot_result = plot_profile(log(pred.gbm_all[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
   return (plot_result)
 })
@@ -249,24 +236,24 @@ print((proc.time() - start_time)[3])
 
 ```
 
+
 ## GBM
 
 ```{r gbm_cv, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=TRUE}
 start_time <- proc.time()
 
-non_vars = c('price_log', 'price_doc', 'id', 'timestamp', 'sample', 'sale_year', 'sale_month', 'date') #exclude sale_year and month
-
-#allvars =  c(names(df)) %!in_set% c(non_vars, insignificant_vars)
-allvars =  c(sig_vars, sig_vars_macro) %!in_set% c(non_vars)
+allvars =  unique(c(sig_vars, sig_vars_macro) %!in_set% c(non_vars, 'sub_area'))
 
 formula.all = formula (paste( 'price_log ~', paste(allvars, collapse = '+')) )
 
 print(formula.all)
+print(length(allvars))
 
 var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
-var.monotone[allvars %in% c('full_sq','full_sq_log', 'num_room','state')] =  1
+var.monotone[allvars %in% c('full_sq','full_sq_log', 'num_room','state', 'usdrub','eurrub', 'kitch_sq')] =  1
+var.monotone[allvars %in% c('metro_min_walk', 'fitness_km')] =  -1
 
-max_it = 60*max_it_mult #64k is for s=0.001, 
+max_it = 80*max_it_mult #64k is for s=0.001, 
 
 model.gbm_cv = gbm(formula.all, 
                 data = df[train_index, all.vars(formula.all)], 
@@ -279,7 +266,7 @@ model.gbm_cv = gbm(formula.all,
                 train.fraction = 1.0,
                 var.monotone = var.monotone,
                 n.cores = 4,
-                verbose = TRUE)
+                verbose = FALSE)
 #model.gbm_cv = gbm.more(model.gbm_cv, 3000)
 #show best iteration
 best_it_cv = gbm.perf(model.gbm_cv, method = 'cv') 
@@ -287,47 +274,31 @@ print(best_it_cv)
 grid()
 pred.gbm_cv = exp(predict(model.gbm_cv, n.trees = best_it_cv, newdata = df)) - 1.0
 
-## this is special adjustment for 2016 sale prices, we compute price difference between 2014 and 2015 and than add that to the model prices  
-## partial dependance for sale year looks monotonically increasing 
-if (out_of_time_adjust){
-  df_temp = df
-  adj_index = test_index & df$sale_time >= 2015.5
-  df_temp$sale_time[adj_index] = df$sale_time[adj_index] - 1.0 
-  ggplot(df, aes(sale_time, color = sample)) + geom_density(adjust = 0.1)
-  ggplot(df_temp, aes(sale_time, color = sample)) + geom_density()
-  pred.gbm_cv_1y = predict(model.gbm_cv, n.trees = best_it_cv, newdata = df_temp)
-  df_temp$sale_time[adj_index] = df$sale_time[adj_index] - 2.0 
-  ggplot(df_temp, aes(sale_time, color = sample)) + geom_density()
-  pred.gbm_cv_2y = predict(model.gbm_cv, n.trees = best_it_cv, newdata = df_temp)
-  plot(pred.gbm_cv_1y - pred.gbm_cv_2y)
-  pred.gbm_cv_new = exp(pred.gbm_cv_1y + (pred.gbm_cv_1y - pred.gbm_cv_2y) ) - 1.0
-  plot(pred.gbm_cv_new - pred.gbm_cv)
-  pred.gbm_cv = pred.gbm_cv_new
-}
 
 #plot interactions
 level2_interactions = gbm_interactions(model.gbm_cv,  df[train_index, all.vars(formula.all)], iter = best_it_cv, 1, 2)
 plot_gbminteractions(level2_interactions[level2_interactions$interaction_score>1e-4,])
 kable(level2_interactions[level2_interactions$interaction_score>1e-4,])
 
-
 #show importance
 vars.importance_cv = summary(model.gbm_cv, n.trees = best_it_cv, plotit=FALSE) # influence
 plot_gbminfluence(vars.importance_cv[vars.importance_cv$rel.inf>inf_lowlimit,])
-kable(vars.importance_cv[vars.importance_cv$rel.inf>inf_lowlimit,])
+kable(vars.importance_cv[vars.importance_cv$rel.inf>=inf_lowlimit,])
+kable(vars.importance_cv[vars.importance_cv$rel.inf<inf_lowlimit,])
 
 write.csv(vars.importance_cv, file.path(working_folder,'SberbankHousing/var.importance.csv'))
 
-sig_vars = as.character(vars.importance_cv$var)[vars.importance_cv$rel.inf>=.1]
+imp_vars = as.character(vars.importance_cv$var)[vars.importance_cv$rel.inf>=.1]
 
 #partial dependence
-plots = plot_gbmpartial(model.gbm_cv, best_it_cv, sig_vars, output_type = 'link')
+plots = plot_gbmpartial(model.gbm_cv, best_it_cv, imp_vars, output_type = 'link')
 marrangeGrob(plots, nrow=3, ncol=3)
 
 #profiles (norm) with respect to model vars
-plot_profile(log(pred.gbm_cv[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, 'sub_area'], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle('sub_area')
-plot_profile(log(pred.gbm_cv[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, 'full_sq'],  bucket_count = 20, min_obs = 10, error_band ='normal') + ggtitle('full_sq')
-plots <- llply(names(df) %in_set% sig_vars, function(vname){
+for(vname in c('sub_area', 'full_sq', 'sale_time') ){
+  print(plot_profile(log(pred.gbm_cv[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname))
+}
+plots <- llply(imp_vars %in_set% names(df), function(vname){
   plot_result = plot_profile(log(pred.gbm_cv[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
   return (plot_result)
 })
@@ -336,13 +307,116 @@ marrangeGrob(plots, nrow=3, ncol=3)
 print((proc.time() - start_time)[3]/3600)
 ```
 
+## Cluster SubArea
+There are too many sub_area levels, so we cluster them for better out of sample performance 
+
+```{r cluster_sub_area, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=TRUE}
+#### cluster sub_area
+sub_areas_by_sample = ddply(df, .(sub_area, sample), function(x) c(count = length(x$price_log) ))
+
+ggplot(sub_areas_by_sample, aes(reorder(sub_area, count), count, fill = sample )) + geom_bar(stat = "identity") + 
+    theme( axis.text.x = element_text(angle = 90, hjust = 1)) 
+
+sub_area_res = data.frame(name = df$sub_area[train_index], residual = df$price_log[train_index]- log(pred.gbm_cv[train_index] + 1))
+
+sub_area_agg = ddply(sub_area_res, .(name), function(x) c(count = length(x$residual), avg = mean(x$residual) ))
+avg_res = sub_area_agg$avg
+names(avg_res) <- sub_area_agg$name
+
+ggplot(sub_area_agg, aes(reorder(name, count), count, fill = avg )) + geom_bar(stat = "identity") + 
+    theme( axis.text.x = element_text(angle = 90, hjust = 1)) +  scale_fill_distiller(palette = "Spectral")
+
+d = dist(avg_res)
+
+for(cluster_method in c("ward", "complete", "average")) {
+  
+  print(cluster_method)
+  
+  hc = hclust(d, method = cluster_method)
+  plot(hc)
+  
+  for(group_count in seq(3, 10)) {
+    group = cutree(hc, k = group_count)
+    sub_area_groups = data.frame(name =names(group), group)
+    
+    sub_area_agg_group = merge(sub_area_agg, sub_area_groups, by.x = 'name', by.y = 'name', all.x = TRUE)
+    
+    write.csv(sub_area_agg_group, file.path(working_folder,sprintf('SberbankHousing/clusters_%s_%d.csv',cluster_method, group_count) ))
+    
+    print(ggplot(sub_area_agg_group, aes(reorder(name, avg), avg, fill = factor(group) )) + geom_bar(stat = "identity") + 
+      theme( axis.text.x = element_text(angle = 90, hjust = 1)))
+    
+    print(ggplot(sub_area_agg_group, aes(reorder(name, count), count, fill = factor(group) )) + 
+            geom_bar(stat = "identity") + theme( axis.text.x = element_text(angle = 90, hjust = 1)))
+    
+    print(kable(ddply(sub_area_agg_group, "group", summarise, samples = sum(count), areas = length(count), avg_err = mean(avg))))
+    
+    #temp = ddply(sub_area_agg_group, "group", function(x) { 
+    #  data.frame(group = x$group[1], sub_area = paste(as.character(x$name)[1:3], collapse = ' ') ) })
+  }
+}
+###
+
+```
+
+## GBM: On residuals
+
+```{r gbm_res, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=TRUE}
+start_time <- proc.time()
+
+residual_vars =  names(df) %!in_set% c(non_vars, all.vars(formula.all))
+
+formula.residual = formula (paste( 'price_residual ~', paste(residual_vars, collapse = '+')) )
+
+print(formula.residual)
+
+df_res = df[, residual_vars]
+df_res$price_residual = df$price_log - log(pred.gbm_cv+1)
+
+max_it = 20*max_it_mult #64k is for s=0.001, 
+
+model.gbm_res = gbm(formula.residual, 
+                data = df_res[train_index, all.vars(formula.residual)], 
+                distribution = 'gaussian',
+                n.trees = max_it,
+                shrinkage = 0.001, #0.001
+                bag.fraction = 0.5,
+                interaction.depth = 3,#3
+                train.fraction = 0.5,
+                n.cores = 4,
+                verbose = FALSE)
+#model.gbm_cv = gbm.more(model.gbm_cv, 3000)
+#show best iteration
+best_it_res = gbm.perf(model.gbm_res, method = 'test') 
+print(best_it_res)
+grid()
+pred.gbm_res = predict(model.gbm_res, n.trees = best_it_res, newdata = df_res)
+
+vars.importance_res = summary(model.gbm_res, n.trees = best_it_res, plotit=FALSE) # influence
+plot_gbminfluence(vars.importance_res[vars.importance_res$rel.inf>inf_lowlimit,])
+kable(vars.importance_cv[vars.importance_res$rel.inf>=inf_lowlimit,])
+
+imp_vars = as.character(vars.importance_res$var)[vars.importance_res$rel.inf>=.1]
+
+plots = plot_gbmpartial(model.gbm_res, best_it_res, imp_vars, output_type = 'link')
+marrangeGrob(plots, nrow=3, ncol=3)
+
+plots <- llply(imp_vars %in_set% names(df_res), function(vname){
+  plot_result = plot_profile(pred.gbm_res[train_index],df_res$price_residual[train_index] , df_res[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  return (plot_result)
+})
+marrangeGrob(plots, nrow=3, ncol=3)
+
+print((proc.time() - start_time)[3]/3600)
+
+```
+
 ## Summary
 ```{r res_print, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=TRUE}
 
 # Solution  ---- 
 results = list()
 results$gbm_cv_ex = pred.gbm_cv
-results$np = pred.np
 
 res = ldply(results, .id = 'model', function(x) {
   c(rms_log = rms_log(1e3*df$price_doc[train_index],  1e3*x[train_index]),

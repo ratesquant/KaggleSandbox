@@ -52,7 +52,7 @@ gbm_interactions <- function(gbm_model, data, iter, min_influence = 1, degree = 
   vars = gbm_summary$var[gbm_summary$rel.inf > min_influence]
   all_combinations = combn(as.vector(vars), degree, simplify = TRUE)
   df = ldply(seq(dim(all_combinations)[2]), function(i) {
-    data.frame(vars = paste(all_combinations[,i], collapse = '-'), 
+    data.frame(vars = paste(all_combinations[,i], collapse = '|'), 
                interaction_score = interact.gbm(gbm_model, data, all_combinations[,i], n.trees = iter)) 
   })
   return ( df[order(df$interaction_score, decreasing = TRUE),] )
@@ -86,6 +86,20 @@ plot_gbmpartial <- function(gbm_model, iter, variables, resolution = 100, output
       plot_result = ggplot(plot_data, aes(x, y)) + geom_line(color = 'black', size = 1) +
         theme(legend.position = 'none', axis.title.y = element_blank(), axis.title.x = element_blank()) + ggtitle(vname)
     }
+    return (plot_result)
+  })
+  return (plots)
+}
+
+plot_gbmpartial_2d <- function(gbm_model, iter, variables, resolution = 100, output_type = 'response'){
+  plots <- llply(variables, function(vname){
+    
+    plot_data = plot(gbm_model, i.var = strsplit(as.character(vname),'|', fixed = T)[[1]], n.trees = iter, type = output_type, continuous.resolution = resolution, return.grid = TRUE)
+    names(plot_data) <- c('x1', 'x2', 'y')
+    
+    plot_result = ggplot(plot_data, aes(x1, x2, z = y, fill = y)) + geom_raster() + scale_fill_distiller(palette = 'Spectral') +
+        theme(axis.title.y = element_blank(), axis.title.x = element_blank()) + ggtitle(vname)
+    
     return (plot_result)
   })
   return (plots)

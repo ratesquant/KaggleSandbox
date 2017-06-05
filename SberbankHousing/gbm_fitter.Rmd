@@ -54,8 +54,12 @@ working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 source(file.path(working_folder, 'Utils/common.R'))
 
 sub_area_cluster_info = read.csv(file.path(working_folder,'SberbankHousing/clusters_info.csv') )
-sub_area_cluster_info = subset(sub_area_cluster_info, cluster_algo == 'ward' & cluster_count == 5)
+sub_area_cluster_info = subset(sub_area_cluster_info, cluster_algo == 'ward' & cluster_count == 10)
 sub_area_cluster_info$cluster_group = factor(sub_area_cluster_info$cluster_group)
+
+#read previous results
+#prev_run = read.csv(file = file.path(working_folder, "SberbankHousing/train_sample_gbm_cv.csv"))
+#prev_run$error = with(prev_run, log(price_mdl+1) - log(price_act+1))  
 
 macro <- read.csv(file.path(working_folder,'SberbankHousing/macro.csv'))
 train <- read.csv(file.path(working_folder,'SberbankHousing/train.csv'))
@@ -88,17 +92,25 @@ df$date = as.Date(as.character(df$timestamp))
 df$sale_year = year(df$date )
 df$sale_month = month(df$date )
 df$sale_time = df$sale_year + (df$sale_month - 1) / 12 
-df$state_adj = pmin(df$state, 4)
+df$state = pmin(df$state, 4)
 df$office_sqm_2000_log = log(df$office_sqm_2000 + 1)
 df$office_sqm_1500_log = log(df$office_sqm_1500 + 1)
+df$room_sq = df$full_sq / df$num_room
+
+df$public_healthcare_near = pmax(1, pmin(10, df$public_healthcare_km))
+df$kindergarten_near = pmax(0.5, pmin(2.0, df$kindergarten_km))
+
 
 #set invalid values to NA
 df$num_room[df$num_room == 0] = NA
+df$floor[df$floor == 0] = NA
+df$max_floor_adj[df$max_floor == 0] = NA
 
 #merge with macro
 macro$date = as.Date(as.character(macro$timestamp))
 df  =  merge(df[,names(df) != 'timestamp'], macro[,names(macro) != 'timestamp'], by.x = 'date', by.y = 'date', all.x = TRUE)
 df  =  merge(df, sub_area_cluster_info[,c('name', 'cluster_group')], by.x = 'sub_area', by.y = 'name', all.x = TRUE)
+#df  =  merge(df, prev_run[,c('id','error')], by.x = 'id', by.y = 'id', all.x = TRUE)
 
 test_index = is.na(df$price_doc)
 train_index = !test_index
@@ -112,11 +124,11 @@ train_index = train_index & (df$num_room <= 10  | is.na(df$num_room))
 train_index = train_index & (df$max_floor <= 60 | is.na(df$max_floor))
 train_index = train_index & (df$floor <= 50 | is.na(df$floor))
 
-#filter out prices which are exactly 1000 (747)
-train_index = train_index & df$price_doc!=1000
-train_index = train_index & df$price_doc!=2000
-train_index = train_index & df$price_doc!=3000
-train_index = train_index & df$price_doc!=990
+#filter out prices which are below 1000 (747)
+#train_index = train_index & df$price_doc > 1000
+#train_index = train_index & df$price_doc != 2000
+#train_index = train_index & df$price_doc != 3000
+#train_index = train_index & abs(df$error) < 1.0
 
 plot(density(log(df$price_doc[train_index]), adjust = 0.1))
 
@@ -181,11 +193,18 @@ df_lm$sale_year = factor(pmin(df$sale_year, 2015))
 model.lm = lm(price_log ~ full_sq_log + life_sq_log + product_type + num_room + floor, data = df_lm[train_index,] )
 summary(model.lm)
 pred.lm = predict(model.lm, newdata = df_lm)
+pred.lm = exp(pred.lm) - 1
 #plot(model.lm)
 
 rms_log(1e3*df$price_doc[train_index],  1e3*pred.lm[train_index])
 
 print((proc.time() - start_time)[3])
+
+ggplot(data.frame(error = df$price_log[train_index] - log(pred.lm[train_index] + 1)), aes(abs(error) )) + stat_ecdf()
+ggplot(data.frame(error = df$price_log[train_index] - log(pred.lm[train_index] + 1)), aes(error )) + stat_ecdf()
+
+ggplot(data.frame(actual = df$price_log[train_index] , model = log(pred.lm[train_index] + 1)), aes(model, actual, color = abs(actual - model)>1.0 )) + geom_point(size = 0.5)
+
 
 ```
 
@@ -281,10 +300,12 @@ print(formula.all)
 print(length(allvars))
 
 var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
-var.monotone[allvars %in% c('full_sq','full_sq_log', 'num_room','state', 'usdrub','eurrub', 'kitch_sq', 'mosque_km', 'life_sq', 'cafe_count_5000')] =  1
-var.monotone[allvars %in% c('metro_min_walk', 'metro_min_avto', 'fitness_km', 'sadovoe_km', 'public_healthcare_km', 'green_zone_km', 'kindergarten_km', 'workplaces_km', 'hospice_morgue_km', 'additional_education_km', 'office_sqm_1500_log')] =  -1
+var.monotone[allvars %in% c('full_sq','cafe_count_5000', 'usdrub', 'state', 'num_room')] = 1
+var.monotone[allvars %in% c('metro_min_walk','metro_min_avto', 'fitness_km')] = -1
+#var.monotone[allvars %in% c('full_sq','full_sq_log', 'num_room','state', 'usdrub','eurrub', 'kitch_sq', 'mosque_km', 'life_sq', 'cafe_count_5000', 'ppi')] =  1
+#var.monotone[allvars %in% c('metro_min_walk', 'metro_min_avto', 'fitness_km', 'sadovoe_km', 'public_healthcare_km', 'green_zone_km', 'kindergarten_km', 'workplaces_km', 'hospice_morgue_km', 'additional_education_km', 'office_sqm_1500_log')] =  -1
 
-max_it = 80*max_it_mult #64k is for s=0.001, 
+max_it = 120*max_it_mult #64k is for s=0.001, 
 
 model.gbm_cv = gbm(formula.all, 
                 data = df[train_index, all.vars(formula.all)], 
@@ -325,7 +346,7 @@ imp_vars = as.character(vars.importance_cv$var)[vars.importance_cv$rel.inf>=.1]
 plots = plot_gbmpartial(model.gbm_cv, best_it_cv, imp_vars, output_type = 'link')
 marrangeGrob(plots, nrow=3, ncol=3)
 
-plots = plot_gbmpartial_2d(model.gbm_cv, best_it_cv, as.character(level2_interactions$vars[level2_interactions$interaction_score>1e-2]), output_type = 'link')
+plots = plot_gbmpartial_2d(model.gbm_cv, best_it_cv, as.character(level2_interactions$vars[level2_interactions$interaction_score>0.1]), output_type = 'link')
 marrangeGrob(plots, nrow=2, ncol=2)
 
 #profiles (norm) with respect to model vars
@@ -337,6 +358,16 @@ plots <- llply(imp_vars %in_set% names(df), function(vname){
   return (plot_result)
 })
 marrangeGrob(plots, nrow=3, ncol=3)
+
+#profiles with respect to vars - not in model
+residual_vars =  names(df) %!in_set% c(non_vars, all.vars(formula.all))
+plots <- llply(residual_vars %in_set% names(df), function(vname){
+  plot_result = plot_profile(log(pred.gbm_cv[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  return (plot_result)
+})
+marrangeGrob(plots, nrow=3, ncol=3)
+
+
 
 print((proc.time() - start_time)[3]/3600)
 ```
@@ -443,10 +474,10 @@ grid()
 pred.gbm_res = predict(model.gbm_res, n.trees = best_it_res, newdata = df_res)
 
 vars.importance_res = summary(model.gbm_res, n.trees = best_it_res, plotit=FALSE) # influence
-plot_gbminfluence(vars.importance_res[vars.importance_res$rel.inf>inf_lowlimit,])
-kable(vars.importance_cv[vars.importance_res$rel.inf>=inf_lowlimit,])
+plot_gbminfluence(vars.importance_res[vars.importance_res$rel.inf>1e-2,])
+kable(vars.importance_res[vars.importance_res$rel.inf>=1e-2,])
 
-imp_vars = as.character(vars.importance_res$var)[vars.importance_res$rel.inf>=.1]
+imp_vars = as.character(vars.importance_res$var)[vars.importance_res$rel.inf>=1e-2]
 
 plots = plot_gbmpartial(model.gbm_res, best_it_res, imp_vars, output_type = 'link')
 marrangeGrob(plots, nrow=3, ncol=3)
@@ -489,11 +520,22 @@ for (model_name in names(results) ) {
 for (model_name in names(results) ){
   submit <- data.frame(id = as.integer( as.numeric(df$id[test_index]) ), price_doc = 1e3*results[[model_name]][test_index])
   submit = submit[order(submit$id),]
-  file = file.path(working_folder, sprintf("SberbankHousing/my_solution_fullfit_%s.csv", model_name))
+  file = file.path(working_folder, sprintf("SberbankHousing/test_sample_%s.csv", model_name))
   write.csv(submit, file = file, row.names = FALSE)
   #zip(paste(file, '.zip', sep = ''), file, flags = "-9jX")
   print(file)
 }
+
+## print insample ---- 
+for (model_name in names(results) ){
+  submit <- data.frame(id = as.integer( as.numeric(df$id) ), price_mdl = 1e3*results[[model_name]], price_act = 1e3*df$price_doc)
+  submit = submit[order(submit$id),]
+  file = file.path(working_folder, sprintf("SberbankHousing/train_sample_%s.csv", model_name))
+  write.csv(submit, file = file, row.names = FALSE)
+  #zip(paste(file, '.zip', sep = ''), file, flags = "-9jX")
+  print(file)
+}
+
 
 temp = rbind(data.frame(price = df$price_doc, tag = 'actual'), data.frame(price = pred.gbm_cv, tag = 'predicted'))
 ggplot(temp, aes(1e-3*price, group = tag, color = tag)   ) + 
@@ -507,7 +549,7 @@ ggplot(data.frame(price = log(df$price_doc[train_index]+1), error = log(pred.gbm
 
 ```
 
-## Bias Correction
+## Custom Correction
 ```{r bias_corr, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE, echo=TRUE}
 
   #0.34798 - base

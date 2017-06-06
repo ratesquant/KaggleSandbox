@@ -1,0 +1,196 @@
+---
+title: "H2O GBM fitter"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(reshape2)
+library(ggplot2)
+library(Hmisc)
+library(plyr)
+library(gridExtra)
+library(corrplot)
+
+library(gbm)
+library(np)
+library(earth) 
+library(rpart)
+library(party)
+library(caret)
+library(randomForest)
+library(nnet)
+library(e1071)
+library(MASS)
+
+library(knitr)
+library(foreach)
+
+library(h2o)
+library(lubridate)
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load data
+```{r load_data}
+rm(list = ls())
+
+# READ DATA ---- 
+max_it_mult = 1000
+
+inf_lowlimit = 0.1
+
+#dont set seed
+#random_seed = 12345678
+#set.seed(random_seed)
+
+#working_folder = 'C:/Dev/Kaggle/'
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
+source(file.path(working_folder, 'Utils/common.R'))
+
+#read previous results
+#prev_run = read.csv(file = file.path(working_folder, "SberbankHousing/train_sample_gbm_cv.csv"))
+#prev_run$error = with(prev_run, log(price_mdl+1) - log(price_act+1))  
+
+macro <- read.csv(file.path(working_folder,'SberbankHousing/macro.csv'))
+train <- read.csv(file.path(working_folder,'SberbankHousing/train.csv'))
+test  <- read.csv(file.path(working_folder,'SberbankHousing/test.csv')) # 1459   80
+test$price_doc <- NA
+df = rbind(train, test)
+df$price_doc = 1e-3 * df$price_doc
+# Variables and Data prep-rocessing  ---- 
+
+life_na_index = is.na(df$life_sq) | df$life_sq>df$full_sq
+
+df$price_log =  log(df$price_doc + 1)
+df$full_sq_log = log(df$full_sq + 1)
+df$life_sq[life_na_index] = df$full_sq[life_na_index] # set missing life to full or when life > full
+df$life_sq_log = log(df$life_sq + 1)
+df$area_m_log = log(df$area_m + 1)
+df$office_sqm_2000_log = log(df$office_sqm_2000 + 1)
+
+df$kitch_sq[is.na(df$kitch_sq) | df$kitch_sq>df$full_sq | df$kitch_sq < 3] = NA #kitchen cant be > full, but dont exclude from the set 
+
+df$build_year[df$build_year<1900 | df$build_year > 2019]  = NA #dont exclude form the set 
+table(df$build_year)
+
+df$build_year5 = 5*floor(df$build_year/5)
+df$build_year10 = 10*floor(df$build_year/10)
+
+df$max_floor_adj = pmax(df$max_floor, df$floor)
+df$floor_diff = df$max_floor_adj - df$floor 
+df$date = as.Date(as.character(df$timestamp))
+df$sale_year = lubridate::year(df$date )
+df$sale_month = lubridate::month(df$date )
+df$sale_time = df$sale_year + (df$sale_month - 1) / 12 
+df$state = pmin(df$state, 4)
+df$office_sqm_2000_log = log(df$office_sqm_2000 + 1)
+df$office_sqm_1500_log = log(df$office_sqm_1500 + 1)
+df$room_sq = df$full_sq / df$num_room
+
+df$public_healthcare_near = pmax(1, pmin(10, df$public_healthcare_km))
+df$kindergarten_near = pmax(0.5, pmin(2.0, df$kindergarten_km))
+
+
+#set invalid values to NA
+df$num_room[df$num_room == 0] = NA
+df$floor[df$floor == 0] = NA
+df$max_floor_adj[df$max_floor == 0] = NA
+
+#merge with macro
+macro$date = as.Date(as.character(macro$timestamp))
+df  =  merge(df[,names(df) != 'timestamp'], macro[,names(macro) != 'timestamp'], by.x = 'date', by.y = 'date', all.x = TRUE)
+
+test_index = is.na(df$price_doc)
+train_index = !test_index
+
+#print(ecdf(df$full_sq[train_index])(10))
+
+#filter out outliers
+max_sq = max(df$full_sq[test_index], na.rm = T)
+train_index = train_index & df$full_sq <= max_sq & df$full_sq >= 10
+train_index = train_index & (df$num_room <= 10  | is.na(df$num_room))
+train_index = train_index & (df$max_floor <= 60 | is.na(df$max_floor))
+train_index = train_index & (df$floor <= 50 | is.na(df$floor))
+
+#filter out prices which are below 1000 (747)
+#train_index = train_index & df$price_doc > 1000
+#train_index = train_index & df$price_doc != 2000
+#train_index = train_index & df$price_doc != 3000
+#train_index = train_index & abs(df$error) < 1.0
+
+plot(density(log(df$price_doc[train_index]), adjust = 0.1))
+
+df$sample = 'exclude'
+df$sample[train_index] = 'train'
+df$sample[test_index] = 'test'
+df$sample = factor(df$sample)
+table(df$sample)
+
+non_vars = c('price_log', 'price_doc', 'id', 'timestamp', 'sample', 'date') #exclude sale_year and month
+
+ggplot(df[train_index,], aes(office_sqm_2000_log, price_log)) + geom_point(size = 0.1 ) + geom_smooth() + facet_wrap(~product_type)
+ggplot(df[train_index,], aes(office_sqm_2000_log, office_sqm_1500_log)) + geom_point(size = 0.1 ) + geom_smooth() + facet_wrap(~product_type)
+ggplot(df[train_index,], aes(green_zone_km, price_log )) + geom_point(size = 0.1 ) + geom_smooth()
+ggplot(df[train_index,], aes(life_sq, full_sq)) + geom_point(size = 0.1 )
+ggplot(df[test_index,], aes(office_sqm_2000_log, office_sqm_1500_log)) + geom_point(size = 0.1 )
+
+summary(df[train_index,'product_type'])
+summary(df[test_index,'product_type'])
+
+ggplot(df[df$full_sq_adj<100,], aes(full_sq, color = sample)) + stat_ecdf()
+ggplot(df, aes(factor(sale_year), fill = sample)) + geom_histogram(stat="count", position = 'dodge')
+ggplot(df, aes(factor(sub_area), fill = sample)) + geom_histogram(stat="count", position = 'dodge') + theme( axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggplot(df, aes(workplaces_km, color = sample)) + stat_ecdf()
+ggplot(df, aes(sale_time, color = sample)) + geom_density(adjust = 0.8)
+
+table(df$sample)
+#write.clipboard(df[df$full_sq<10,all.vars(formula.all)])
+
+```
+
+
+##Preliminary H20 Model
+```{r prelim_model, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE, echo=TRUE}
+start_time <- proc.time()
+
+h2o.init(nthreads=-1, max_mem_size = '16G')
+
+hdf_train = as.h2o(df[train_index,])
+hdf_test = as.h2o(df[test_index,])
+
+allvars =  unique(names(df) %!in_set% c(non_vars, 'sub_area'))
+
+
+model.hgbm <- h2o.gbm(x = allvars, y = 'price_log', 
+               training_frame = hdf, 
+               nfolds = 5, 
+               ntrees = 10000,
+               max_depth = 5,
+               learn_rate = 0.01,
+               distribution = 'gaussian',
+               sample_rate = 0.8)
+
+summary(model.hgbm)
+
+pred.hgbm = exp(as.data.frame(h2o.predict(model.hgbm, hdf_test))$predict) - 1.0
+
+var_importance = as.data.frame(h2o.varimp(model.hgbm))
+names(var_importance) <-c('var', 'relatile.inf', 'scale.inf', 'percentage.inf')
+var_importance$rel.inf = 100*var_importance$percentage.inf
+
+plot_gbminfluence(var_importance[var_importance$rel.inf>0.5,])
+
+sig_vars = var_importance$var[var_importance$rel.inf>0.5]
+
+plots <- llply(names(df) %in_set% sig_vars, function(vname){
+  plot_result = plot_profile(log(pred.hgbm[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  return (plot_result)
+})
+marrangeGrob(plots, nrow=3, ncol=3)
+
+
+#h2o.shutdown(prompt = FALSE)
+```

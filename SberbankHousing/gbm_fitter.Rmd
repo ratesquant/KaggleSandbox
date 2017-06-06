@@ -229,11 +229,11 @@ print((proc.time() - start_time)[3])
 
 ```
 
-## GBM without CV
+## GBM Full
 ```{r gbm_sig_model, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE, echo=TRUE}
 start_time <- proc.time()
 
-allvars =  unique(c(sig_vars, sig_vars_macro) %!in_set% c(non_vars, 'sub_area'))
+allvars =  unique(names(df) %!in_set% c(non_vars, 'sub_area'))
 
 formula.all = formula (paste( 'price_log ~', paste(allvars, collapse = '+')) )
 
@@ -241,19 +241,20 @@ print(formula.all)
 print(length(allvars))
 
 var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
-var.monotone[allvars %in% c('full_sq','full_sq_log', 'num_room','state', 'usdrub','eurrub', 'kitch_sq')] =  1
+var.monotone[allvars %in% c('full_sq', 'num_room','state', 'usdrub','eurrub')] =  1
 var.monotone[allvars %in% c('metro_min_walk', 'fitness_km')] =  -1
 
-max_it = 10*max_it_mult #64k is for s=0.001, 
+max_it = 100*max_it_mult #64k is for s=0.001, 
 
 model.gbm_all = gbm(formula.all, 
                 data = df[train_index, all.vars(formula.all)], 
                 distribution = 'gaussian',
                 n.trees = max_it,
                 shrinkage = 0.001, #0.001
-                bag.fraction = 0.5,
+                bag.fraction = 0.8,
+                cv.folds = 5, #5
                 interaction.depth = 2,#3
-                train.fraction = 0.5,
+                train.fraction = 1.0,
                 var.monotone = var.monotone,
                 n.cores = 4,
                 verbose = FALSE)

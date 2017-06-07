@@ -183,7 +183,11 @@ var_importance$rel.inf = 100*var_importance$percentage.inf
 
 plot_gbminfluence(var_importance[var_importance$rel.inf>0.5,])
 
+write.csv(var_importance, file.path(working_folder,'SberbankHousing/var.importance.h2o.csv'))
+
 sig_vars = var_importance$var[var_importance$rel.inf>0.5]
+
+h2o.partialPlot(model.hgbm, hdf_train, cols = sig_vars[1])
 
 plots <- llply(names(df) %in_set% sig_vars, function(vname){
   plot_result = plot_profile(log(pred.hgbm[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)

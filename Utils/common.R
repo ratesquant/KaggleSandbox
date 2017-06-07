@@ -79,7 +79,8 @@ plot_gbmiterations <- function(gbm_model) {
   plot = ggplot(it_data_melt, aes(it, error, group = error_type, color = error_type)) + geom_line() + 
     geom_vline(xintercept = min(which(it_data$cv_error == min(it_data$cv_error))), color = 'blue') +
     geom_vline(xintercept = min(which(it_data$cv_error < 1.001*min(it_data$cv_error))), color = 'blue', alpha = 0.5) + 
-    geom_hline(yintercept = min(it_data$cv_error), color = 'blue', alpha = 0.5, linetype = "dashed")
+    geom_hline(yintercept = min(it_data$cv_error), color = 'blue', alpha = 0.5, linetype = "dashed") + 
+    ggtitle(paste('min cv error: ', round(min(it_data$cv_error),6) ,sep = ''))
   
   return (plot)
 }

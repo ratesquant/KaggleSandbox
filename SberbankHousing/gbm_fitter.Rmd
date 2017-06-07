@@ -40,7 +40,7 @@ knitr::opts_chunk$set(echo = TRUE)
 rm(list = ls())
 
 # READ DATA ---- 
-max_it_mult = 1000
+max_it_mult = 10
 
 inf_lowlimit = 0.1
 
@@ -95,7 +95,6 @@ df$sale_time = df$sale_year + (df$sale_month - 1) / 12
 df$state = pmin(df$state, 4)
 df$office_sqm_2000_log = log(df$office_sqm_2000 + 1)
 df$office_sqm_1500_log = log(df$office_sqm_1500 + 1)
-df$room_sq = df$full_sq / df$num_room
 
 df$public_healthcare_near = pmax(1, pmin(10, df$public_healthcare_km))
 df$kindergarten_near = pmax(0.5, pmin(2.0, df$kindergarten_km))
@@ -105,6 +104,7 @@ df$kindergarten_near = pmax(0.5, pmin(2.0, df$kindergarten_km))
 df$num_room[df$num_room == 0] = NA
 df$floor[df$floor == 0] = NA
 df$max_floor_adj[df$max_floor == 0] = NA
+df$room_sq = df$full_sq / df$num_room
 
 #merge with macro
 macro$date = as.Date(as.character(macro$timestamp))
@@ -484,10 +484,12 @@ pred.gbm_res = predict(model.gbm_res, n.trees = best_it_res, newdata = df_res)
 plot_gbmiterations(model.gbm_res)
 
 vars.importance_res = summary(model.gbm_res, n.trees = best_it_res, plotit=FALSE) # influence
-plot_gbminfluence(vars.importance_res[vars.importance_res$rel.inf>0.1,])
-kable(vars.importance_res[vars.importance_res$rel.inf>=0.1,])
+plot_gbminfluence(vars.importance_res[vars.importance_res$rel.inf>0.5,])
+kable(vars.importance_res[vars.importance_res$rel.inf>=0.5,])
 
-imp_vars = as.character(vars.importance_res$var)[vars.importance_res$rel.inf>=0.1]
+imp_vars = as.character(vars.importance_res$var)[vars.importance_res$rel.inf>=0.5]
+
+plot_gbmpartial(model.gbm_res, best_it_res, "room_sq", output_type = 'link')
 
 plots = plot_gbmpartial(model.gbm_res, best_it_res, imp_vars, output_type = 'link')
 marrangeGrob(plots, nrow=3, ncol=3)

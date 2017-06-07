@@ -163,14 +163,14 @@ ggplot(df, aes(sale_time, color = sample)) + geom_density(adjust = 0.8)
 table(df$sample)
 #write.clipboard(df[df$full_sq<10,all.vars(formula.all)])
 
-plots = llply(sig_vars, function(vname) {
-  temp = df[, c(vname, 'sample')]
-  names(temp) = c('x', 'sample')
-  ggplot(temp, aes( x, group = factor(sample), color = sample )) + 
-    geom_density(adjust = 0.5) + ggtitle(vname) + xlab(vname)
-  
-} )
-marrangeGrob(plots, nrow=2, ncol=1)
+# plots = llply(sig_vars, function(vname) {
+#   temp = df[, c(vname, 'sample')]
+#   names(temp) = c('x', 'sample')
+#   ggplot(temp, aes( x, group = factor(sample), color = sample )) + 
+#     geom_density(adjust = 0.5) + ggtitle(vname) + xlab(vname)
+#   
+# } )
+# marrangeGrob(plots, nrow=2, ncol=1)
 
 #macro plots
 macro_melt = melt(macro[, c('date', sig_vars %in_set% names(macro) )], id.vars = 'date')
@@ -228,7 +228,7 @@ print((proc.time() - start_time)[3])
 ```
 
 ## GBM All
-```{r gbm_sig_model, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE, echo=FALSE}
+```{r gbm_all_model, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE, echo=FALSE}
 start_time <- proc.time()
 
 allvars =  unique(names(df) %!in_set% c(non_vars, 'sub_area'))
@@ -259,10 +259,11 @@ model.gbm_all = gbm(formula.all,
 
 #show best iteration
 best_it_all = gbm.perf(model.gbm_all, method = 'cv') 
-plot_gbmiterations(model.gbm_all)
 print(best_it_all)
 grid()
 pred.gbm_all = exp(predict(model.gbm_all, n.trees = best_it_all, newdata = df)) - 1.0
+
+plot_gbmiterations(model.gbm_all)
 
 #show importance
 vars.importance_all = summary(model.gbm_all, n.trees = best_it_all, plotit=FALSE) # influence
@@ -289,12 +290,13 @@ print((proc.time() - start_time)[3])
 ```
 
 
-## GBM
+## GBM CV
 
 ```{r gbm_cv, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=TRUE}
 start_time <- proc.time()
 
-allvars =  unique(c(sig_vars, 'cluster_group') %!in_set% c(non_vars, 'sub_area'))
+#allvars =  unique(c(sig_vars, 'cluster_group') %!in_set% c(non_vars, 'sub_area'))
+allvars =  unique(c(sig_vars) %!in_set% c(non_vars, 'sub_area'))
 
 formula.all = formula (paste( 'price_log ~', paste(allvars, collapse = '+')) )
 
@@ -307,7 +309,7 @@ var.monotone[allvars %in% c('metro_min_walk','metro_min_avto', 'fitness_km')] = 
 #var.monotone[allvars %in% c('full_sq','full_sq_log', 'num_room','state', 'usdrub','eurrub', 'kitch_sq', 'mosque_km', 'life_sq', 'cafe_count_5000', 'ppi')] =  1
 #var.monotone[allvars %in% c('metro_min_walk', 'metro_min_avto', 'fitness_km', 'sadovoe_km', 'public_healthcare_km', 'green_zone_km', 'kindergarten_km', 'workplaces_km', 'hospice_morgue_km', 'additional_education_km', 'office_sqm_1500_log')] =  -1
 
-max_it = 10*max_it_mult #64k is for s=0.001, 
+max_it = 20*max_it_mult #64k is for s=0.001, 
 
 model.gbm_cv = gbm(formula.all, 
                 data = df[train_index, all.vars(formula.all)], 
@@ -324,11 +326,11 @@ model.gbm_cv = gbm(formula.all,
 #model.gbm_cv = gbm.more(model.gbm_cv, 3000)
 #show best iteration
 best_it_cv = gbm.perf(model.gbm_cv, method = 'cv') 
-plot_gbmiterations(model.gbm_cv)
 print(best_it_cv)
 grid()
 pred.gbm_cv = exp(predict(model.gbm_cv, n.trees = best_it_cv, newdata = df)) - 1.0
 
+plot_gbmiterations(model.gbm_cv)
 
 #plot interactions
 level2_interactions = gbm_interactions(model.gbm_cv,  df[train_index, all.vars(formula.all)], iter = best_it_cv, 1, 2)
@@ -363,7 +365,7 @@ plots <- llply(imp_vars %in_set% names(df), function(vname){
 marrangeGrob(plots, nrow=3, ncol=3)
 
 #profiles with respect to vars - not in model
-residual_vars =  names(df) %!in_set% c(non_vars, all.vars(formula.all))
+residual_vars =  head(names(df) %!in_set% c(non_vars, all.vars(formula.all)), 18)
 plots <- llply(residual_vars %in_set% names(df), function(vname){
   plot_result = plot_profile(log(pred.gbm_cv[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
   return (plot_result)
@@ -380,7 +382,7 @@ There are too many sub_area levels, so we cluster them for better out of sample 
 
 ```{r cluster_sub_area, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE, echo=FALSE}
 #### cluster sub_area
-model_predictions = pred.gbm_all
+model_predictions = pred.gbm_cv
 
 sub_areas_by_sample = ddply(df, .(sub_area, sample), function(x) c(count = length(x$price_log) ))
 
@@ -398,7 +400,8 @@ ggplot(sub_area_agg, aes(reorder(name, count), count, fill = avg )) + geom_bar(s
 
 d = dist(avg_res)
 
-for(cluster_method in c("ward", "complete", "average")) {
+#for(cluster_method in c("ward", "complete", "average")) {
+ for(cluster_method in c("ward")) {
   
   print(cluster_method)
   
@@ -411,7 +414,7 @@ for(cluster_method in c("ward", "complete", "average")) {
     
     sub_area_agg_group = merge(sub_area_agg, sub_area_groups, by.x = 'name', by.y = 'name', all.x = TRUE)
     
-    write.csv(sub_area_agg_group, file.path(working_folder,sprintf('SberbankHousing/clusters_%s_%d.csv',cluster_method, group_count) ))
+    write.csv(sub_area_agg_group, file.path(working_folder,sprintf('SberbankHousing/clusters/clusters_%s_%d.csv',cluster_method, group_count) ))
     
     print(ggplot(sub_area_agg_group, aes(reorder(name, avg), avg, fill = factor(group) )) + geom_bar(stat = "identity") + 
       theme( axis.text.x = element_text(angle = 90, hjust = 1)))
@@ -427,7 +430,7 @@ for(cluster_method in c("ward", "complete", "average")) {
 }
 ###
 
-files = list.files(path = file.path(working_folder,'SberbankHousing/'), pattern = "cluster*", full = TRUE)
+files = list.files(path = file.path(working_folder,'SberbankHousing/clusters/'), pattern = "cluster*", full = TRUE)
 
 sub_area_cluster_info = foreach(i = seq(files), .combine = rbind) %do% {
   temp = read.csv(files[i])
@@ -449,7 +452,7 @@ write.csv(sub_area_cluster_info, file.path(working_folder,'SberbankHousing/clust
 ```{r gbm_res, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=TRUE}
 start_time <- proc.time()
 
-residual_vars =  names(df) %!in_set% c(non_vars, all.vars(formula.all))
+residual_vars =  names(df) %!in_set% c('sub_area', non_vars, all.vars(formula.all))
 
 formula.residual = formula (paste( 'price_residual ~', paste(residual_vars, collapse = '+')) )
 
@@ -465,7 +468,7 @@ model.gbm_res = gbm(formula.residual,
                 distribution = 'gaussian',
                 n.trees = max_it,
                 shrinkage = 0.001, #0.001
-                bag.fraction = 0.5,
+                bag.fraction = 0.8,
                 interaction.depth = 2,#3
                 cv.folds = 5, #5
                 train.fraction = 1.0,
@@ -478,11 +481,13 @@ print(best_it_res)
 grid()
 pred.gbm_res = predict(model.gbm_res, n.trees = best_it_res, newdata = df_res)
 
-vars.importance_res = summary(model.gbm_res, n.trees = best_it_res, plotit=FALSE) # influence
-plot_gbminfluence(vars.importance_res[vars.importance_res$rel.inf>1e-2,])
-kable(vars.importance_res[vars.importance_res$rel.inf>=1e-2,])
+plot_gbmiterations(model.gbm_res)
 
-imp_vars = as.character(vars.importance_res$var)[vars.importance_res$rel.inf>=1e-2]
+vars.importance_res = summary(model.gbm_res, n.trees = best_it_res, plotit=FALSE) # influence
+plot_gbminfluence(vars.importance_res[vars.importance_res$rel.inf>0.1,])
+kable(vars.importance_res[vars.importance_res$rel.inf>=0.1,])
+
+imp_vars = as.character(vars.importance_res$var)[vars.importance_res$rel.inf>=0.1]
 
 plots = plot_gbmpartial(model.gbm_res, best_it_res, imp_vars, output_type = 'link')
 marrangeGrob(plots, nrow=3, ncol=3)

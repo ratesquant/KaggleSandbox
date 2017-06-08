@@ -495,8 +495,6 @@ kable(vars.importance_res[vars.importance_res$rel.inf>=0.5,])
 
 imp_vars = as.character(vars.importance_res$var)[vars.importance_res$rel.inf>=0.5]
 
-plot_gbmpartial(model.gbm_res, best_it_res, "room_sq", output_type = 'link')
-
 plots = plot_gbmpartial(model.gbm_res, best_it_res, imp_vars, output_type = 'link')
 marrangeGrob(plots, nrow=3, ncol=3)
 

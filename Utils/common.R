@@ -86,7 +86,7 @@ plot_gbmiterations <- function(gbm_model) {
 }
 
 
-plot_gbmpartial <- function(gbm_model, iter, variables, resolution = 100, output_type = 'response', add_rug = TRUE){
+plot_gbmpartial <- function(gbm_model, iter, variables, resolution = 100, output_type = 'response', add_rug = TRUE, max_run_points = 1024){
   plots <- llply(variables, function(vname){
     plot_data = plot(gbm_model, i.var = vname, n.trees = iter, type = output_type, continuous.resolution = resolution, return.grid = TRUE)
     names(plot_data) <- c('x', 'y')
@@ -104,9 +104,11 @@ plot_gbmpartial <- function(gbm_model, iter, variables, resolution = 100, output
         vname_index = match(vname, gbm_model$var.names)
         size_per_var = length(gbm_model$data$x) / length(gbm_model$var.names)
         xdata = gbm_model$data$x[1:size_per_var + (vname_index - 1) * size_per_var]
+        
+        rug_index = sample.int(size_per_var, min(max_run_points, size_per_var))
           
         plot_result = plot_result + 
-          geom_rug(data = data.frame(x = xdata), aes(x), sides = 'b', alpha = 0.2, size = 0.2, inherit.aes = FALSE) +
+          geom_rug(data = data.frame(x = xdata[rug_index]), aes(x), sides = 'b', alpha = 0.2, size = 0.2, inherit.aes = FALSE) +
           geom_rug(data = data.frame(x = quantile(xdata, seq(0, 1, by = 0.25), names = FALSE, na.rm = TRUE)), aes(x), sides = 'b', alpha = 0.8, size = 0.5, inherit.aes = FALSE, color = 'red')
           
       }
@@ -116,14 +118,29 @@ plot_gbmpartial <- function(gbm_model, iter, variables, resolution = 100, output
   return (plots)
 }
 
-plot_gbmpartial_2d <- function(gbm_model, iter, variables, resolution = 100, output_type = 'response'){
+plot_gbmpartial_2d <- function(gbm_model, iter, variables, resolution = 100, output_type = 'response', add_rug = TRUE, max_run_points = 1024){
   plots <- llply(variables, function(vname){
     
-    plot_data = plot(gbm_model, i.var = strsplit(as.character(vname),'|', fixed = T)[[1]], n.trees = iter, type = output_type, continuous.resolution = resolution, return.grid = TRUE)
+    var_pair = strsplit(as.character(vname),'|', fixed = T)[[1]]
+    plot_data = plot(gbm_model, i.var = var_pair, n.trees = iter, type = output_type, continuous.resolution = resolution, return.grid = TRUE)
     names(plot_data) <- c('x1', 'x2', 'y')
     
     plot_result = ggplot(plot_data, aes(x1, x2, z = y, fill = y)) + geom_raster() + scale_fill_distiller(palette = 'Spectral') +
         theme(axis.title.y = element_blank(), axis.title.x = element_blank()) + ggtitle(vname)
+    
+    if(add_rug)
+    {
+      vname_index1 = match(var_pair[1], gbm_model$var.names)
+      vname_index2 = match(var_pair[2], gbm_model$var.names)
+      size_per_var = length(gbm_model$data$x) / length(gbm_model$var.names)
+      
+      xdata = gbm_model$data$x[1:size_per_var + (vname_index1 - 1) * size_per_var]
+      ydata = gbm_model$data$x[1:size_per_var + (vname_index2 - 1) * size_per_var]
+      
+      rug_index = sample.int(size_per_var, min(max_run_points, size_per_var))
+      
+      plot_result = plot_result + geom_point(data = data.frame(x = xdata[rug_index], y = ydata[rug_index]), aes(x, y), alpha = 0.2, size = 0.2, inherit.aes = FALSE, color = 'black')
+    }
     
     return (plot_result)
   })

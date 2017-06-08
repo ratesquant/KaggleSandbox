@@ -73,14 +73,52 @@ plot_gbminfluence <- function(x){
 
 plot_gbmiterations <- function(gbm_model) {
   
-  it_data = data.frame(it = seq(gbm_model$n.trees), cv_error = gbm_model$cv.error, tr_error = gbm_model$train.error)
-  it_data_melt = melt(it_data, id = 'it', variable.name = "error_type", value.name = "error")
-
-  plot = ggplot(it_data_melt, aes(it, error, group = error_type, color = error_type)) + geom_line() + 
-    geom_vline(xintercept = min(which(it_data$cv_error == min(it_data$cv_error))), color = 'blue') +
-    geom_vline(xintercept = min(which(it_data$cv_error < 1.001*min(it_data$cv_error))), color = 'blue', alpha = 0.5) + 
-    geom_hline(yintercept = min(it_data$cv_error), color = 'blue', alpha = 0.5, linetype = "dashed") + 
-    ggtitle(paste('min cv error: ', round(min(it_data$cv_error),6) ,sep = ''))
+  plot_title = ''
+  
+  iteration = seq(gbm_model$n.trees)
+  
+  plot = ggplot(data.frame(iteration, train_error = gbm_model$train.error), aes(iteration, train_error) ) + geom_line() 
+  
+  #add cv
+  if(!is.null(gbm_model$cv.error) & !all(is.na(gbm_model$cv.error)) ){
+    
+    min_cv = min(gbm_model$cv.error, na.rm = T)
+    min_cv_it = min(which(gbm_model$cv.error == min_cv))
+    
+    plot = plot + geom_line(data = data.frame(iteration, cv_error = gbm_model$cv.error), aes(iteration, cv_error), color = 'red' ) +
+      geom_hline(yintercept = min_cv, color = 'red', alpha = 0.5, linetype = "dashed") + 
+      geom_vline(xintercept = min_cv_it, color = 'red', alpha = 0.5)
+      
+    plot_title = paste(plot_title, sprintf('cv-%d(%d)=%.4f ', gbm_model$cv.folds, min_cv_it, min_cv) )
+  }
+  
+  #add out of bag
+  if(!is.null(gbm_model$oobag.improve) & !all(is.na(gbm_model$oobag.improve)) ){
+    oob = gbm_model$train.error[1] - cumsum(gbm_model$oobag.improve) #this is for scaling purpose 
+    min_oob = min(oob, na.rm = T)
+    min_oob_it = min(which(oob == min_oob))
+    
+    plot = plot + geom_line(data = data.frame(iteration, oob = oob), aes(iteration, oob), color = 'gray' ) +
+      geom_hline(yintercept = min_oob, color = 'gray', alpha = 0.5, linetype = "dashed") + 
+      geom_vline(xintercept = min_oob_it, color = 'gray', alpha = 0.5)
+    
+    plot_title = paste(plot_title, sprintf('oob(%d) ', min_oob_it) )
+  }
+  
+  #add validation
+  if(!is.null(gbm_model$valid.error) & !all(is.na(gbm_model$valid.error)) ){
+    val = gbm_model$valid.error #this is for scaling purpose 
+    min_val = min(val, na.rm = T)
+    min_val_it = min(which(val == min_val))
+    
+    plot = plot + geom_line(data = data.frame(iteration, val = val), aes(iteration, val), color = 'blue' ) +
+      geom_hline(yintercept = min_val, color = 'blue', alpha = 0.5, linetype = "dashed") + 
+      geom_vline(xintercept = min_val_it, color = 'blue', alpha = 0.5)
+    
+    plot_title = paste(plot_title, sprintf('val(%d)=%.4f ', min_val_it, min_val) )
+  }
+  
+  plot = plot + ggtitle(plot_title)
   
   return (plot)
 }

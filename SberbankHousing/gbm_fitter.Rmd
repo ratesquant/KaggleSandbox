@@ -54,7 +54,7 @@ working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 source(file.path(working_folder, 'Utils/common.R'))
 
 sub_area_cluster_info = read.csv(file.path(working_folder,'SberbankHousing/clusters_info.csv') )
-sub_area_cluster_info = subset(sub_area_cluster_info, cluster_algo == 'ward' & cluster_count == 10)
+sub_area_cluster_info = subset(sub_area_cluster_info, cluster_algo == 'ward' & cluster_count == 7)
 sub_area_cluster_info$cluster_group = factor(sub_area_cluster_info$cluster_group)
 
 #read previous results
@@ -97,7 +97,7 @@ df$office_sqm_2000_log = log(df$office_sqm_2000 + 1)
 df$office_sqm_1500_log = log(df$office_sqm_1500 + 1)
 
 df$public_healthcare_near = pmax(1, pmin(10, df$public_healthcare_km))
-df$kindergarten_near = pmax(0.5, pmin(2.0, df$kindergarten_km))
+df$kindergarten_near = pmax(0.2, pmin(2.0, df$kindergarten_km))
 
 
 #set invalid values to NA
@@ -113,7 +113,7 @@ year(macro_lag$date )<-year(macro_lag$date ) + 1
 names(macro_lag) = paste(names(macro_lag), '_lag', sep = '')
 df  =  merge(df[,names(df) != 'timestamp'], macro[,names(macro) != 'timestamp'], by.x = 'date', by.y = 'date', all.x = TRUE)
 df  =  merge(df[,names(df) != 'timestamp'], macro_lag[,names(macro_lag) != 'timestamp_lag'], by.x = 'date', by.y = 'date_lag', all.x = TRUE)
-#df  =  merge(df, sub_area_cluster_info[,c('name', 'cluster_group')], by.x = 'sub_area', by.y = 'name', all.x = TRUE)
+df  =  merge(df, sub_area_cluster_info[,c('name', 'cluster_group')], by.x = 'sub_area', by.y = 'name', all.x = TRUE)
 #df  =  merge(df, prev_run[,c('id','error')], by.x = 'id', by.y = 'id', all.x = TRUE)
 
 test_index = is.na(df$price_doc)
@@ -299,10 +299,10 @@ print((proc.time() - start_time)[3])
 ```{r gbm_cv, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=TRUE}
 start_time <- proc.time()
 
-cv_folds = 3
+cv_folds = 0
 
-#allvars =  unique(c(sig_vars, 'cluster_group') %!in_set% c(non_vars, 'sub_area'))
-allvars =  unique(c(sig_vars) %!in_set% c(non_vars, 'sub_area'))
+allvars =  unique(c(sig_vars, 'cluster_group') %!in_set% c(non_vars, 'sub_area'))
+#allvars =  unique(c(sig_vars) %!in_set% c(non_vars, 'sub_area'))
 
 formula.all = formula (paste( 'price_log ~', paste(allvars, collapse = '+')) )
 
@@ -315,7 +315,7 @@ var.monotone[allvars %in% c('metro_min_walk','metro_min_avto', 'fitness_km')] = 
 #var.monotone[allvars %in% c('full_sq','full_sq_log', 'num_room','state', 'usdrub','eurrub', 'kitch_sq', 'mosque_km', 'life_sq', 'cafe_count_5000', 'ppi')] =  1
 #var.monotone[allvars %in% c('metro_min_walk', 'metro_min_avto', 'fitness_km', 'sadovoe_km', 'public_healthcare_km', 'green_zone_km', 'kindergarten_km', 'workplaces_km', 'hospice_morgue_km', 'additional_education_km', 'office_sqm_1500_log')] =  -1
 
-max_it = 80*max_it_mult #64k is for s=0.001, 
+max_it = 60*max_it_mult #60k is for s=0.001, 
 
 model.gbm_cv = gbm(formula.all, 
                 data = df[train_index, all.vars(formula.all)], 
@@ -337,8 +337,10 @@ if(cv_folds == 0){
   best_it_cv = gbm.perf(model.gbm_cv, method = 'cv') 
   print(best_it_cv)
   grid()
-  plot_gbmiterations(model.gbm_cv)
 }
+
+plot_gbmiterations(model.gbm_cv)
+
 pred.gbm_cv = exp(predict(model.gbm_cv, n.trees = best_it_cv, newdata = df)) - 1.0
 
 #plot interactions
@@ -389,7 +391,7 @@ print((proc.time() - start_time)[3]/3600)
 ## Cluster SubArea
 There are too many sub_area levels, so we cluster them for better out of sample performance 
 
-```{r cluster_sub_area, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=FALSE}
+```{r cluster_sub_area, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE, echo=FALSE}
 #### cluster sub_area
 model_predictions = pred.gbm_cv
 
@@ -458,7 +460,7 @@ write.csv(sub_area_cluster_info, file.path(working_folder,'SberbankHousing/clust
 ```{r gbm_res, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=TRUE}
 start_time <- proc.time()
 
-residual_vars =  names(df) %!in_set% c('sub_area', non_vars, all.vars(formula.all))
+residual_vars =  names(df) %!in_set% c(non_vars, all.vars(formula.all))
 
 formula.residual = formula (paste( 'price_residual ~', paste(residual_vars, collapse = '+')) )
 

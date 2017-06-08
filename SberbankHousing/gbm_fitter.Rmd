@@ -40,9 +40,9 @@ knitr::opts_chunk$set(echo = TRUE)
 rm(list = ls())
 
 # READ DATA ---- 
-max_it_mult = 10
+max_it_mult = 1000
 
-inf_lowlimit = 0.1
+inf_lowlimit = 0.5
 
 #dont set seed
 #random_seed = 12345678
@@ -108,8 +108,12 @@ df$room_sq = df$full_sq / df$num_room
 
 #merge with macro
 macro$date = as.Date(as.character(macro$timestamp))
+macro_lag = macro
+year(macro_lag$date )<-year(macro_lag$date ) + 1
+names(macro_lag) = paste(names(macro_lag), '_lag', sep = '')
 df  =  merge(df[,names(df) != 'timestamp'], macro[,names(macro) != 'timestamp'], by.x = 'date', by.y = 'date', all.x = TRUE)
-df  =  merge(df, sub_area_cluster_info[,c('name', 'cluster_group')], by.x = 'sub_area', by.y = 'name', all.x = TRUE)
+df  =  merge(df[,names(df) != 'timestamp'], macro_lag[,names(macro_lag) != 'timestamp_lag'], by.x = 'date', by.y = 'date_lag', all.x = TRUE)
+#df  =  merge(df, sub_area_cluster_info[,c('name', 'cluster_group')], by.x = 'sub_area', by.y = 'name', all.x = TRUE)
 #df  =  merge(df, prev_run[,c('id','error')], by.x = 'id', by.y = 'id', all.x = TRUE)
 
 test_index = is.na(df$price_doc)
@@ -295,6 +299,8 @@ print((proc.time() - start_time)[3])
 ```{r gbm_cv, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=TRUE}
 start_time <- proc.time()
 
+cv_folds = 3
+
 #allvars =  unique(c(sig_vars, 'cluster_group') %!in_set% c(non_vars, 'sub_area'))
 allvars =  unique(c(sig_vars) %!in_set% c(non_vars, 'sub_area'))
 
@@ -309,28 +315,31 @@ var.monotone[allvars %in% c('metro_min_walk','metro_min_avto', 'fitness_km')] = 
 #var.monotone[allvars %in% c('full_sq','full_sq_log', 'num_room','state', 'usdrub','eurrub', 'kitch_sq', 'mosque_km', 'life_sq', 'cafe_count_5000', 'ppi')] =  1
 #var.monotone[allvars %in% c('metro_min_walk', 'metro_min_avto', 'fitness_km', 'sadovoe_km', 'public_healthcare_km', 'green_zone_km', 'kindergarten_km', 'workplaces_km', 'hospice_morgue_km', 'additional_education_km', 'office_sqm_1500_log')] =  -1
 
-max_it = 20*max_it_mult #64k is for s=0.001, 
+max_it = 80*max_it_mult #64k is for s=0.001, 
 
 model.gbm_cv = gbm(formula.all, 
                 data = df[train_index, all.vars(formula.all)], 
                 distribution = 'gaussian',
                 n.trees = max_it,
-                shrinkage = 0.01, #0.001
+                shrinkage = 0.001, #0.001
                 bag.fraction = 0.8,
                 interaction.depth = 2,#3
-                cv.folds = 5, #5
+                cv.folds = cv_folds, #5
                 train.fraction = 1.0,
                 var.monotone = var.monotone,
                 n.cores = 4,
                 verbose = FALSE)
-#model.gbm_cv = gbm.more(model.gbm_cv, 3000)
-#show best iteration
-best_it_cv = gbm.perf(model.gbm_cv, method = 'cv') 
-print(best_it_cv)
-grid()
-pred.gbm_cv = exp(predict(model.gbm_cv, n.trees = best_it_cv, newdata = df)) - 1.0
 
-plot_gbmiterations(model.gbm_cv)
+if(cv_folds == 0){
+  #show best iteration
+  best_it_cv = max_it
+}else{
+  best_it_cv = gbm.perf(model.gbm_cv, method = 'cv') 
+  print(best_it_cv)
+  grid()
+  plot_gbmiterations(model.gbm_cv)
+}
+pred.gbm_cv = exp(predict(model.gbm_cv, n.trees = best_it_cv, newdata = df)) - 1.0
 
 #plot interactions
 level2_interactions = gbm_interactions(model.gbm_cv,  df[train_index, all.vars(formula.all)], iter = best_it_cv, 1, 2)
@@ -380,7 +389,7 @@ print((proc.time() - start_time)[3]/3600)
 ## Cluster SubArea
 There are too many sub_area levels, so we cluster them for better out of sample performance 
 
-```{r cluster_sub_area, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE, echo=FALSE}
+```{r cluster_sub_area, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=FALSE}
 #### cluster sub_area
 model_predictions = pred.gbm_cv
 
@@ -418,9 +427,6 @@ d = dist(avg_res)
     
     print(ggplot(sub_area_agg_group, aes(reorder(name, avg), avg, fill = factor(group) )) + geom_bar(stat = "identity") + 
       theme( axis.text.x = element_text(angle = 90, hjust = 1)))
-    
-    print(ggplot(sub_area_agg_group, aes(reorder(name, count), count, fill = factor(group) )) + 
-            geom_bar(stat = "identity") + theme( axis.text.x = element_text(angle = 90, hjust = 1)))
     
     print(kable(ddply(sub_area_agg_group, "group", summarise, samples = sum(count), areas = length(count), avg_err = mean(avg))))
     
@@ -470,7 +476,7 @@ model.gbm_res = gbm(formula.residual,
                 shrinkage = 0.001, #0.001
                 bag.fraction = 0.8,
                 interaction.depth = 2,#3
-                cv.folds = 5, #5
+                cv.folds = 3, #5
                 train.fraction = 1.0,
                 n.cores = 4,
                 verbose = FALSE)

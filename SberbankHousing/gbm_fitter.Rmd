@@ -77,6 +77,9 @@ df$life_sq[life_na_index] = df$full_sq[life_na_index] # set missing life to full
 df$life_sq_log = log(df$life_sq + 1)
 df$area_m_log = log(df$area_m + 1)
 df$office_sqm_2000_log = log(df$office_sqm_2000 + 1)
+df$nonlife_sq = df$full_sq - df$life_sq
+df$nonlife_ratio = df$nonlife_sq/df$full_sq
+df$life_ratio = df$life_sq/df$full_sq
 
 df$kitch_sq[is.na(df$kitch_sq) | df$kitch_sq>df$full_sq | df$kitch_sq < 3] = NA #kitchen cant be > full, but dont exclude from the set 
 
@@ -306,6 +309,10 @@ allvars =  unique(c(sig_vars, 'cluster_group') %!in_set% c(non_vars, 'sub_area')
 
 formula.all = formula (paste( 'price_log ~', paste(allvars, collapse = '+')) )
 
+corr_matrix = cor(df[,all.vars(formula.all) %in_set% names(which(sapply(df, is.numeric))) ], use="complete.obs")
+corrplot(corr_matrix, method="number", number.cex = 0.5)
+corrplot(corr_matrix, method="circle", number.cex = 0.5, order="hclust")
+
 print(formula.all)
 print(length(allvars))
 
@@ -469,7 +476,7 @@ print(formula.residual)
 df_res = df[, residual_vars]
 df_res$price_residual = df$price_log - log(pred.gbm_cv+1)
 
-max_it = 20*max_it_mult
+max_it = 10*max_it_mult
 
 model.gbm_res = gbm(formula.residual, 
                 data = df_res[train_index, all.vars(formula.residual)], 
@@ -496,6 +503,10 @@ plot_gbminfluence(vars.importance_res[vars.importance_res$rel.inf>0.5,])
 kable(vars.importance_res[vars.importance_res$rel.inf>=0.5,])
 
 imp_vars = as.character(vars.importance_res$var)[vars.importance_res$rel.inf>=0.5]
+
+corr_matrix = cor(df_res[,c('price_residual', imp_vars) %in_set% names(which(sapply(df_res, is.numeric))) ], use="complete.obs")
+corrplot(corr_matrix, method="number", number.cex = 0.5)
+corrplot(corr_matrix, method="circle", order="hclust")
 
 plots = plot_gbmpartial(model.gbm_res, best_it_res, imp_vars, output_type = 'link')
 marrangeGrob(plots, nrow=3, ncol=3)

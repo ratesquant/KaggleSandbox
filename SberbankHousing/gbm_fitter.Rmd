@@ -101,6 +101,7 @@ df$office_sqm_1500_log = log(df$office_sqm_1500 + 1)
 
 df$public_healthcare_near = pmax(1, pmin(10, df$public_healthcare_km))
 df$kindergarten_near = pmax(0.2, pmin(2.0, df$kindergarten_km))
+df$ttk_km_10 = pmin(10.0, df$ttk_km)
 
 
 #set invalid values to NA
@@ -118,8 +119,8 @@ year(macro_lag2$date )<-year(macro$date ) + 2
 names(macro_lag1) = paste(names(macro_lag1), '_lag1', sep = '')
 names(macro_lag2) = paste(names(macro_lag2), '_lag2', sep = '')
 df  =  merge(df[,names(df) != 'timestamp'], macro[,names(macro) != 'timestamp'], by.x = 'date', by.y = 'date', all.x = TRUE)
-df  =  merge(df[,names(df) != 'timestamp'], macro_lag1[,names(macro_lag1) != 'timestamp_lag'], by.x = 'date', by.y = 'date_lag1', all.x = TRUE)
-df  =  merge(df[,names(df) != 'timestamp'], macro_lag2[,names(macro_lag2) != 'timestamp_lag'], by.x = 'date', by.y = 'date_lag2', all.x = TRUE)
+df  =  merge(df[,names(df) != 'timestamp'], macro_lag1[,names(macro_lag1) != 'timestamp_lag1'], by.x = 'date', by.y = 'date_lag1', all.x = TRUE)
+df  =  merge(df[,names(df) != 'timestamp'], macro_lag2[,names(macro_lag2) != 'timestamp_lag2'], by.x = 'date', by.y = 'date_lag2', all.x = TRUE)
 df  =  merge(df, sub_area_cluster_info[,c('name', 'cluster_group')], by.x = 'sub_area', by.y = 'name', all.x = TRUE)
 #df  =  merge(df, prev_run[,c('id','error')], by.x = 'id', by.y = 'id', all.x = TRUE)
 
@@ -356,8 +357,8 @@ pred.gbm_cv = exp(predict(model.gbm_cv, n.trees = best_it_cv, newdata = df)) - 1
 
 #plot interactions
 level2_interactions = gbm_interactions(model.gbm_cv,  df[train_index, all.vars(formula.all)], iter = best_it_cv, 1, 2)
-plot_gbminteractions(level2_interactions[level2_interactions$interaction_score>1e-2,])
-kable(level2_interactions[level2_interactions$interaction_score>1e-2,])
+plot_gbminteractions(level2_interactions[level2_interactions$interaction_score>0.05,])
+kable(level2_interactions[level2_interactions$interaction_score>0.05,])
 
 #show importance
 vars.importance_cv = summary(model.gbm_cv, n.trees = best_it_cv, plotit=FALSE) # influence

@@ -164,7 +164,8 @@ plot_gbmpartial_2d <- function(gbm_model, iter, variables, resolution = 100, out
     names(plot_data) <- c('x1', 'x2', 'y')
     
     plot_result = ggplot(plot_data, aes(x1, x2, z = y, fill = y)) + geom_raster() + scale_fill_distiller(palette = 'Spectral') +
-        theme(axis.title.y = element_blank(), axis.title.x = element_blank()) + ggtitle(vname)
+      xlab(var_pair[1]) + ylab(var_pair[2])
+        #theme(axis.title.y = element_blank(), axis.title.x = element_blank()) + ggtitle(vname)
     
     if(add_rug)
     {
@@ -175,6 +176,9 @@ plot_gbmpartial_2d <- function(gbm_model, iter, variables, resolution = 100, out
       xdata = gbm_model$data$x[1:size_per_var + (vname_index1 - 1) * size_per_var]
       ydata = gbm_model$data$x[1:size_per_var + (vname_index2 - 1) * size_per_var]
       
+      if(max_run_points<=0){
+        max_run_points = size_per_var
+      }
       rug_index = sample.int(size_per_var, min(max_run_points, size_per_var))
       
       plot_result = plot_result + geom_point(data = data.frame(x = xdata[rug_index], y = ydata[rug_index]), aes(x, y), alpha = 0.2, size = 0.2, inherit.aes = FALSE, color = 'black')

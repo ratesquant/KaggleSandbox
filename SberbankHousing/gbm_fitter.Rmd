@@ -185,9 +185,8 @@ table(df$sample)
 # marrangeGrob(plots, nrow=2, ncol=1)
 
 #macro plots
-macro_melt = melt(macro[, c('date', sig_vars %in_set% names(macro) )], id.vars = 'date')
-
-ggplot(macro_melt, aes(date, value, group = variable, color = variable)) + geom_line() + facet_wrap(~variable, scales = 'free') + theme(legend.position = 'none')
+#macro_melt = melt(macro_lag1[, c('date_lag1', sig_vars %in_set% names(macro_lag1) )], id.vars = 'date_lag1')
+#ggplot(macro_melt, aes(date_lag1, value, group = variable, color = variable)) + geom_line() + facet_wrap(~variable, scales = 'free') + theme(legend.position = 'none')
 
 ```
 
@@ -401,7 +400,7 @@ residual_con_vars = names(which(sapply(df, is.numeric))) %!in_set% c(non_vars, a
 residual = df$price_log - log(pred.gbm_cv + 1)
 
 var_cor = ldply(residual_con_vars, function(vname) data.frame(name = vname, cor = cor(residual[train_index], df[train_index,vname], use="complete.obs")))
-var_cor = head(var_cor[order(abs(var_cor$cor), decreasing = TRUE),], 18)
+var_cor = head(var_cor[order(abs(var_cor$cor), decreasing = TRUE),], 4*9)
 #profiles with respect to con variables
 plots <- llply(as.character(var_cor$name) %in_set% names(df), function(vname){
   plot_result = plot_profile(log(pred.gbm_cv[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
@@ -502,9 +501,9 @@ model.gbm_res = gbm(formula.residual,
                 n.trees = max_it,
                 shrinkage = 0.001, #0.001
                 bag.fraction = 0.8,
-                interaction.depth = 2,#3
+                interaction.depth = 3,#3
                 cv.folds = 3, #5
-                train.fraction = 0.8,
+                train.fraction = 1.0,
                 n.cores = 4,
                 verbose = FALSE)
 #model.gbm_cv = gbm.more(model.gbm_cv, 3000)

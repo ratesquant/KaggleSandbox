@@ -382,14 +382,27 @@ plots <- llply(imp_vars %in_set% names(df), function(vname){
 })
 marrangeGrob(plots, nrow=3, ncol=3)
 
-#profiles with respect to vars - not in model
-residual_vars =  head(names(df) %!in_set% c(non_vars, all.vars(formula.all)), 18)
+names(which(sapply(df, is.factor)))
+      
+#profiles with respect to categorical variables
+residual_vars = names(which(sapply(df, is.factor))) %!in_set% c(non_vars, all.vars(formula.all))
 plots <- llply(residual_vars %in_set% names(df), function(vname){
   plot_result = plot_profile(log(pred.gbm_cv[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
   return (plot_result)
 })
 marrangeGrob(plots, nrow=3, ncol=3)
 
+residual_con_vars = names(which(sapply(df, is.numeric))) %!in_set% c(non_vars, all.vars(formula.all))
+residual = df$price_log - log(pred.gbm_cv + 1)
+
+var_cor = ldply(residual_con_vars, function(vname) data.frame(name = vname, cor = cor(residual[train_index], df[train_index,vname], use="complete.obs")))
+var_cor = head(var_cor[order(abs(var_cor$cor), decreasing = TRUE),], 18)
+#profiles with respect to con variables
+plots <- llply(as.character(var_cor$name) %in_set% names(df), function(vname){
+  plot_result = plot_profile(log(pred.gbm_cv[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  return (plot_result)
+})
+marrangeGrob(plots, nrow=3, ncol=3)
 
 
 print((proc.time() - start_time)[3]/3600)
@@ -486,12 +499,13 @@ model.gbm_res = gbm(formula.residual,
                 bag.fraction = 0.8,
                 interaction.depth = 2,#3
                 cv.folds = 3, #5
-                train.fraction = 1.0,
+                train.fraction = 0.8,
                 n.cores = 4,
                 verbose = FALSE)
 #model.gbm_cv = gbm.more(model.gbm_cv, 3000)
 #show best iteration
 best_it_res = gbm.perf(model.gbm_res, method = 'cv') 
+best_it_res = max(1000, best_it_res) #show results after at least 1000 iterations
 print(best_it_res)
 grid()
 pred.gbm_res = predict(model.gbm_res, n.trees = best_it_res, newdata = df_res)

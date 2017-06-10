@@ -102,6 +102,7 @@ df$office_sqm_1500_log = log(df$office_sqm_1500 + 1)
 df$public_healthcare_near = pmax(1, pmin(10, df$public_healthcare_km))
 df$kindergarten_near = pmax(0.2, pmin(2.0, df$kindergarten_km))
 df$ttk_km_10 = pmin(10.0, df$ttk_km)
+df$prom_part_1000_above25 = as.factor(df$prom_part_1000 > 25)
 
 
 #set invalid values to NA
@@ -250,8 +251,8 @@ print(formula.all)
 print(length(allvars))
 
 var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
-var.monotone[allvars %in% c('full_sq', 'num_room','state', 'usdrub','eurrub')] =  1
-var.monotone[allvars %in% c('metro_min_walk', 'fitness_km')] =  -1
+var.monotone[allvars %in% c('full_sq', 'num_room','state', 'usdrub','eurrub','ppi_lag2', 'cafe_count_3000')] =  1
+var.monotone[allvars %in% c('metro_min_walk', 'fitness_km', 'public_healthcare_near', 'green_zone_km', 'indust_part')] =  -1
 
 max_it = 100*max_it_mult #64k is for s=0.001, 
 
@@ -314,7 +315,7 @@ allvars =  unique(c(sig_vars, 'cluster_group') %!in_set% c(non_vars, 'sub_area')
 formula.all = formula (paste( 'price_log ~', paste(allvars, collapse = '+')) )
 
 corr_matrix = cor(df[,all.vars(formula.all) %in_set% names(which(sapply(df, is.numeric))) ], use="complete.obs")
-corrplot(corr_matrix, method="number", number.cex = 0.5)
+corrplot(corr_matrix, method="number", number.cex = 0.5, number.digits = 1)
 corrplot(corr_matrix, method="circle", number.cex = 0.5, order="hclust")
 
 print(formula.all)
@@ -519,6 +520,11 @@ plot_gbmiterations(model.gbm_res)
 vars.importance_res = summary(model.gbm_res, n.trees = best_it_res, plotit=FALSE) # influence
 plot_gbminfluence(vars.importance_res[vars.importance_res$rel.inf>0.5,])
 kable(vars.importance_res[vars.importance_res$rel.inf>=0.5,])
+
+level2_interactions = gbm_interactions(model.gbm_res,  df[train_index, all.vars(formula.residual)], iter = best_it_res, 1, 2)
+plot_gbminteractions(level2_interactions[level2_interactions$interaction_score>0.05,])
+kable(level2_interactions[level2_interactions$interaction_score>0.05,])
+
 
 imp_vars = as.character(vars.importance_res$var)[vars.importance_res$rel.inf>=0.5]
 

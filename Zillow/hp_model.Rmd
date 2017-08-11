@@ -1,458 +1,342 @@
 ---
-title: "Allstate Claims Severity"
-author: "Alex"
-date: "October 13, 2016"
-output: 
-  html_document: 
-    toc: yes
+title: "GBM Model for Zillow prices"
+output: html_document
+---
+---
+title: "Overfitting"
+output:
+  html_document: default
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-
 library(reshape2)
 library(ggplot2)
-library(GGally)
 library(Hmisc)
 library(plyr)
+library(dplyr)
 library(gridExtra)
+library(corrplot)
 
 library(gbm)
-library(np)
+#library(np)
 library(earth) 
 library(rpart)
+library(party)
+library(caret)
 library(randomForest)
 library(nnet)
 library(e1071)
 library(MASS)
+library(lubridate)
 
+library(knitr)
+library(foreach)
+
+knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## Load Data
-
+## Load data
 ```{r load_data}
 rm(list = ls())
 
-random_seed = 12345678
+# READ DATA ---- 
+max_it_mult = 1000
 
-vars_cat = 116
-vars_num = 14
+inf_lowlimit = 0.5
 
-col_classes = c('numeric', rep('factor', vars_cat), rep('numeric', vars_num), 'numeric')
+#dont set seed
+#random_seed = 12345678
+#set.seed(random_seed)
 
-folder = 'C:/Dev/Kaggle/AllstateClaimsSeverity/input'
+#working_folder = 'C:/Dev/Kaggle/'
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 
-#train <- read.csv(file.path(folder, 'train.csv'), colClasses = col_classes)
-#test  <- read.csv(file.path(folder, 'test.csv'), colClasses = col_classes[-length(col_classes)])
-#saveRDS(train, file.path(folder, 'train.rds'))
-#saveRDS(test, file.path(folder, 'test.rds'))
+source(file.path(working_folder, 'Utils/common.R'))
 
-train <- readRDS(file.path(folder, 'train.rds'))
-test <- readRDS(file.path(folder, 'test.rds'))
+property_info_file = file.path(working_folder,'Zillow/properties_2016.rds')
 
-
-#LIMIT the size of the TRAINING for TEST RUNS (actual size = 188319)
-#sample_size = 70000
-#sample_index = sample.int(dim(train)[1], size = sample_size)
-#train = train[sample_index,]
-#print(paste('sample_size', sample_size))
-
-test$loss <- NA
-train$tag = 1
-test$tag = 0
-
-df = rbind(train, test)
-
-df$log_loss = log(df$loss) 
-
-test_index = df$tag == 0
-train_index = df$tag == 1
-
-#create a smaller samples for research
-n = dim(df)[1]
-train_ids = which(df$tag==1)
-ntrain = length(train_ids)
-train_index1 = rep(FALSE, n)
-train_index2 = rep(FALSE, n)
-train_index3 = rep(FALSE, n)
-train_index1[sample(train_ids, 0.1*ntrain)] = TRUE #10% of training data (for testins)
-train_index2[sample(train_ids, 0.5*ntrain)] = TRUE #50% of training data
-train_index3 = !train_index2 & train_index         #out of sample, sample 3 and 2 partition data
-
-cols = names(df)
-cat_vars = cols[grep("cat", cols)] 
-
-#combine rare levels for categorical variables 
-#sapply(df, class)
-#sort(table(df$75))
-min_count = 100
-tag_name = "OTHER"
-for(cn in cat_vars){
-  temp = df[,cn]
-  temp = as.character(temp)
-  temp[temp %in% names(which(table(temp[train_index])<min_count))] = tag_name
+if(file.exists(property_info_file)){
+  property_info = readRDS(property_info_file)
+ 
+}else {
+  property_info = read.csv(file.path(working_folder,'Zillow/properties_2016.csv') )
   
-  #levels that are only present in test data, move to other 
-  new_levels = setdiff( names(which(table(temp[test_index])>0)), names(which(table(temp[train_index])>0)))
-  temp[temp %in% new_levels] = tag_name
+  convert_to_factors = c('airconditioningtypeid', 'architecturalstyletypeid', 
+                         'buildingclasstypeid', 'buildingqualitytypeid', 'decktypeid', 
+                         'fips', #area code
+                         'heatingorsystemtypeid','propertylandusetypeid','storytypeid','typeconstructiontypeid',
+                         'regionidcity', 'regionidcounty', 'regionidneighborhood','regionidzip', 'censustractandblock'
+                         )
   
-  #spread observations among other factors 
-  other_count = sum(temp==tag_name)
-  if(other_count<min_count){ 
-    level_counts = table(temp[temp != tag_name])
-    levels = sample(names(level_counts), other_count, replace = TRUE, prob = level_counts/sum(level_counts))
-    temp[temp==tag_name] <- levels
+  for (name in convert_to_factors){
+    property_info[,name] = factor(property_info[,name])
   }
   
-  df[,cn] = factor(temp)
+  temp = property_info$taxdelinquencyyear 
+  property_info$taxdelinquencyyear[temp >  50 & !is.na(temp)]  = 1900 + temp[temp >   50 & !is.na(temp)]
+  property_info$taxdelinquencyyear[temp <= 50 & !is.na(temp)]  = 2000 + temp[temp <=  50 & !is.na(temp)]
+
+  
+  saveRDS(property_info, property_info_file)
 }
 
-print(paste('min_count', min_count))
-print(table(df$tag))
+train <- read.csv(file.path(working_folder,'Zillow/train_2016_v2.csv'), colClasses = c('integer', 'numeric', 'Date'))
+df  =  merge(train, property_info, by = 'parcelid', all.x = TRUE)
 
-#remove variables with one level
-cat_vars_single_level = names(which(sapply(df[train_index,cat_vars], 
-                                    FUN = function(x) length(unique(x))) <= 1))
+fun_var = 'logerror'
+non_vars = c('parcelid', 'transactiondate', 'latitude', 'longitude', 'regionidcity', 'regionidneighborhood','regionidzip', 'censustractandblock',
+             'propertycountylandusecode', 'propertyzoningdesc', 'rawcensustractandblock', 
+             't_year', 'taxdelinquencyyear', 'assessmentyear', 'yearbuilt', 'decktypeid', 'storytypeid',
+             'structuretaxvaluedollarcnt', 'taxamount', 'taxvaluedollarcnt', 'lotsizesquarefeet', 'landtaxvaluedollarcnt',
+             'poolcnt', 'pooltypeid10', 'pooltypeid2', 'pooltypeid7', 'buildingclasstypeid', 'typeconstructiontypeid') #exclude sale_year and month
 
-#define variables 
-cat_vars_fake = names(which( sapply(df[,cat_vars], function(x) length(levels(x)) ) <= 1))
-cat_vars = setdiff(cat_vars, cat_vars_fake)
-cat_vars = setdiff(cat_vars, cat_vars_single_level)
-#cat_vars = c('cat80', 'cat79', 'cat101')
-cont_vars = cols[grep("cont", cols)]
-allvars = union ( cat_vars , cont_vars) 
-formula.loss = formula (paste( 'loss ~', paste(allvars, collapse = '+')) )
-formula.all = formula (paste( 'log_loss ~', paste(allvars, collapse = '+')) )
-formula.cont = formula (paste( 'log_loss ~', paste(cont_vars, collapse = '+')) )
-formula.cat = formula (paste( 'log_loss ~', paste(cat_vars, collapse = '+')) )
+#all data transforms
+df$t_year = year(df$transactiondate)   #2016
+df$t_month = month(df$transactiondate) # very little in nov, dec
+df$age = df$t_year - df$yearbuilt
+df$taxdelinquency_age = df$t_year - df$taxdelinquencyyear
+df$structuretaxvaluedollarcnt_pct = df$structuretaxvaluedollarcnt/df$taxvaluedollarcnt
+df$taxamount_pct = df$taxamount/df$taxvaluedollarcnt
+df$taxvaluedollarcnt_log = log(df$taxvaluedollarcnt)
+df$lotsizesquarefeet_log = log(df$lotsizesquarefeet)
+df$landtaxvaluedollarcnt_pct = df$landtaxvaluedollarcnt/df$taxvaluedollarcnt
+df$taxamount_pct[df$taxamount_pct > 1 & !is.na(df$taxamount_pct)] = NA
+
+levels(df$taxdelinquencyflag) <- c('N', 'Y')
+levels(df$fireplaceflag) <-c('false', 'true')
+levels(df$hashottuborspa) <-c('false', 'true')
+
+str(df[, names(df) %!in_set% non_vars])
+summary(df[, names(df) %!in_set% non_vars])
+
+con_vars = (names(df) %!in_set% non_vars) %in_set% names(which(sapply(df, is.numeric)))
+cat_vars = (names(df) %!in_set% non_vars) %in_set% names(which(sapply(df, is.factor))) 
+
+ldply(con_vars, function(colname) {
+  x = df[,colname]
+  data.frame(colname, na_count = sum(is.na(x)), na_pct = sum(is.na(x))/length(x), std = sd(x, na.rm = T) ) } )
+
+ldply(cat_vars, function(colname) {
+  x = df[,colname]
+  data.frame(colname, count = length(levels(x)), levels = paste(levels(x), collapse = '|') ) } )
+
+summary(df[, cat_vars %!in_set% non_vars])
 
 
-#useless variables less then 0.1%
-least_significant = c('cat40','cont9','cat10','cat50','cat78','cont5','cat9','cat89','cat14','cat33','cat47',
-'cat95','cat77','cat8','cat45','cat54','cat17','cat61','cat74','cat66','cat24','cat18','cat43','cat30',
-'cat46','cat28','cat29','cat88','cat92','cat97','cat98','cont4')
+#create a test data set
+#pred_dates = c(201610,201611,201612,201710,201711,201712)
+#pred_dates_ex = as.Date(as.character(100*pred_dates + 1), '%Y%m%d')
+#test = expand.grid(parcelid = property_info$parcelid, transactiondate = pred_dates_ex)
 
-#useless variables less then 1.0%
-least_significant2 =  c(least_significant, 'cat13','cat115','cat73','cat104','cat99','cat51','cat75','cont10','cat39','cat107','cat19','cat3','cont1','cat93', 'cont8','cat7','cat65','cat106','cont6','cat67','cat71','cat85','cat16','cat96','cat41','cat102','cat86')
 
-formula.all_sig = formula (paste( 'log_loss ~', paste(allvars[!allvars %in% least_significant], collapse = '+')) )
+ggplot(df, aes(logerror)) + stat_ecdf()
+ggplot(df, aes(airconditioningtypeid, logerror)) + stat_boxplot()
+ggplot(df, aes(buildingclasstypeid, logerror)) + stat_boxplot()
+ggplot(df, aes(basementsqft, logerror )) + geom_point(size = 0.1 ) + geom_smooth()
 
-formula.loss_sig = formula (paste( 'loss ~', paste(allvars[!allvars %in% least_significant], collapse = '+')) )
-
-#sapply(df[,cont_vars], sd)
-#sapply(df[,cat_vars], function(x) length(levels(x)) )
-
-print(formula.all_sig)
-
-```
-
-```{r functions}
-
-r_sqr <-function(y, x) {
-  return( summary(lm(y ~ x))$r.squared )
-}
-#plot missing values
-ggplot_missing <- function(x){
-  mx = melt(is.na(x))
-  ggplot(mx, aes(Var2, Var1)) + geom_raster(aes(fill = value)) +
-  theme(axis.text.x  = element_text(angle=90, vjust=0.5)) + 
-  scale_fill_grey(name = "", labels = c("Valid","NA")) +
-  labs(x = "Variable name",   y = "Rows") + 
-    ggtitle (paste('total number of missing values:',  sum(mx$value)))
-}
-
-#plot number of missing values
-ggplot_missing_count <- function(x){
-  mc = adply(is.na(x), 2, sum)
-  names(mc) <- c('name', 'value')
-  ggplot(mc, aes(name, value)) + geom_bar(stat = "identity") +
-  theme(axis.text.x  = element_text(angle=90, vjust=0.5)) + 
-  labs(x = "Variable name",   y = "Missing Variables")
-}
-
-# Friedman's H-statistic to assess the relative strength of interaction effects in non-linear models. H is on the scale of [0-1] 
-gbm_interactions <- function(gbm_model, data, min_influence = 1, degree = 2){
-  gbm_summary = summary(gbm_model, plotit=FALSE)
-  vars = gbm_summary$var[gbm_summary$rel.inf > min_influence]
-  all_combinations = combn(as.vector(vars), degree, simplify = TRUE)
-  df = ldply(seq(dim(all_combinations)[2]), function(i) {
-    data.frame(vars = paste(all_combinations[,i], collapse = '-'), 
-               interaction_score = interact.gbm(gbm_model, data, all_combinations[,i])) 
-    })
-  return ( df[order(df$interaction_score, decreasing = TRUE),] )
-}
-```
-
-## Overview
-```{r overview, fig.width = 8, fig.height = 6, dpi = 100}
-
-ggplot(df[train_index,], aes(sample = log_loss )) + stat_qq()
-ggplot(df[train_index,], aes(log_loss)) + stat_density()
-
-#plot
-#cat80, cat79, cat101, cat100, cat12
-
-ggplot(df[train_index,], aes(x = loss, fill = cat1)) +stat_density()
-
-ggplot(df[train_index,], aes(x = cont2, log_loss)) + geom_point() + geom_smooth()
-ggplot(df[train_index,], aes(x = cont7, log_loss)) + geom_point() + geom_smooth()
-ggplot(df[train_index,], aes(x = cont14, log_loss)) + geom_point() + geom_smooth()
-ggplot(df[train_index,], aes(x = cont12, log_loss)) + geom_point() + geom_smooth()
-
-ggplot(df[train_index,], aes(x = cat80, log_loss)) + geom_boxplot() + coord_flip()
-ggplot(df[train_index,], aes(x = cat79, log_loss)) + geom_boxplot() + coord_flip()
-ggplot(df[train_index,], aes(x = cat101, log_loss)) + geom_boxplot() + coord_flip()
-ggplot(df[train_index,], aes(x = cat100, log_loss)) + geom_boxplot() + coord_flip()
-ggplot(df[train_index,], aes(x = cat112, log_loss)) + geom_boxplot() + coord_flip() #has other level
-ggplot(df[train_index,], aes(x = cat12, log_loss)) + geom_boxplot() + coord_flip()
-ggplot(df[train_index,], aes(x = cat81, log_loss)) + geom_boxplot() + coord_flip()
-
-ggplot(df, aes(cat80, fill = factor(tag) )) + geom_bar()
-ggplot(df, aes(cat79, fill = factor(tag) )) + geom_bar() 
-ggplot(df, aes(cat101, fill = factor(tag) )) + geom_bar() 
-ggplot(df, aes(cat100, fill = factor(tag) )) + geom_bar()
-ggplot(df, aes(cat112, fill = factor(tag) )) + geom_bar() 
-ggplot(df, aes(cat12, fill = factor(tag) )) + geom_bar() 
-
-table(df$cat15)
 
 ```
 
 
-## Loss Prediction Models
-top 20 variables explain about 90% of variance
-top 43 variables explain about 98% of variance
+## GBM All
+```{r gbm_all_model, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=FALSE}
+start_time <- proc.time()
 
-### Recursive Partitioning
-rp (in/out): 0.4352 0.4271 0
-```{r rpart, fig.width = 8, fig.height = 6, dpi = 100}
-model.rp = rpart(formula.all_sig,
-                 data = df[train_index,], 
-                 control = rpart.control(cp = 0.001, minsplit = 20))
+allvars =  unique(names(df) %!in_set% c(non_vars, fun_var))
 
-printcp(model.rp)
+formula.all = formula (paste( fun_var, ' ~', paste(allvars, collapse = '+')) )
 
-par(mfrow=c(2,1))
-plotcp(model.rp) 
-plot(model.rp, uniform=TRUE) 
-text(model.rp, use.n=TRUE, all=TRUE, cex=.8)
+corr_matrix = cor(df[,all.vars(formula.all) %in_set% names(which(sapply(df, is.numeric))) ], use="pairwise.complete.obs")
+corrplot(corr_matrix, method="number", number.cex = 0.5, number.digits = 1)
+#corrplot(corr_matrix, method="circle", number.cex = 0.5, order="hclust")
 
-pred.rp = predict(model.rp, newdata = df)
+print(formula.all)
+print(length(allvars))
 
-cat(paste('rp (in/out):', 
-          round(r_sqr(df$log_loss[train_index],  pred.rp[train_index]), 4),
-          sum(is.na(pred.rp)) ))
-```
+var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
+var.monotone[allvars %in% c()] =   1
+var.monotone[allvars %in% c()] =  -1
 
-### Box-Cox Regression
-lambda = 0.1 (log is a good choice)
-```{r boxcox, fig.width = 8, fig.height = 6, dpi = 100, eval = FALSE}
+max_it = 100*max_it_mult #64k is for s=0.001, 
 
-par(mfrow=c(2,1))
-boxcox(formula.loss_sig, data = df[train_index, all.vars(formula.loss_sig)], 
-                   lambda = seq(-0.5, 0.5, 1/10))
-grid()
-
-```
-### Linear Regression
-lm (in/out): 0.5183 0.5135 0 (1244.69108)
-```{r lm, fig.width = 8, fig.height = 6, dpi = 100}
-model.lm <- lm(formula.all_sig, data = df[train_index, all.vars(formula.all_sig)])
-
-summary(model.lm)
-pred.lm = predict(model.lm, newdata = df)
-
-cat(paste('lm (in/out):', 
-          round(r_sqr(df$log_loss[train_index],  pred.lm[train_index]), 4),
-          sum(is.na(pred.lm)) ))
-```
-
-### Stepwise Regression
-20 variables
-step (in/out):  0.4969 0.4948 0
-
-log_loss ~ cat80 + cat101 + cat100 + cat103 + cat111 + 
-    cat114 + cont7 + cat112 + cat79 + cat57 + cat81 + cont2 + 
-    cat53 + cat44 + cat12 + cat72 + cat113 + cat1 + cat26 + cat87
-
-```{r step, fig.width = 8, fig.height = 6, dpi = 100}
-model.null <- lm(log_loss ~ 1, data = df[train_index, all.vars(formula.all_sig)])
-
-model.step = stepAIC(model.null, scope = list(upper = formula.all_sig, lower = ~1), step = 20)
-
-print(summary(model.step))
-#anova(model.step)
-
-pred.step = predict(model.step, newdata = df)
-
-cat(paste('step (in/out):', 
-          round(r_sqr(df$log_loss[train_index],  pred.step[train_index]), 4),
-          sum(is.na(pred.step)) ))
-
-```
-
-### Multivariate Adaptive Regression Splines
-(1216.37048)
-```{r mars, fig.width = 8, fig.height = 6, dpi = 100, eval = FALSE}
-set.seed(random_seed)
-
-model.mars <- earth(formula.all_sig, 
-                    data = df[train_index, all.vars(formula.all_sig)], 
-                    degree = 2, nfold = 3, trace = 3)
-
-plot(model.mars)
-summary(model.mars)
-par(mfrow=c(1,1))
-plot(evimp(model.mars))
-#plotmo(model.mars)
-
-#0.495587497528404
-pred.mars = as.vector(predict(model.mars, newdata = df))
-
-cat(paste('mars (in/out):', 
-          round(r_sqr(df$log_loss[train_index],  pred.mars[train_index]), 4),
-          sum(is.na(pred.mars)) ))
-```
-
-
-### GBM
-gbm (in/out): 0.5428 0.5322 0 (1174.72754)
-try shrinkage from 0.01 to 0.001, cv.folds = 5
-```{r gbm, fig.width = 8, fig.height = 6, dpi = 100}
-set.seed(random_seed)
-formula.gbm = formula.all_sig
-
-max_it = 35000
-model.gbm = gbm(formula.gbm, 
-                data = df[train_index, all.vars(formula.gbm)], 
+model.gbm_all = gbm(formula.all, 
+                data = df[, all.vars(formula.all)], 
                 distribution = 'gaussian',
                 n.trees = max_it,
-                shrinkage = 0.005,#0.005
-                bag.fraction = 0.5,
-                interaction.depth = 2,
-                cv.folds = 3,
-                n.cores = 1,
-                verbose =  TRUE)
+                shrinkage = 0.001, #0.001
+                bag.fraction = 0.8,
+                cv.folds = 5, #5
+                interaction.depth = 5,#3
+                train.fraction = 1.0,
+                var.monotone = var.monotone,
+                n.cores = 4,
+                verbose = FALSE)
 
-#do extra 1000 iterations
-#model.gbm <- gbm.more(model.gbm, 5000, verbose=TRUE)
-
-print(model.gbm)
-
-par(mfrow = c(1, 2), las = 1)
-best_it = gbm.perf(model.gbm, method = 'cv')
+#show best iteration
+best_it_all = gbm.perf(model.gbm_all, method = 'cv') 
+print(best_it_all)
 grid()
-vars.importance = summary(model.gbm, n.trees = best_it) # influence
-print(vars.importance)
-grid()
+pred.gbm_all = predict(model.gbm_all, n.trees = best_it_all, newdata = df)
 
-# par(mfrow=c(5, 4))
-# for(i in seq( pmin(20, length(vars.importance$var))) ) {
-#   plot.gbm(model.gbm, n.trees =best_it,  i = as.character(vars.importance$var[i]) )
-#   grid()
-# }
+plot_gbmiterations(model.gbm_all)
 
-#cat('Two-way interactions') 
-#gbm_interactions(model.gbm, df[train_index1,], 5, 2)
+#show importance
+vars.importance_all = summary(model.gbm_all, n.trees = best_it_all, plotit=FALSE) # influence
+plot_gbminfluence(vars.importance_all[vars.importance_all$rel.inf>=inf_lowlimit,])
+kable(vars.importance_all[vars.importance_all$rel.inf>=inf_lowlimit,])
+kable(vars.importance_all[vars.importance_all$rel.inf< inf_lowlimit,])
 
-pred.gbm = predict(model.gbm, n.trees = best_it, newdata = df)
+imp_vars = as.character(vars.importance_all$var)[vars.importance_all$rel.inf>=inf_lowlimit]
 
-#gbm (in/out): 0.5531 0.536 0
-cat(paste('gbm (in/out):', 
-          round(r_sqr(df$log_loss[train_index],  pred.gbm[train_index]), 4),
-          sum(is.na(pred.gbm)) ))
+write.csv(vars.importance_all, file.path(working_folder,'Zillow/var.importance.all.csv'))
 
-```
+#plot interactions
+#level2_interactions = gbm_interactions(model.gbm_all,  df[, all.vars(formula.all)], iter = best_it_all, 1, 2)
+#plot_gbminteractions(level2_interactions[level2_interactions$interaction_score>0.05,])
+#kable(level2_interactions[level2_interactions$interaction_score>0.05,])
 
-### GBM using training fraction
-30000 iterations for 0.005
-gbm_train (in/out): 0.5453 0.5486 0 (1172.82543)
-```{r gbm_train, fig.width = 8, fig.height = 6, dpi = 100}
-formula.gbm_train = formula.all_sig
+plots = plot_gbmpartial(model.gbm_all, best_it_all, imp_vars, output_type = 'link')
+marrangeGrob(plots, nrow=3, ncol=3)
 
-set.seed(random_seed)
-
-max_it = 35000
-model.gbm_train = gbm(formula.gbm_train, 
-                data = df[train_index, all.vars(formula.gbm_train)], 
-                distribution = 'gaussian',
-                n.trees = max_it,
-                shrinkage = 0.005, #0.005
-                bag.fraction = 0.5,
-                interaction.depth = 2,
-                cv.folds = 0,
-                train.fraction = 0.5,
-                n.cores = 1,
-                verbose = TRUE)
-
-#do extra 2000 iterations
-# model.gbm_train <- gbm.more(model.gbm_train, 4000, verbose=TRUE)
-print(model.gbm_train)
-
-par(mfrow = c(1, 2), las = 1)
-best_it = gbm.perf(model.gbm_train, method = 'test')
-grid()
-vars.importance = summary(model.gbm_train, n.trees = best_it) # influence
-print(vars.importance)
-grid()
-
-#par(mfrow=c(5, 4))
-#for(i in seq( pmin(20, length(vars.importance$var))) ) {
-#  plot.gbm(model.gbm_train, n.trees =best_it,  i = as.character(vars.importance$var[i]) )
-#  grid()
-#}
-
-#gbm_interactions(model.gbm_train,  df[train_index, all.vars(formula.all)], 1, 2)
-
-pred.gbm_train = predict(model.gbm_train, n.trees = best_it, newdata = df)
-
-cat(paste('gbm_train (in/out):', 
-          round(r_sqr(df$log_loss[train_index],  pred.gbm_train[train_index]), 4),
-          sum(is.na(pred.gbm_train)) ))
-
-```
-
-## Compare
-```{r compare, fig.width = 8, fig.height = 6, dpi = 100}
-
-results = list()
-#results$mars =pred.mars
-results$lm =pred.lm
-results$step =pred.step
-results$gbm = pred.gbm
-results$gbm_train = pred.gbm_train
-results$rp = pred.rp
-results$mars = pred.mars
-
-#
-res = ldply(results, .id = 'model', function(x) {
-  c(r2 = r_sqr(df$log_loss[train_index],  x[train_index]),
-    na_count = sum(is.na(x[test_index])))
+plots <- llply(names(df) %in_set% imp_vars, function(vname){
+  plot_result = plot_profile(pred.gbm_all, df[,fun_var], df[, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  return (plot_result)
 })
+marrangeGrob(plots, nrow=3, ncol=3)
 
-print(res)
 
-#ggplot(res, aes(model, r2)) + geom_bar(stat = "identity") + coord_flip() + coord_cartesian(ylim = c(0.9*min(res$r2), min(1.0, 1.1*max(res$r2) ) ))
+print((proc.time() - start_time)[3])
 
 ```
 
-## Submit
-```{r submit, fig.width = 8, fig.height = 6, dpi = 100}
 
-folder = "C:/Dev/Kaggle/AllstateClaimsSeverity/"
+## GBM CV
 
-for (model_name in names(results) ){
-  submit <- data.frame(id = as.integer( as.numeric(df$id[test_index]) ), 
-                       loss = exp(results[[model_name]][test_index]))
-  
-  submit = submit[order(submit$id),]
-  
-  file = file.path(folder, sprintf("my_solution_%s.csv", model_name))
-  
-  write.csv(submit, file = file, row.names = FALSE)
-  
-  print(file)
+```{r gbm_cv, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE, echo=TRUE}
+start_time <- proc.time()
+
+cv_folds = 0
+
+allvars =  unique(c(sig_vars, 'cluster_group') %!in_set% c(non_vars, 'sub_area'))
+#allvars =  unique(c(sig_vars) %!in_set% c(non_vars, 'sub_area'))
+
+formula.all = formula (paste( 'price_log ~', paste(allvars, collapse = '+')) )
+
+corr_matrix = cor(df[,all.vars(formula.all) %in_set% names(which(sapply(df, is.numeric))) ], use="complete.obs")
+corrplot(corr_matrix, method="number", number.cex = 0.5, number.digits = 1)
+corrplot(corr_matrix, method="circle", number.cex = 0.5, order="hclust")
+
+print(formula.all)
+print(length(allvars))
+
+var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
+var.monotone[allvars %in% c('full_sq','cafe_count_5000', 'usdrub', 'state', 'num_room')] = 1
+var.monotone[allvars %in% c('metro_min_walk','metro_min_avto', 'fitness_km')] = -1
+#var.monotone[allvars %in% c('full_sq','full_sq_log', 'num_room','state', 'usdrub','eurrub', 'kitch_sq', 'mosque_km', 'life_sq', 'cafe_count_5000', 'ppi')] =  1
+#var.monotone[allvars %in% c('metro_min_walk', 'metro_min_avto', 'fitness_km', 'sadovoe_km', 'public_healthcare_km', 'green_zone_km', 'kindergarten_km', 'workplaces_km', 'hospice_morgue_km', 'additional_education_km', 'office_sqm_1500_log')] =  -1
+
+max_it = 60*max_it_mult #60k is for s=0.001, 
+
+model.gbm_cv = gbm(formula.all, 
+                data = df[train_index, all.vars(formula.all)], 
+                distribution = 'gaussian',
+                n.trees = max_it,
+                shrinkage = 0.001, #0.001
+                bag.fraction = 0.8,
+                interaction.depth = 2,#3
+                cv.folds = cv_folds, #5
+                train.fraction = 1.0,
+                var.monotone = var.monotone,
+                n.cores = 4,
+                verbose = FALSE)
+
+if(cv_folds == 0){
+  #show best iteration
+  best_it_cv = max_it
+}else{
+  best_it_cv = gbm.perf(model.gbm_cv, method = 'cv') 
+  print(best_it_cv)
+  grid()
 }
 
+plot_gbmiterations(model.gbm_cv)
+
+pred.gbm_cv = exp(predict(model.gbm_cv, n.trees = best_it_cv, newdata = df)) - 1.0
+
+#plot interactions
+level2_interactions = gbm_interactions(model.gbm_cv,  df[train_index, all.vars(formula.all)], iter = best_it_cv, 1, 2)
+plot_gbminteractions(level2_interactions[level2_interactions$interaction_score>0.05,])
+kable(level2_interactions[level2_interactions$interaction_score>0.05,])
+
+#show importance
+vars.importance_cv = summary(model.gbm_cv, n.trees = best_it_cv, plotit=FALSE) # influence
+plot_gbminfluence(vars.importance_cv[vars.importance_cv$rel.inf>inf_lowlimit,])
+kable(vars.importance_cv[vars.importance_cv$rel.inf>=inf_lowlimit,])
+kable(vars.importance_cv[vars.importance_cv$rel.inf<inf_lowlimit,])
+
+write.csv(vars.importance_cv, file.path(working_folder,'SberbankHousing/var.importance.csv'))
+
+imp_vars = as.character(vars.importance_cv$var)[vars.importance_cv$rel.inf>=.1]
+
+#partial dependence
+plots = plot_gbmpartial(model.gbm_cv, best_it_cv, imp_vars, output_type = 'link')
+marrangeGrob(plots, nrow=3, ncol=3)
+
+plots = plot_gbmpartial_2d(model.gbm_cv, best_it_cv, as.character(level2_interactions$vars[level2_interactions$interaction_score>0.1]), output_type = 'link')
+marrangeGrob(plots, nrow=2, ncol=2)
+
+#profiles (norm) with respect to model vars
+for(vname in c('sub_area', 'full_sq', 'sale_time') ){
+  print(plot_profile(log(pred.gbm_cv[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 20, min_obs = 10, error_band ='normal') + ggtitle(vname))
+}
+plots <- llply(imp_vars %in_set% names(df), function(vname){
+  plot_result = plot_profile(log(pred.gbm_cv[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  return (plot_result)
+})
+marrangeGrob(plots, nrow=3, ncol=3)
+
+names(which(sapply(df, is.factor)))
+      
+#profiles with respect to categorical variables
+residual_vars = names(which(sapply(df, is.factor))) %!in_set% c(non_vars, all.vars(formula.all))
+plots <- llply(residual_vars %in_set% names(df), function(vname){
+  plot_result = plot_profile(log(pred.gbm_cv[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  return (plot_result)
+})
+marrangeGrob(plots, nrow=3, ncol=3)
+
+residual_con_vars = names(which(sapply(df, is.numeric))) %!in_set% c(non_vars, all.vars(formula.all))
+residual = df$price_log - log(pred.gbm_cv + 1)
+
+var_cor = ldply(residual_con_vars, function(vname) data.frame(name = vname, cor = cor(residual[train_index], df[train_index,vname], use="complete.obs")))
+var_cor = head(var_cor[order(abs(var_cor$cor), decreasing = TRUE),], 4*9)
+#profiles with respect to con variables
+plots <- llply(as.character(var_cor$name) %in_set% names(df), function(vname){
+  plot_result = plot_profile(log(pred.gbm_cv[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  return (plot_result)
+})
+marrangeGrob(plots, nrow=3, ncol=3)
+
+
+print((proc.time() - start_time)[3]/3600)
+```
+
+
+## Summary
+```{r res_print, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE, echo=TRUE}
+
+# Solution  ---- 
+predictions = predict(model.gbm_all, n.trees = best_it_all, newdata = property_info)
+predictions = rnorm(nrow(property_info))
+pred_dates
+
+## print solution ---- 
+submit <- data.frame(parcelid = as.integer( as.numeric(property_info$parcelid) ), price_doc = predictions)
+submit = submit[order(submit$id),]
+file = file.path(working_folder, "Zillow/submittion.csv")
+write.csv(submit, file = file, row.names = FALSE)
+zip(paste(file, '.zip', sep = ''), file, flags = "-9jX")
+print(file)
 
 ```

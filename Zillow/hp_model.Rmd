@@ -91,6 +91,8 @@ non_vars = c('parcelid', 'transactiondate', 'latitude', 'longitude', 'regionidci
              'structuretaxvaluedollarcnt', 'taxamount', 'taxvaluedollarcnt', 'lotsizesquarefeet', 'landtaxvaluedollarcnt',
              'poolcnt', 'pooltypeid10', 'pooltypeid2', 'pooltypeid7', 'buildingclasstypeid', 'typeconstructiontypeid') #exclude sale_year and month
 
+nonsig_vars = c('fireplaceflag', 'yardbuildingsqft26', 'regionidcounty', 'poolsizesum', 'finishedsquarefeet13', 'basementsqft', 'architecturalstyletypeid')
+
 #all data transforms
 df$t_year = year(df$transactiondate)   #2016
 df$t_month = month(df$transactiondate) # very little in nov, dec
@@ -143,7 +145,7 @@ ggplot(df, aes(basementsqft, logerror )) + geom_point(size = 0.1 ) + geom_smooth
 ```{r gbm_all_model, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=FALSE}
 start_time <- proc.time()
 
-allvars =  unique(names(df) %!in_set% c(non_vars, fun_var))
+allvars =  unique(names(df) %!in_set% c(non_vars, nonsig_vars, fun_var))
 
 formula.all = formula (paste( fun_var, ' ~', paste(allvars, collapse = '+')) )
 
@@ -158,7 +160,7 @@ var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
 var.monotone[allvars %in% c()] =   1
 var.monotone[allvars %in% c()] =  -1
 
-max_it = 100*max_it_mult #64k is for s=0.001, 
+max_it = max_it_mult #64k is for s=0.001, 
 
 model.gbm_all = gbm(formula.all, 
                 data = df[, all.vars(formula.all)], 
@@ -166,7 +168,7 @@ model.gbm_all = gbm(formula.all,
                 n.trees = max_it,
                 shrinkage = 0.001, #0.001
                 bag.fraction = 0.8,
-                cv.folds = 5, #5
+                #cv.folds = 5, #5
                 interaction.depth = 5,#3
                 train.fraction = 1.0,
                 var.monotone = var.monotone,

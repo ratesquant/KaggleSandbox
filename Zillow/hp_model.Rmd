@@ -28,7 +28,6 @@ library(caret)
 library(randomForest)
 library(nnet)
 library(e1071)
-library(MASS)
 library(lubridate)
 
 library(knitr)
@@ -138,6 +137,7 @@ df      = mutate(df,      t_year = year(transactiondate), t_month =  month(trans
 df_test = mutate(df_test, t_year = year(transactiondate), t_month =  month(transactiondate), age = t_year - yearbuilt, taxdelinquency_age =  t_year - taxdelinquencyyear)
 
 rm(list = c('pinfo', 'property_info'))
+#rm(list = c('df_test'))
 
 # summary
 str(df[, names(df) %!in_set% non_vars])
@@ -351,7 +351,7 @@ df_out <- spread(select(df_out,-transactiondate), date, value)
 submit <- rename(df_out, ParcelId = parcelid)
 submit = submit[order(submit$ParcelId),]
 file = file.path(working_folder, "Zillow/submittion.csv")
-write.csv(submit[1:10,], file = file, row.names = FALSE, quote = FALSE)
+write.csv(submit, file = file, row.names = FALSE, quote = FALSE)
 zip(paste(file, '.zip', sep = ''), file, flags = "-9jX")
 print(file)
 

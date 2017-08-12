@@ -32,6 +32,7 @@ library(lubridate)
 
 library(knitr)
 library(foreach)
+library(car)
 
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -97,6 +98,7 @@ remove_vars = c('latitude', 'longitude', #should not be there
                 'taxamount',  # use % of taxvaluedollarcnt
                 'taxvaluedollarcnt', # use log
                 'lotsizesquarefeet', # use log
+                'calculatedfinishedsquarefeet', #use log
                 'landtaxvaluedollarcnt',# total - structure
                 'poolcnt', 'pooltypeid10', 'pooltypeid2', 'pooltypeid7', 
                 'buildingclasstypeid', #mostly na (only 16 values)
@@ -119,6 +121,7 @@ pinfo$structuretaxvaluedollarcnt_pct = pinfo$structuretaxvaluedollarcnt/pinfo$ta
 pinfo$taxamount_pct = pinfo$taxamount/pinfo$taxvaluedollarcnt
 pinfo$taxvaluedollarcnt_log = log(pinfo$taxvaluedollarcnt)
 pinfo$lotsizesquarefeet_log = log(pinfo$lotsizesquarefeet)
+pinfo$calculatedfinishedsquarefeet_log = log(pinfo$calculatedfinishedsquarefeet)
 pinfo$landtaxvaluedollarcnt_pct = pinfo$landtaxvaluedollarcnt/pinfo$taxvaluedollarcnt
 pinfo$taxamount_pct[pinfo$taxamount_pct > 1 & !is.na(pinfo$taxamount_pct)] = NA
 
@@ -160,11 +163,11 @@ summary(df[, cat_vars %!in_set% non_vars])
 ggplot(df, aes(logerror)) + stat_ecdf()
 
 #con variables
-ggplot(df, aes(taxamount_pct, logerror)) + geom_point(size = 0.1 ) + geom_smooth()
-ggplot(df, aes(taxvaluedollarcnt_log, logerror)) + geom_point(size = 0.1 ) + geom_smooth()
-ggplot(df, aes(df$finishedsquarefeet12, logerror )) + geom_point(size = 0.1 ) + geom_smooth()
-
-ggplot(df, aes(factor(t_month),logerror)) + geom_boxplot()
+#ggplot(df, aes(taxamount_pct, logerror)) + geom_point(size = 0.1 ) + geom_smooth()
+#ggplot(df, aes(taxvaluedollarcnt_log, logerror)) + geom_point(size = 0.1 ) + geom_smooth()
+#ggplot(df, aes(df$finishedsquarefeet12, logerror )) + geom_point(size = 0.1 ) + geom_smooth()
+#ggplot(df, aes(factor(t_month),logerror)) + geom_boxplot()
+#ggplot(df, aes(calculatedfinishedsquarefeet, logerror)) + geom_point(size = 0.1 ) + geom_smooth()
 
 #removed vars
 #ggplot(df, aes(factor(regionidcity),logerror)) + geom_boxplot()
@@ -186,40 +189,53 @@ ggplot(df, aes(factor(t_month),logerror)) + geom_boxplot()
 #agg = ddply(df, .(parcelid), function(x) data.frame(count = length(x$parcelid), avg = mean(x$logerror), std = sd(x$logerror) ))
 #filter(agg, count > 1)
 
+ggplot_missing_count(df)
+
 gc()
 ```
 
 
 ## GBM All
 cv(5) = 0.0257
-```{r gbm_all_model, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=FALSE}
+```{r gbm_all_model, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=TRUE}
 start_time <- proc.time()
 
 allvars =  unique(names(df) %!in_set% c(non_vars, nonsig_vars, fun_var))
 
 formula.all = formula (paste( fun_var, ' ~', paste(allvars, collapse = '+')) )
 
-corr_matrix = cor(df[,all.vars(formula.all) %in_set% names(which(sapply(df, is.numeric))) ], use="pairwise.complete.obs")
+num_vars = all.vars(formula.all) %in_set% names(which(sapply(df, is.numeric)))
+corr_matrix = cor(df[,num_vars ], use="pairwise.complete.obs")
 corrplot(corr_matrix, method="number", number.cex = 0.5, number.digits = 1)
 #corrplot(corr_matrix, method="circle", number.cex = 0.5, order="hclust")
+
+#variance inflation factors
+#names(which(sapply(df, function(x) sum(is.na(x)) > nrow(df)/2)))
+#sapply(df, function(x) length(levels(x)))
+#ldply(cat_vars, function(x) data.frame(name =x, levels = length(levels(df[,x]))) )
+
+model.lm = lm(formula (paste( fun_var, ' ~', paste(num_vars %!in_set% c(fun_var, names(which(sapply(df, function(x) sum(is.na(x)) > nrow(df)/2 )))), collapse = '+')) ), 
+              data = df, na.action = na.exclude)
+summary(model.lm)
+kable(data.frame(vif(model.lm)))
 
 print(formula.all)
 print(length(allvars))
 
 var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
-var.monotone[allvars %in% c('taxdelinquency_age')] =   1
-var.monotone[allvars %in% c('taxamount_pct')] =  -1
+#var.monotone[allvars %in% c('taxdelinquency_age')] =   1
+#var.monotone[allvars %in% c('taxamount_pct')] =  -1
 
 max_it = 20*max_it_mult #64k is for s=0.001, 
 
 model.gbm_all = gbm(formula.all, 
                 data = df[, all.vars(formula.all)], 
-                distribution = 'gaussian',
+                distribution = 'laplace', #absolute loss
                 n.trees = max_it,
                 shrinkage = 0.001, #0.001
                 bag.fraction = 0.8,
-                cv.folds = 3, #5
-                interaction.depth = 3,#3
+                cv.folds = 5, #5
+                interaction.depth = 4,#3
                 train.fraction = 1.0,
                 var.monotone = var.monotone,
                 n.cores = 4,
@@ -227,12 +243,18 @@ model.gbm_all = gbm(formula.all,
 
 model_file = file.path(working_folder,'Zillow/gbm_model.rds')
 saveRDS(model.gbm_all, model_file)
+#model.gbm_all = readRDS(model_file)
 
 #show best iteration
 best_it_all = gbm.perf(model.gbm_all, method = 'cv') 
 print(best_it_all)
 grid()
 pred.gbm_all = predict(model.gbm_all, n.trees = best_it_all, newdata = df)
+
+summary(lm(df[,fun_var] ~ pred.gbm_all))
+
+print(paste('Mean Absolute Error: ',  mean(abs(df[,fun_var]-pred.gbm_all))))
+
 
 plot_gbmiterations(model.gbm_all)
 
@@ -252,6 +274,11 @@ level2_interactions = filter(level2_interactions, interaction_score>0.05)
 plot_gbminteractions(level2_interactions)
 kable(level2_interactions)
 
+#level3_interactions = gbm_interactions(model.gbm_all,  df[, all.vars(formula.all)], iter = best_it_all, 5, 3)
+#level3_interactions = filter(level3_interactions, interaction_score>0.05)
+#plot_gbminteractions(level3_interactions)
+#kable(level3_interactions)
+
 plots = plot_gbmpartial(model.gbm_all, best_it_all, imp_vars, output_type = 'link')
 marrangeGrob(plots, nrow=3, ncol=3)
 
@@ -266,7 +293,9 @@ plots <- llply(names(df) %in_set% imp_vars, function(vname){
 marrangeGrob(plots, nrow=3, ncol=3)
 
 
-print((proc.time() - start_time)[3])
+elapsed = (proc.time() - start_time)[3]
+
+print( sprintf('elapsed: %s ( %0.1f sec | %.1f min | %.1f h)', seconds_to_period(elapsed), elapsed, elapsed/60, elapsed/(60*60)) )
 
 ```
 
@@ -276,8 +305,11 @@ print((proc.time() - start_time)[3])
 ```{r gbm_cv, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE, echo=TRUE}
 start_time <- proc.time()
 
-resvars =  unique(names(df) %!in_set% c(non_vars, fun_var))
-formula.res = formula (paste( fun_var, ' ~', paste(resvars, collapse = '+')) )
+res_var = 'residual'
+df[,res_var] = df[,fun_var] -  pred.gbm_all
+
+res.vars =  unique(names(df) %!in_set% c(non_vars, fun_var, res_var))
+formula.res = formula (paste( res_var, ' ~', paste(res.vars, collapse = '+')) )
 
 print(formula.res)
 print(length(resvars))
@@ -285,14 +317,13 @@ print(length(resvars))
 max_it = 10*max_it_mult #60k is for s=0.001, 
 
 model.gbm_res = gbm(formula.res, 
-                data = df[, res.vars(formula.res)], 
+                data = df[, all.vars(formula.res)], 
                 distribution = 'gaussian',
                 n.trees = max_it,
                 shrinkage = 0.001, #0.001
                 bag.fraction = 0.8,
-                interaction.depth = 2,
+                interaction.depth = 4,
                 train.fraction = 0.8,
-                var.monotone = var.monotone,
                 n.cores = 4,
                 verbose = FALSE)
 
@@ -301,6 +332,7 @@ best_it_res = max_it
 plot_gbmiterations(model.gbm_res)
 
 pred.gbm_res = predict(model.gbm_res, n.trees = best_it_res, newdata = df)
+
 
 #show importance
 vars.importance_res = summary(model.gbm_res, n.trees = best_it_res, plotit=FALSE) # influence
@@ -311,20 +343,20 @@ kable(vars.importance_res[vars.importance_res$rel.inf< inf_lowlimit,])
 imp_vars = as.character(vars.importance_res$var)[vars.importance_res$rel.inf>=inf_lowlimit]
 
 #plot interactions
-level2_interactions = gbm_interactions(model.gbm_res,  df[, all.vars(formula.res)], iter = best_it_res, 1, 2)
-level2_interactions = filter(level2_interactions, interaction_score>0.05)
-plot_gbminteractions(level2_interactions)
-kable(level2_interactions)
+#level2_interactions = gbm_interactions(model.gbm_res,  df[, all.vars(formula.res)], iter = best_it_res, 1, 2)
+#level2_interactions = filter(level2_interactions, interaction_score>0.05)
+#plot_gbminteractions(level2_interactions)
+#kable(level2_interactions)
 
 plots = plot_gbmpartial(model.gbm_res, best_it_res, imp_vars, output_type = 'link')
 marrangeGrob(plots, nrow=3, ncol=3)
 
-plots = plot_gbmpartial_2d(model.gbm_res, best_it_res, as.character(filter(level2_interactions, interaction_score>0.1)$vars), output_type = 'link')
-marrangeGrob(plots, nrow=2, ncol=2)
+#plots = plot_gbmpartial_2d(model.gbm_res, best_it_res, as.character(filter(level2_interactions, interaction_score>0.1)$vars), output_type = 'link')
+#marrangeGrob(plots, nrow=2, ncol=2)
 
 
 plots <- llply(names(df) %in_set% imp_vars, function(vname){
-  plot_result = plot_profile(pred.gbm_res, df[,fun_var], df[, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  plot_result = plot_profile(pred.gbm_res, df[,res_var], df[, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
   return (plot_result)
 })
 marrangeGrob(plots, nrow=3, ncol=3)
@@ -350,7 +382,7 @@ df_out <- spread(select(df_out,-transactiondate), date, value)
 ## print solution ---- 
 submit <- rename(df_out, ParcelId = parcelid)
 submit = submit[order(submit$ParcelId),]
-file = file.path(working_folder, "Zillow/submittion.csv")
+file = file.path(working_folder, "Zillow/submission.csv")
 write.csv(submit, file = file, row.names = FALSE, quote = FALSE)
 zip(paste(file, '.zip', sep = ''), file, flags = "-9jX")
 print(file)

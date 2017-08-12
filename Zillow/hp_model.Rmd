@@ -11,6 +11,7 @@ output:
 
 ```{r setup, include=FALSE}
 library(reshape2)
+library(tidyr)
 library(ggplot2)
 library(Hmisc)
 library(plyr)
@@ -81,34 +82,53 @@ if(file.exists(property_info_file)){
   saveRDS(property_info, property_info_file)
 }
 
+#create a test data set
+pred_dates = c(201610,201611,201612,201710,201711,201712)
+pred_dates_ex = as.Date(as.character(100*pred_dates + 1), '%Y%m%d')
+test = expand.grid(parcelid = property_info$parcelid, transactiondate = pred_dates_ex)
+
 train <- read.csv(file.path(working_folder,'Zillow/train_2016_v2.csv'), colClasses = c('integer', 'numeric', 'Date'))
-df  =  merge(train, property_info, by = 'parcelid', all.x = TRUE)
 
 fun_var = 'logerror'
+remove_vars = c('latitude', 'longitude', 'regionidcity', 'regionidneighborhood','regionidzip', 'censustractandblock',
+             'propertycountylandusecode', 'propertyzoningdesc', 'rawcensustractandblock', 
+             'assessmentyear', 'decktypeid', 'storytypeid',
+             'structuretaxvaluedollarcnt', 'taxamount', 'taxvaluedollarcnt', 'lotsizesquarefeet', 'landtaxvaluedollarcnt',
+             'poolcnt', 'pooltypeid10', 'pooltypeid2', 'pooltypeid7', 'buildingclasstypeid', 'typeconstructiontypeid')
+
 non_vars = c('parcelid', 'transactiondate', 'latitude', 'longitude', 'regionidcity', 'regionidneighborhood','regionidzip', 'censustractandblock',
              'propertycountylandusecode', 'propertyzoningdesc', 'rawcensustractandblock', 
              't_year', 'taxdelinquencyyear', 'assessmentyear', 'yearbuilt', 'decktypeid', 'storytypeid',
              'structuretaxvaluedollarcnt', 'taxamount', 'taxvaluedollarcnt', 'lotsizesquarefeet', 'landtaxvaluedollarcnt',
              'poolcnt', 'pooltypeid10', 'pooltypeid2', 'pooltypeid7', 'buildingclasstypeid', 'typeconstructiontypeid') #exclude sale_year and month
 
-nonsig_vars = c('fireplaceflag', 'yardbuildingsqft26', 'regionidcounty', 'poolsizesum', 'finishedsquarefeet13', 'basementsqft', 'architecturalstyletypeid')
+nonsig_vars = c('fireplaceflag', 'yardbuildingsqft26', 'regionidcounty', 'poolsizesum', 'finishedsquarefeet13', 'basementsqft', 
+                'architecturalstyletypeid', 'taxdelinquencyflag', 'yardbuildingsqft17')
 
 #all data transforms
-df$t_year = year(df$transactiondate)   #2016
-df$t_month = month(df$transactiondate) # very little in nov, dec
-df$age = df$t_year - df$yearbuilt
-df$taxdelinquency_age = df$t_year - df$taxdelinquencyyear
-df$structuretaxvaluedollarcnt_pct = df$structuretaxvaluedollarcnt/df$taxvaluedollarcnt
-df$taxamount_pct = df$taxamount/df$taxvaluedollarcnt
-df$taxvaluedollarcnt_log = log(df$taxvaluedollarcnt)
-df$lotsizesquarefeet_log = log(df$lotsizesquarefeet)
-df$landtaxvaluedollarcnt_pct = df$landtaxvaluedollarcnt/df$taxvaluedollarcnt
-df$taxamount_pct[df$taxamount_pct > 1 & !is.na(df$taxamount_pct)] = NA
+pinfo = property_info
 
-levels(df$taxdelinquencyflag) <- c('N', 'Y')
-levels(df$fireplaceflag) <-c('false', 'true')
-levels(df$hashottuborspa) <-c('false', 'true')
+pinfo$structuretaxvaluedollarcnt_pct = pinfo$structuretaxvaluedollarcnt/pinfo$taxvaluedollarcnt
+pinfo$taxamount_pct = pinfo$taxamount/pinfo$taxvaluedollarcnt
+pinfo$taxvaluedollarcnt_log = log(pinfo$taxvaluedollarcnt)
+pinfo$lotsizesquarefeet_log = log(pinfo$lotsizesquarefeet)
+pinfo$landtaxvaluedollarcnt_pct = pinfo$landtaxvaluedollarcnt/pinfo$taxvaluedollarcnt
+pinfo$taxamount_pct[pinfo$taxamount_pct > 1 & !is.na(pinfo$taxamount_pct)] = NA
 
+levels(pinfo$taxdelinquencyflag) <- c('N', 'Y')
+levels(pinfo$fireplaceflag) <-c('false', 'true')
+levels(pinfo$hashottuborspa) <-c('false', 'true')
+
+pinfo = pinfo[, c('parcelid', names(pinfo) %!in_set% remove_vars)]
+
+df       =  merge(train, pinfo, by = 'parcelid', all.x = TRUE)
+df_test  =  merge(test,  pinfo, by = 'parcelid', all.x = TRUE)
+
+df      = mutate(df,      t_year = year(transactiondate), t_month =  month(transactiondate), age = t_year - yearbuilt, taxdelinquency_age =  t_year - taxdelinquencyyear)
+df_test = mutate(df_test, t_year = year(transactiondate), t_month =  month(transactiondate), age = t_year - yearbuilt, taxdelinquency_age =  t_year - taxdelinquencyyear)
+
+
+# summary
 str(df[, names(df) %!in_set% non_vars])
 summary(df[, names(df) %!in_set% non_vars])
 
@@ -126,22 +146,17 @@ ldply(cat_vars, function(colname) {
 summary(df[, cat_vars %!in_set% non_vars])
 
 
-#create a test data set
-#pred_dates = c(201610,201611,201612,201710,201711,201712)
-#pred_dates_ex = as.Date(as.character(100*pred_dates + 1), '%Y%m%d')
-#test = expand.grid(parcelid = property_info$parcelid, transactiondate = pred_dates_ex)
-
-
 ggplot(df, aes(logerror)) + stat_ecdf()
-ggplot(df, aes(airconditioningtypeid, logerror)) + stat_boxplot()
+ggplot(df, aes(taxamount_pct, logerror)) + geom_point(size = 0.1 ) + geom_smooth()
 ggplot(df, aes(buildingclasstypeid, logerror)) + stat_boxplot()
 ggplot(df, aes(basementsqft, logerror )) + geom_point(size = 0.1 ) + geom_smooth()
 
-
+gc()
 ```
 
 
 ## GBM All
+cv(5) = 0.0257
 ```{r gbm_all_model, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=FALSE}
 start_time <- proc.time()
 
@@ -157,10 +172,10 @@ print(formula.all)
 print(length(allvars))
 
 var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
-var.monotone[allvars %in% c()] =   1
-var.monotone[allvars %in% c()] =  -1
+var.monotone[allvars %in% c('taxdelinquency_age')] =   1
+var.monotone[allvars %in% c('taxamount_pct')] =  -1
 
-max_it = max_it_mult #64k is for s=0.001, 
+max_it = 20*max_it_mult #64k is for s=0.001, 
 
 model.gbm_all = gbm(formula.all, 
                 data = df[, all.vars(formula.all)], 
@@ -168,8 +183,8 @@ model.gbm_all = gbm(formula.all,
                 n.trees = max_it,
                 shrinkage = 0.001, #0.001
                 bag.fraction = 0.8,
-                #cv.folds = 5, #5
-                interaction.depth = 5,#3
+                cv.folds = 5, #5
+                interaction.depth = 3,#3
                 train.fraction = 1.0,
                 var.monotone = var.monotone,
                 n.cores = 4,
@@ -194,12 +209,17 @@ imp_vars = as.character(vars.importance_all$var)[vars.importance_all$rel.inf>=in
 write.csv(vars.importance_all, file.path(working_folder,'Zillow/var.importance.all.csv'))
 
 #plot interactions
-#level2_interactions = gbm_interactions(model.gbm_all,  df[, all.vars(formula.all)], iter = best_it_all, 1, 2)
-#plot_gbminteractions(level2_interactions[level2_interactions$interaction_score>0.05,])
-#kable(level2_interactions[level2_interactions$interaction_score>0.05,])
+level2_interactions = gbm_interactions(model.gbm_all,  df[, all.vars(formula.all)], iter = best_it_all, 1, 2)
+level2_interactions = filter(level2_interactions, interaction_score>0.05)
+plot_gbminteractions(level2_interactions)
+kable(level2_interactions)
 
 plots = plot_gbmpartial(model.gbm_all, best_it_all, imp_vars, output_type = 'link')
 marrangeGrob(plots, nrow=3, ncol=3)
+
+plots = plot_gbmpartial_2d(model.gbm_all, best_it_all, as.character(filter(level2_interactions, interaction_score>0.1)$vars), output_type = 'link')
+marrangeGrob(plots, nrow=2, ncol=2)
+
 
 plots <- llply(names(df) %in_set% imp_vars, function(vname){
   plot_result = plot_profile(pred.gbm_all, df[,fun_var], df[, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
@@ -329,15 +349,20 @@ print((proc.time() - start_time)[3]/3600)
 ```{r res_print, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE, echo=TRUE}
 
 # Solution  ---- 
-predictions = predict(model.gbm_all, n.trees = best_it_all, newdata = property_info)
-predictions = rnorm(nrow(property_info))
-pred_dates
+predictions = predict(model.gbm_all, n.trees = best_it_all, newdata = df_test)
+
+predictions[is.na(predictions)] = 0
+
+df_out = mutate(select(df_test, parcelid, transactiondate), value = round(predictions,4) )
+df_out = mutate(df_out, date = 100*year(transactiondate) + month(transactiondate) )
+df_out <- spread(select(df_out,-transactiondate), date, value)
+
 
 ## print solution ---- 
-submit <- data.frame(parcelid = as.integer( as.numeric(property_info$parcelid) ), price_doc = predictions)
-submit = submit[order(submit$id),]
+submit <- rename(df_out, ParcelId = parcelid)
+submit = submit[order(submit$ParcelId),]
 file = file.path(working_folder, "Zillow/submittion.csv")
-write.csv(submit, file = file, row.names = FALSE)
+write.csv(submit[1:10,], file = file, row.names = FALSE, quote = FALSE)
 zip(paste(file, '.zip', sep = ''), file, flags = "-9jX")
 print(file)
 

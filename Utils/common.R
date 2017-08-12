@@ -91,7 +91,7 @@ plot_gbmiterations <- function(gbm_model) {
       geom_hline(yintercept = min_cv, color = 'red', alpha = 0.5, linetype = "dashed") + 
       geom_vline(xintercept = min_cv_it, color = 'red', alpha = 0.5)
       
-    plot_title = paste(plot_title, sprintf('cv-%d(%d)=%.4f ', gbm_model$cv.folds, min_cv_it, min_cv) )
+    plot_title = paste(plot_title, sprintf('cv-%d(%d)=%.5f ', gbm_model$cv.folds, min_cv_it, min_cv) )
   }
   
   #add out of bag
@@ -104,7 +104,7 @@ plot_gbmiterations <- function(gbm_model) {
       geom_hline(yintercept = min_oob, color = 'gray', alpha = 0.5, linetype = "dashed") + 
       geom_vline(xintercept = min_oob_it, color = 'gray', alpha = 0.5)
     
-    plot_title = paste(plot_title, sprintf('oob(%d) ', min_oob_it) )
+    plot_title = paste(plot_title, sprintf('oob(%d)=%.5f', min_oob_it, min_oob) )
   }
   
   #add validation
@@ -117,7 +117,7 @@ plot_gbmiterations <- function(gbm_model) {
       geom_hline(yintercept = min_val, color = 'blue', alpha = 0.5, linetype = "dashed") + 
       geom_vline(xintercept = min_val_it, color = 'blue', alpha = 0.5)
     
-    plot_title = paste(plot_title, sprintf('val(%d)=%.4f ', min_val_it, min_val) )
+    plot_title = paste(plot_title, sprintf('val(%d)=%.5f ', min_val_it, min_val) )
   }
   
   plot = plot + ggtitle(plot_title)

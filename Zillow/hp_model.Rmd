@@ -59,7 +59,6 @@ property_info_file = file.path(working_folder,'Zillow/properties_2016.rds')
 
 if(file.exists(property_info_file)){
   property_info = readRDS(property_info_file)
- 
 }else {
   property_info = read.csv(file.path(working_folder,'Zillow/properties_2016.csv') )
   
@@ -90,20 +89,29 @@ test = expand.grid(parcelid = property_info$parcelid, transactiondate = pred_dat
 train <- read.csv(file.path(working_folder,'Zillow/train_2016_v2.csv'), colClasses = c('integer', 'numeric', 'Date'))
 
 fun_var = 'logerror'
-remove_vars = c('latitude', 'longitude', 'regionidcity', 'regionidneighborhood','regionidzip', 'censustractandblock',
-             'propertycountylandusecode', 'propertyzoningdesc', 'rawcensustractandblock', 
-             'assessmentyear', 'decktypeid', 'storytypeid',
-             'structuretaxvaluedollarcnt', 'taxamount', 'taxvaluedollarcnt', 'lotsizesquarefeet', 'landtaxvaluedollarcnt',
-             'poolcnt', 'pooltypeid10', 'pooltypeid2', 'pooltypeid7', 'buildingclasstypeid', 'typeconstructiontypeid')
+remove_vars = c('latitude', 'longitude', #should not be there
+                'regionidcity', 'regionidneighborhood','regionidzip', 'censustractandblock',#too many levels
+                'propertycountylandusecode', 'propertyzoningdesc', 'rawcensustractandblock',  #too many levels
+                'assessmentyear',  #no variation
+                'decktypeid', 'storytypeid', #no variation
+                'structuretaxvaluedollarcnt', # use % of taxvaluedollarcnt
+                'taxamount',  # use % of taxvaluedollarcnt
+                'taxvaluedollarcnt', # use log
+                'lotsizesquarefeet', # use log
+                'landtaxvaluedollarcnt',# total - structure
+                'poolcnt', 'pooltypeid10', 'pooltypeid2', 'pooltypeid7', 
+                'buildingclasstypeid', #mostly na (only 16 values)
+                'typeconstructiontypeid')
 
-non_vars = c('parcelid', 'transactiondate', 'latitude', 'longitude', 'regionidcity', 'regionidneighborhood','regionidzip', 'censustractandblock',
-             'propertycountylandusecode', 'propertyzoningdesc', 'rawcensustractandblock', 
-             't_year', 'taxdelinquencyyear', 'assessmentyear', 'yearbuilt', 'decktypeid', 'storytypeid',
-             'structuretaxvaluedollarcnt', 'taxamount', 'taxvaluedollarcnt', 'lotsizesquarefeet', 'landtaxvaluedollarcnt',
-             'poolcnt', 'pooltypeid10', 'pooltypeid2', 'pooltypeid7', 'buildingclasstypeid', 'typeconstructiontypeid') #exclude sale_year and month
+non_vars = c(remove_vars, 'parcelid', 'transactiondate', 
+             't_year', #no variation
+             'taxdelinquencyyear', #replaced with age
+             'yearbuilt' #replaced with age
+             ) #exclude sale_year and month
 
-nonsig_vars = c('fireplaceflag', 'yardbuildingsqft26', 'regionidcounty', 'poolsizesum', 'finishedsquarefeet13', 'basementsqft', 
-                'architecturalstyletypeid', 'taxdelinquencyflag', 'yardbuildingsqft17')
+nonsig_vars = c('fireplaceflag', 'yardbuildingsqft26', 'regionidcounty', 'poolsizesum', 
+                'finishedsquarefeet12','finishedsquarefeet13', 'finishedsquarefeet6','finishedsquarefeet15', 'basementsqft', 
+                'architecturalstyletypeid', 'taxdelinquencyflag', 'yardbuildingsqft17', 'bathroomcnt', 'fullbathcnt', 'finishedfloor1squarefeet', 'structuretaxvaluedollarcnt_pct')
 
 #all data transforms
 pinfo = property_info
@@ -115,11 +123,13 @@ pinfo$lotsizesquarefeet_log = log(pinfo$lotsizesquarefeet)
 pinfo$landtaxvaluedollarcnt_pct = pinfo$landtaxvaluedollarcnt/pinfo$taxvaluedollarcnt
 pinfo$taxamount_pct[pinfo$taxamount_pct > 1 & !is.na(pinfo$taxamount_pct)] = NA
 
+pinfo$finishedsquarefeet50_diff = pinfo$finishedsquarefeet50 - pinfo$finishedfloor1squarefeet
+
 levels(pinfo$taxdelinquencyflag) <- c('N', 'Y')
 levels(pinfo$fireplaceflag) <-c('false', 'true')
 levels(pinfo$hashottuborspa) <-c('false', 'true')
 
-pinfo = pinfo[, c('parcelid', names(pinfo) %!in_set% remove_vars)]
+pinfo = pinfo[, c(names(pinfo) %!in_set% remove_vars)]
 
 df       =  merge(train, pinfo, by = 'parcelid', all.x = TRUE)
 df_test  =  merge(test,  pinfo, by = 'parcelid', all.x = TRUE)
@@ -127,6 +137,7 @@ df_test  =  merge(test,  pinfo, by = 'parcelid', all.x = TRUE)
 df      = mutate(df,      t_year = year(transactiondate), t_month =  month(transactiondate), age = t_year - yearbuilt, taxdelinquency_age =  t_year - taxdelinquencyyear)
 df_test = mutate(df_test, t_year = year(transactiondate), t_month =  month(transactiondate), age = t_year - yearbuilt, taxdelinquency_age =  t_year - taxdelinquencyyear)
 
+rm(list = c('pinfo', 'property_info'))
 
 # summary
 str(df[, names(df) %!in_set% non_vars])
@@ -147,9 +158,33 @@ summary(df[, cat_vars %!in_set% non_vars])
 
 
 ggplot(df, aes(logerror)) + stat_ecdf()
+
+#con variables
 ggplot(df, aes(taxamount_pct, logerror)) + geom_point(size = 0.1 ) + geom_smooth()
-ggplot(df, aes(buildingclasstypeid, logerror)) + stat_boxplot()
-ggplot(df, aes(basementsqft, logerror )) + geom_point(size = 0.1 ) + geom_smooth()
+ggplot(df, aes(taxvaluedollarcnt_log, logerror)) + geom_point(size = 0.1 ) + geom_smooth()
+ggplot(df, aes(df$finishedsquarefeet12, logerror )) + geom_point(size = 0.1 ) + geom_smooth()
+
+ggplot(df, aes(factor(t_month),logerror)) + geom_boxplot()
+
+#removed vars
+#ggplot(df, aes(factor(regionidcity),logerror)) + geom_boxplot()
+#ggplot(df, aes(factor(regionidneighborhood),logerror)) + geom_boxplot()
+#ggplot(df, aes(factor(regionidzip),logerror)) + geom_boxplot()
+#ggplot(df, aes(factor(propertycountylandusecode),logerror)) + geom_boxplot()
+#ggplot(df, aes(factor(propertyzoningdesc),logerror)) + geom_boxplot()
+#ggplot(df, aes(factor(rawcensustractandblock),logerror)) + geom_boxplot()
+#ggplot(df, aes(factor(storytypeid),logerror)) + geom_boxplot()
+#ggplot(df, aes(logerror, group = factor(typeconstructiontypeid), color = factor(typeconstructiontypeid))) + geom_density()
+#ggplot(df, aes(factor(t_year),logerror)) + geom_boxplot()
+#ggplot(df, aes(taxamount,taxvaluedollarcnt)) + geom_point(size = 0.1 ) + geom_smooth()
+#ggplot(df, aes(censustractandblock,logerror)) + geom_point(size = 0.1 ) + geom_smooth()
+#ggplot(df, aes(longitude,logerror)) + geom_point(size = 0.1 ) + geom_smooth()
+
+#ggplot(df, aes(architecturalstyletypeid,logerror)) + geom_point(size = 0.1 ) + geom_smooth()
+#ggplot(df, aes(factor(regionidcounty),logerror)) + geom_boxplot()
+
+#agg = ddply(df, .(parcelid), function(x) data.frame(count = length(x$parcelid), avg = mean(x$logerror), std = sd(x$logerror) ))
+#filter(agg, count > 1)
 
 gc()
 ```
@@ -183,12 +218,15 @@ model.gbm_all = gbm(formula.all,
                 n.trees = max_it,
                 shrinkage = 0.001, #0.001
                 bag.fraction = 0.8,
-                cv.folds = 5, #5
+                cv.folds = 3, #5
                 interaction.depth = 3,#3
                 train.fraction = 1.0,
                 var.monotone = var.monotone,
                 n.cores = 4,
                 verbose = FALSE)
+
+model_file = file.path(working_folder,'Zillow/gbm_model.rds')
+saveRDS(model.gbm_all, model_file)
 
 #show best iteration
 best_it_all = gbm.perf(model.gbm_all, method = 'cv') 
@@ -233,109 +271,60 @@ print((proc.time() - start_time)[3])
 ```
 
 
-## GBM CV
+## GBM Residual
 
 ```{r gbm_cv, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE, echo=TRUE}
 start_time <- proc.time()
 
-cv_folds = 0
+resvars =  unique(names(df) %!in_set% c(non_vars, fun_var))
+formula.res = formula (paste( fun_var, ' ~', paste(resvars, collapse = '+')) )
 
-allvars =  unique(c(sig_vars, 'cluster_group') %!in_set% c(non_vars, 'sub_area'))
-#allvars =  unique(c(sig_vars) %!in_set% c(non_vars, 'sub_area'))
+print(formula.res)
+print(length(resvars))
 
-formula.all = formula (paste( 'price_log ~', paste(allvars, collapse = '+')) )
+max_it = 10*max_it_mult #60k is for s=0.001, 
 
-corr_matrix = cor(df[,all.vars(formula.all) %in_set% names(which(sapply(df, is.numeric))) ], use="complete.obs")
-corrplot(corr_matrix, method="number", number.cex = 0.5, number.digits = 1)
-corrplot(corr_matrix, method="circle", number.cex = 0.5, order="hclust")
-
-print(formula.all)
-print(length(allvars))
-
-var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
-var.monotone[allvars %in% c('full_sq','cafe_count_5000', 'usdrub', 'state', 'num_room')] = 1
-var.monotone[allvars %in% c('metro_min_walk','metro_min_avto', 'fitness_km')] = -1
-#var.monotone[allvars %in% c('full_sq','full_sq_log', 'num_room','state', 'usdrub','eurrub', 'kitch_sq', 'mosque_km', 'life_sq', 'cafe_count_5000', 'ppi')] =  1
-#var.monotone[allvars %in% c('metro_min_walk', 'metro_min_avto', 'fitness_km', 'sadovoe_km', 'public_healthcare_km', 'green_zone_km', 'kindergarten_km', 'workplaces_km', 'hospice_morgue_km', 'additional_education_km', 'office_sqm_1500_log')] =  -1
-
-max_it = 60*max_it_mult #60k is for s=0.001, 
-
-model.gbm_cv = gbm(formula.all, 
-                data = df[train_index, all.vars(formula.all)], 
+model.gbm_res = gbm(formula.res, 
+                data = df[, res.vars(formula.res)], 
                 distribution = 'gaussian',
                 n.trees = max_it,
                 shrinkage = 0.001, #0.001
                 bag.fraction = 0.8,
-                interaction.depth = 2,#3
-                cv.folds = cv_folds, #5
-                train.fraction = 1.0,
+                interaction.depth = 2,
+                train.fraction = 0.8,
                 var.monotone = var.monotone,
                 n.cores = 4,
                 verbose = FALSE)
 
-if(cv_folds == 0){
-  #show best iteration
-  best_it_cv = max_it
-}else{
-  best_it_cv = gbm.perf(model.gbm_cv, method = 'cv') 
-  print(best_it_cv)
-  grid()
-}
+best_it_res = max_it
 
-plot_gbmiterations(model.gbm_cv)
+plot_gbmiterations(model.gbm_res)
 
-pred.gbm_cv = exp(predict(model.gbm_cv, n.trees = best_it_cv, newdata = df)) - 1.0
-
-#plot interactions
-level2_interactions = gbm_interactions(model.gbm_cv,  df[train_index, all.vars(formula.all)], iter = best_it_cv, 1, 2)
-plot_gbminteractions(level2_interactions[level2_interactions$interaction_score>0.05,])
-kable(level2_interactions[level2_interactions$interaction_score>0.05,])
+pred.gbm_res = predict(model.gbm_res, n.trees = best_it_res, newdata = df)
 
 #show importance
-vars.importance_cv = summary(model.gbm_cv, n.trees = best_it_cv, plotit=FALSE) # influence
-plot_gbminfluence(vars.importance_cv[vars.importance_cv$rel.inf>inf_lowlimit,])
-kable(vars.importance_cv[vars.importance_cv$rel.inf>=inf_lowlimit,])
-kable(vars.importance_cv[vars.importance_cv$rel.inf<inf_lowlimit,])
+vars.importance_res = summary(model.gbm_res, n.trees = best_it_res, plotit=FALSE) # influence
+plot_gbminfluence(vars.importance_res[vars.importance_res$rel.inf>=inf_lowlimit,])
+kable(vars.importance_res[vars.importance_res$rel.inf>=inf_lowlimit,])
+kable(vars.importance_res[vars.importance_res$rel.inf< inf_lowlimit,])
 
-write.csv(vars.importance_cv, file.path(working_folder,'SberbankHousing/var.importance.csv'))
+imp_vars = as.character(vars.importance_res$var)[vars.importance_res$rel.inf>=inf_lowlimit]
 
-imp_vars = as.character(vars.importance_cv$var)[vars.importance_cv$rel.inf>=.1]
+#plot interactions
+level2_interactions = gbm_interactions(model.gbm_res,  df[, all.vars(formula.res)], iter = best_it_res, 1, 2)
+level2_interactions = filter(level2_interactions, interaction_score>0.05)
+plot_gbminteractions(level2_interactions)
+kable(level2_interactions)
 
-#partial dependence
-plots = plot_gbmpartial(model.gbm_cv, best_it_cv, imp_vars, output_type = 'link')
+plots = plot_gbmpartial(model.gbm_res, best_it_res, imp_vars, output_type = 'link')
 marrangeGrob(plots, nrow=3, ncol=3)
 
-plots = plot_gbmpartial_2d(model.gbm_cv, best_it_cv, as.character(level2_interactions$vars[level2_interactions$interaction_score>0.1]), output_type = 'link')
+plots = plot_gbmpartial_2d(model.gbm_res, best_it_res, as.character(filter(level2_interactions, interaction_score>0.1)$vars), output_type = 'link')
 marrangeGrob(plots, nrow=2, ncol=2)
 
-#profiles (norm) with respect to model vars
-for(vname in c('sub_area', 'full_sq', 'sale_time') ){
-  print(plot_profile(log(pred.gbm_cv[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 20, min_obs = 10, error_band ='normal') + ggtitle(vname))
-}
-plots <- llply(imp_vars %in_set% names(df), function(vname){
-  plot_result = plot_profile(log(pred.gbm_cv[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
-  return (plot_result)
-})
-marrangeGrob(plots, nrow=3, ncol=3)
 
-names(which(sapply(df, is.factor)))
-      
-#profiles with respect to categorical variables
-residual_vars = names(which(sapply(df, is.factor))) %!in_set% c(non_vars, all.vars(formula.all))
-plots <- llply(residual_vars %in_set% names(df), function(vname){
-  plot_result = plot_profile(log(pred.gbm_cv[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
-  return (plot_result)
-})
-marrangeGrob(plots, nrow=3, ncol=3)
-
-residual_con_vars = names(which(sapply(df, is.numeric))) %!in_set% c(non_vars, all.vars(formula.all))
-residual = df$price_log - log(pred.gbm_cv + 1)
-
-var_cor = ldply(residual_con_vars, function(vname) data.frame(name = vname, cor = cor(residual[train_index], df[train_index,vname], use="complete.obs")))
-var_cor = head(var_cor[order(abs(var_cor$cor), decreasing = TRUE),], 4*9)
-#profiles with respect to con variables
-plots <- llply(as.character(var_cor$name) %in_set% names(df), function(vname){
-  plot_result = plot_profile(log(pred.gbm_cv[train_index]+1), log(df$price_doc[train_index]+1), df[train_index, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+plots <- llply(names(df) %in_set% imp_vars, function(vname){
+  plot_result = plot_profile(pred.gbm_res, df[,fun_var], df[, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
   return (plot_result)
 })
 marrangeGrob(plots, nrow=3, ncol=3)
@@ -346,7 +335,7 @@ print((proc.time() - start_time)[3]/3600)
 
 
 ## Summary
-```{r res_print, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE, echo=TRUE}
+```{r res_print, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=TRUE}
 
 # Solution  ---- 
 predictions = predict(model.gbm_all, n.trees = best_it_all, newdata = df_test)

@@ -275,6 +275,24 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
   return (plot_result)
 }
   
+#plot missing values
+ggplot_missing <- function(x){
+  mx = melt(is.na(x))
+  ggplot(mx, aes(Var2, Var1)) + geom_raster(aes(fill = value)) +
+    theme(axis.text.x  = element_text(angle=90, vjust=0.5)) + 
+    scale_fill_grey(name = "", labels = c("Valid","NA")) +
+    labs(x = "Variable name",   y = "Rows") + 
+    ggtitle (paste('total number of missing values:',  sum(mx$value)))
+}
+
+#plot number of missing values
+ggplot_missing_count <- function(x){
+  mc = adply(is.na(x), 2, sum)
+  names(mc) <- c('name', 'value')
+  ggplot(mc, aes(name, value)) + geom_bar(stat = "identity") +
+    theme(axis.text.x  = element_text(angle=90, vjust=0.5)) + 
+    labs(x = "Variable name",   y = "Missing Variables")
+}
 
 write.xclip <- function(x, selection=c("primary", "secondary", "clipboard"), ...) {
   if (!isTRUE(file.exists(Sys.which("xclip")[1L])))  stop("Cannot find xclip")

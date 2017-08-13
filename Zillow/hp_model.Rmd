@@ -113,7 +113,8 @@ non_vars = c(remove_vars, 'parcelid', 'transactiondate',
 
 nonsig_vars = c('fireplaceflag', 'yardbuildingsqft26', 'regionidcounty', 'poolsizesum', 
                 'finishedsquarefeet12','finishedsquarefeet13', 'finishedsquarefeet6','finishedsquarefeet15', 'basementsqft', 
-                'architecturalstyletypeid', 'taxdelinquencyflag', 'yardbuildingsqft17', 'bathroomcnt', 'fullbathcnt', 'finishedfloor1squarefeet', 'structuretaxvaluedollarcnt_pct')
+                'architecturalstyletypeid', 'taxdelinquencyflag', 'yardbuildingsqft17', 'bathroomcnt', 'fullbathcnt', 'finishedfloor1squarefeet', 'structuretaxvaluedollarcnt_pct',
+                	'threequarterbathnbr', 	'finishedsquarefeet50_diff', 'fips') #almost no splits (inf < 0.1)
 
 #all data transforms
 pinfo = property_info
@@ -137,8 +138,8 @@ pinfo = pinfo[, c(names(pinfo) %!in_set% remove_vars)]
 df       =  merge(train, pinfo, by = 'parcelid', all.x = TRUE)
 df_test  =  merge(test,  pinfo, by = 'parcelid', all.x = TRUE)
 
-df      = mutate(df,      t_year = year(transactiondate), t_month =  month(transactiondate), age = t_year - yearbuilt, taxdelinquency_age =  t_year - taxdelinquencyyear)
-df_test = mutate(df_test, t_year = year(transactiondate), t_month =  month(transactiondate), age = t_year - yearbuilt, taxdelinquency_age =  t_year - taxdelinquencyyear)
+df      = mutate(df,      t_year = year(transactiondate), t_month =  month(transactiondate),t_day =  pmin(30, day(transactiondate)), age = t_year - yearbuilt, taxdelinquency_age =  t_year - taxdelinquencyyear)
+df_test = mutate(df_test, t_year = year(transactiondate), t_month =  month(transactiondate),t_day =  pmin(30, day(transactiondate)), age = t_year - yearbuilt, taxdelinquency_age =  t_year - taxdelinquencyyear)
 
 rm(list = c('pinfo', 'property_info'))
 #rm(list = c('df_test'))
@@ -184,8 +185,8 @@ ggplot(df, aes(logerror)) + stat_ecdf()
 #ggplot(df, aes(censustractandblock,logerror)) + geom_point(size = 0.1 ) + geom_smooth()
 #ggplot(df, aes(longitude,logerror)) + geom_point(size = 0.1 ) + geom_smooth()
 
-#ggplot(df, aes(architecturalstyletypeid,logerror)) + geom_point(size = 0.1 ) + geom_smooth()
-#ggplot(df, aes(factor(regionidcounty),logerror)) + geom_boxplot()
+#ggplot(df, aes(t_day,logerror)) + geom_point(size = 0.1 ) + geom_smooth()
+#ggplot(df, aes(factor(threequarterbathnbr),logerror)) + geom_boxplot()
 
 #agg = ddply(df, .(parcelid), function(x) data.frame(count = length(x$parcelid), avg = mean(x$logerror), std = sd(x$logerror) ))
 #filter(agg, count > 1)
@@ -195,6 +196,14 @@ ggplot_missing_count(df)
 gc()
 ```
 
+## Random Forest
+```{r rf_model, fig.width = 8, fig.height = 6, dpi = 150, eval = FALSE, echo=TRUE}
+
+model_rf <- foreach(ntree=rep(250, 4), .combine=combine, .multicombine=TRUE, .packages='randomForest') %dopar%
+    randomForest(x = as.matrix(x.train), y = y.train, ntree=ntree, mtry = floor(ncol(x.train)/3))
+
+prediction_rf <- predict(model_rf, x.test)
+```
 
 ## GBM All
 cv(5) = 0.0257
@@ -227,7 +236,7 @@ var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
 #var.monotone[allvars %in% c('taxdelinquency_age')] =   1
 #var.monotone[allvars %in% c('taxamount_pct')] =  -1
 
-max_it = 30*max_it_mult #64k is for s=0.001, 
+max_it = 60*max_it_mult #64k is for s=0.001, 
 
 model.gbm_all = gbm(formula.all, 
                 data = df[, all.vars(formula.all)], 
@@ -285,11 +294,20 @@ write.csv(vars.importance_all, file.path(working_folder,'Zillow/var.importance.a
 plots = plot_gbm3partial(model.gbm_all, best_it_all, imp_vars, output_type = 'link')
 marrangeGrob(plots, nrow=3, ncol=3)
 
+plots = plot_gbm3partial(model.gbm_all, best_it_all, all.vars(formula.all) %!in_set% c(fun_var, imp_vars), output_type = 'link')
+marrangeGrob(plots, nrow=3, ncol=3)
+
 #plots = plot_gbmpartial_2d(model.gbm_all, best_it_all, as.character(filter(level2_interactions, interaction_score>0.1)$vars), output_type = 'link')
 #marrangeGrob(plots, nrow=2, ncol=2)
 
 
 plots <- llply(names(df) %in_set% imp_vars, function(vname){
+  plot_result = plot_profile(pred.gbm_all, df[,fun_var], df[, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  return (plot_result)
+})
+marrangeGrob(plots, nrow=3, ncol=3)
+
+plots <- llply(names(df) %!in_set% imp_vars, function(vname){
   plot_result = plot_profile(pred.gbm_all, df[,fun_var], df[, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
   return (plot_result)
 })

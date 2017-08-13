@@ -19,7 +19,8 @@ library(dplyr)
 library(gridExtra)
 library(corrplot)
 
-library(gbm)
+#library(gbm)
+library(gbm3) # new version of gbm package
 #library(np)
 library(earth) 
 library(rpart)
@@ -226,19 +227,20 @@ var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
 #var.monotone[allvars %in% c('taxdelinquency_age')] =   1
 #var.monotone[allvars %in% c('taxamount_pct')] =  -1
 
-max_it = 20*max_it_mult #64k is for s=0.001, 
+max_it = 30*max_it_mult #64k is for s=0.001, 
 
 model.gbm_all = gbm(formula.all, 
                 data = df[, all.vars(formula.all)], 
-                distribution = 'laplace', #absolute loss
+                distribution = 'laplace', #absolute loss - but laplace has memory leak
                 n.trees = max_it,
                 shrinkage = 0.001, #0.001
                 bag.fraction = 0.8,
-                cv.folds = 5, #5
+                cv.folds = 3, #5
                 interaction.depth = 4,#3
                 train.fraction = 1.0,
                 var.monotone = var.monotone,
-                n.cores = 4,
+                par.details=gbmParallel(num_threads=4),
+                #n.cores = 4,
                 verbose = FALSE)
 
 model_file = file.path(working_folder,'Zillow/gbm_model.rds')
@@ -247,6 +249,7 @@ saveRDS(model.gbm_all, model_file)
 
 #show best iteration
 best_it_all = gbm.perf(model.gbm_all, method = 'cv') 
+#best_it_all = max_it
 print(best_it_all)
 grid()
 pred.gbm_all = predict(model.gbm_all, n.trees = best_it_all, newdata = df)
@@ -255,11 +258,11 @@ summary(lm(df[,fun_var] ~ pred.gbm_all))
 
 print(paste('Mean Absolute Error: ',  mean(abs(df[,fun_var]-pred.gbm_all))))
 
-
 plot_gbmiterations(model.gbm_all)
 
 #show importance
-vars.importance_all = summary(model.gbm_all, n.trees = best_it_all, plotit=FALSE) # influence
+vars.importance_all = summary(model.gbm_all, num_trees = best_it_all, plot_it=FALSE) # influence
+if(is.null(vars.importance_all$rel.inf)) vars.importance_all$rel.inf = vars.importance_all$rel_inf
 plot_gbminfluence(vars.importance_all[vars.importance_all$rel.inf>=inf_lowlimit,])
 kable(vars.importance_all[vars.importance_all$rel.inf>=inf_lowlimit,])
 kable(vars.importance_all[vars.importance_all$rel.inf< inf_lowlimit,])
@@ -269,21 +272,21 @@ imp_vars = as.character(vars.importance_all$var)[vars.importance_all$rel.inf>=in
 write.csv(vars.importance_all, file.path(working_folder,'Zillow/var.importance.all.csv'))
 
 #plot interactions
-level2_interactions = gbm_interactions(model.gbm_all,  df[, all.vars(formula.all)], iter = best_it_all, 1, 2)
-level2_interactions = filter(level2_interactions, interaction_score>0.05)
-plot_gbminteractions(level2_interactions)
-kable(level2_interactions)
+#level2_interactions = gbm3_interactions(model.gbm_all,  df[, all.vars(formula.all)], iter = best_it_all, 1, 2)
+#level2_interactions = filter(level2_interactions, interaction_score>0.05)
+#plot_gbminteractions(level2_interactions)
+#kable(level2_interactions)
 
 #level3_interactions = gbm_interactions(model.gbm_all,  df[, all.vars(formula.all)], iter = best_it_all, 5, 3)
 #level3_interactions = filter(level3_interactions, interaction_score>0.05)
 #plot_gbminteractions(level3_interactions)
 #kable(level3_interactions)
 
-plots = plot_gbmpartial(model.gbm_all, best_it_all, imp_vars, output_type = 'link')
+plots = plot_gbm3partial(model.gbm_all, best_it_all, imp_vars, output_type = 'link')
 marrangeGrob(plots, nrow=3, ncol=3)
 
-plots = plot_gbmpartial_2d(model.gbm_all, best_it_all, as.character(filter(level2_interactions, interaction_score>0.1)$vars), output_type = 'link')
-marrangeGrob(plots, nrow=2, ncol=2)
+#plots = plot_gbmpartial_2d(model.gbm_all, best_it_all, as.character(filter(level2_interactions, interaction_score>0.1)$vars), output_type = 'link')
+#marrangeGrob(plots, nrow=2, ncol=2)
 
 
 plots <- llply(names(df) %in_set% imp_vars, function(vname){
@@ -292,11 +295,9 @@ plots <- llply(names(df) %in_set% imp_vars, function(vname){
 })
 marrangeGrob(plots, nrow=3, ncol=3)
 
-
 elapsed = (proc.time() - start_time)[3]
-
 print( sprintf('elapsed: %s ( %0.1f sec | %.1f min | %.1f h)', seconds_to_period(elapsed), elapsed, elapsed/60, elapsed/(60*60)) )
-
+gc()
 ```
 
 
@@ -336,6 +337,7 @@ pred.gbm_res = predict(model.gbm_res, n.trees = best_it_res, newdata = df)
 
 #show importance
 vars.importance_res = summary(model.gbm_res, n.trees = best_it_res, plotit=FALSE) # influence
+if(is.null(vars.importance_all$rel.inf)) vars.importance_all$rel.inf = vars.importance_all$rel_inf
 plot_gbminfluence(vars.importance_res[vars.importance_res$rel.inf>=inf_lowlimit,])
 kable(vars.importance_res[vars.importance_res$rel.inf>=inf_lowlimit,])
 kable(vars.importance_res[vars.importance_res$rel.inf< inf_lowlimit,])
@@ -368,16 +370,20 @@ print((proc.time() - start_time)[3]/3600)
 
 ## Summary
 ```{r res_print, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=TRUE}
+start_time <- proc.time()
 
 # Solution  ---- 
 predictions = predict(model.gbm_all, n.trees = best_it_all, newdata = df_test)
 
 predictions[is.na(predictions)] = 0
 
+ggplot(data.frame(predictions), aes(predictions)) + stat_ecdf()
+
+summary(predictions)
+
 df_out = mutate(select(df_test, parcelid, transactiondate), value = round(predictions,4) )
 df_out = mutate(df_out, date = 100*year(transactiondate) + month(transactiondate) )
 df_out <- spread(select(df_out,-transactiondate), date, value)
-
 
 ## print solution ---- 
 submit <- rename(df_out, ParcelId = parcelid)
@@ -386,5 +392,8 @@ file = file.path(working_folder, "Zillow/submission.csv")
 write.csv(submit, file = file, row.names = FALSE, quote = FALSE)
 zip(paste(file, '.zip', sep = ''), file, flags = "-9jX")
 print(file)
+
+elapsed = (proc.time() - start_time)[3]
+print( sprintf('elapsed: %s ( %0.1f sec | %.1f min | %.1f h)', seconds_to_period(elapsed), elapsed, elapsed/60, elapsed/(60*60)) )
 
 ```

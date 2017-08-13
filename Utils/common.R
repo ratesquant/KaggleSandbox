@@ -77,7 +77,7 @@ plot_gbmiterations <- function(gbm_model) {
   
   plot_title = ''
   
-  iteration = seq(gbm_model$n.trees)
+  iteration = seq(length(gbm_model$train.error))
   
   plot = ggplot(data.frame(iteration, train_error = gbm_model$train.error), aes(iteration, train_error) ) + geom_line() 
   
@@ -92,6 +92,19 @@ plot_gbmiterations <- function(gbm_model) {
       geom_vline(xintercept = min_cv_it, color = 'red', alpha = 0.5)
       
     plot_title = paste(plot_title, sprintf('cv-%d(%d)=%.5f ', gbm_model$cv.folds, min_cv_it, min_cv) )
+  }
+  
+  #add cv (new gbm3 variable names)
+  if(!is.null(gbm_model$cv_error) & !all(is.na(gbm_model$cv_error)) ){
+    
+    min_cv = min(gbm_model$cv_error, na.rm = T)
+    min_cv_it = min(which(gbm_model$cv_error == min_cv))
+    
+    plot = plot + geom_line(data = data.frame(iteration, cv_error = gbm_model$cv_error), aes(iteration, cv_error), color = 'red' ) +
+      geom_hline(yintercept = min_cv, color = 'red', alpha = 0.5, linetype = "dashed") + 
+      geom_vline(xintercept = min_cv_it, color = 'red', alpha = 0.5)
+    
+    plot_title = paste(plot_title, sprintf('cv-%d(%d)=%.5f ', gbm_model$cv_folds, min_cv_it, min_cv) )
   }
   
   #add out of bag

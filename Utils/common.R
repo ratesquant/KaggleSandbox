@@ -48,11 +48,25 @@ cor.mtest <- function(mat, conf.level = 0.95){
 ## GBM plotting functions ----------
 
 gbm_interactions <- function(gbm_model, data, iter, min_influence = 1, degree = 2){
-  gbm_summary = summary(gbm_model, plotit=FALSE)
+  gbm_summary = summary(gbm_model, n.trees = iter, plotit=FALSE)
   vars = gbm_summary$var[gbm_summary$rel.inf > min_influence]
   all_combinations = combn(as.character(vars), degree, simplify = TRUE)
   df = ldply(seq(dim(all_combinations)[2]), function(i) {
     interaction_score = try( interact.gbm(gbm_model, data, all_combinations[,i], n.trees = iter))
+    if(!is.numeric(interaction_score)) 
+      interaction_score = NA
+    data.frame(vars = paste(all_combinations[,i], collapse = '|'), interaction_score = interaction_score)
+  })
+  return ( df[order(df$interaction_score, decreasing = TRUE),] )
+}
+
+#special version for gbm3
+gbm3_interactions <- function(gbm_model, data, iter, min_influence = 1, degree = 2){
+  gbm_summary = summary(gbm_model, num_trees = iter, plot_it=FALSE)
+  vars = gbm_summary$var[gbm_summary$rel_inf > min_influence]
+  all_combinations = combn(as.character(vars), degree, simplify = TRUE)
+  df = ldply(seq(dim(all_combinations)[2]), function(i) {
+    interaction_score = try( interact(gbm_model, data, all_combinations[,i], num_trees = iter))
     if(!is.numeric(interaction_score)) 
       interaction_score = NA
     data.frame(vars = paste(all_combinations[,i], collapse = '|'), interaction_score = interaction_score)
@@ -170,6 +184,39 @@ plot_gbmpartial <- function(gbm_model, iter, variables, resolution = 100, output
   })
   return (plots)
 }
+
+plot_gbm3partial <- function(gbm_model, iter, variables, resolution = 100, output_type = 'response', add_rug = TRUE, max_run_points = 1024){
+  plots <- llply(variables, function(vname){
+    plot_data = plot(gbm_model, var_index = vname, num_trees = iter, type = output_type, continuous_resolution = resolution, return_grid = TRUE)
+    names(plot_data) <- c('x', 'y')
+    
+    plot_result <- ggplot() + geom_blank() 
+    
+    if(is.factor(plot_data$x)){
+      plot_result = ggplot(plot_data, aes(reorder(x, y), y, group = 1)) + geom_line(color = 'black', size = 1) +
+        theme(legend.position = 'none', axis.text.x = element_text(angle = 90, hjust = 1), axis.title.y = element_blank(), axis.title.x = element_blank()) + ggtitle(vname)
+    }else{
+      plot_result = ggplot(plot_data, aes(x, y)) + geom_line(color = 'black', size = 1) +
+        theme(legend.position = 'none', axis.title.y = element_blank(), axis.title.x = element_blank()) + ggtitle(vname)
+      
+      if(add_rug){
+        vname_index = match(vname, gbm_model$variables$var_names)
+        size_per_var = length(gbm_model$gbm_data_obj$x) / length(gbm_model$variables$var_names)
+        xdata = gbm_model$gbm_data_obj$x[1:size_per_var + (vname_index - 1) * size_per_var]
+        
+        rug_index = sample.int(size_per_var, min(max_run_points, size_per_var))
+        
+        plot_result = plot_result + 
+          geom_rug(data = data.frame(x = xdata[rug_index]), aes(x), sides = 'b', alpha = 0.2, size = 0.2, inherit.aes = FALSE) +
+          geom_rug(data = data.frame(x = quantile(xdata, seq(0, 1, by = 0.25), names = FALSE, na.rm = TRUE)), aes(x), sides = 'b', alpha = 0.8, size = 0.5, inherit.aes = FALSE, color = 'red')
+        
+      }
+    }
+    return (plot_result)
+  })
+  return (plots)
+}
+
 
 plot_gbmpartial_2d <- function(gbm_model, iter, variables, resolution = 100, output_type = 'response', add_rug = TRUE, max_run_points = 1024){
   plots <- llply(variables, function(vname){

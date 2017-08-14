@@ -188,7 +188,7 @@ ggplot(df, aes(logerror)) + stat_ecdf()
 #ggplot(df, aes(t_day,logerror)) + geom_point(size = 0.1 ) + geom_smooth()
 #ggplot(df, aes(factor(propertylandusetypeid),logerror)) + geom_boxplot()
 #ggplot(df, aes(factor(propertylandusetypeid),logerror)) + geom_bar(position = "dodge", stat = "summary", fun.y = "mean")
-#ggplot(data.frame(propertylandusetypeid=df$propertylandusetypeid, res = df$logerror - pred.gbm_all), aes(factor(propertylandusetypeid),res)) + geom_bar(position = "dodge", stat = "summary", fun.y = "mean")
+#ggplot(data.frame(airconditioningtypeid=df$airconditioningtypeid, res = df$logerror - pred.gbm_all), aes(factor(airconditioningtypeid),res)) + geom_bar(position = "dodge", stat = "summary", fun.y = "mean")
 
 #ggplot(df, aes(factor(propertylandusetypeid))) + geom_bar(stat="count")
 #ggplot(df_test, aes(factor(propertylandusetypeid))) + geom_bar(stat="count")
@@ -202,10 +202,16 @@ ggplot(df, aes(logerror)) + stat_ecdf()
 
 #table(df$propertylandusetypeid) #combine 47 -> 31, 264 & 270 (townhouse) -> 260 (general)
 #table(df$buildingqualitytypeid)
+#table(df$heatingorsystemtypeid)
 
 #31, 260, 263, 267 and 275 - have fewer that 100 observations 
 combine_heatingorsystemtypeid<- function(x) {
   x[x %in% c('10','11','12','14','19', '21' )] = '14' #other
+  return(factor(x))
+}
+
+combine_airconditioningtypeid<- function(x) {
+  x[x %in% c('3','9','12')] = NA #too few observations
   return(factor(x))
 }
 
@@ -220,6 +226,9 @@ df_test$propertylandusetypeid = combine_propertytype_id(df_test$propertylanduset
 
 df$heatingorsystemtypeid = combine_heatingorsystemtypeid(df$heatingorsystemtypeid)
 df_test$heatingorsystemtypeid = combine_heatingorsystemtypeid(df_test$heatingorsystemtypeid)
+
+df$airconditioningtypeid = combine_airconditioningtypeid(df$airconditioningtypeid)
+df_test$airconditioningtypeid = combine_airconditioningtypeid(df_test$airconditioningtypeid)
 
 
 ggplot_missing_count(df)

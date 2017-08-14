@@ -64,7 +64,7 @@ if(file.exists(property_info_file)){
   property_info = read.csv(file.path(working_folder,'Zillow/properties_2016.csv') )
   
   convert_to_factors = c('airconditioningtypeid', 'architecturalstyletypeid', 
-                         'buildingclasstypeid', 'buildingqualitytypeid', 'decktypeid', 
+                         'buildingclasstypeid', 'decktypeid', 
                          'fips', #area code
                          'heatingorsystemtypeid','propertylandusetypeid','storytypeid','typeconstructiontypeid',
                          'regionidcity', 'regionidcounty', 'regionidneighborhood','regionidzip', 'censustractandblock'
@@ -138,8 +138,8 @@ pinfo = pinfo[, c(names(pinfo) %!in_set% remove_vars)]
 df       =  merge(train, pinfo, by = 'parcelid', all.x = TRUE)
 df_test  =  merge(test,  pinfo, by = 'parcelid', all.x = TRUE)
 
-df      = mutate(df,      t_year = year(transactiondate), t_month =  month(transactiondate),t_day =  pmin(30, day(transactiondate)), age = t_year - yearbuilt, taxdelinquency_age =  t_year - taxdelinquencyyear)
-df_test = mutate(df_test, t_year = year(transactiondate), t_month =  month(transactiondate),t_day =  pmin(30, day(transactiondate)), age = t_year - yearbuilt, taxdelinquency_age =  t_year - taxdelinquencyyear)
+df      = mutate(df,      t_year = year(transactiondate), t_month =  month(transactiondate),age = t_year - yearbuilt, taxdelinquency_age =  t_year - taxdelinquencyyear)
+df_test = mutate(df_test, t_year = year(transactiondate), t_month =  month(transactiondate), age = t_year - yearbuilt, taxdelinquency_age =  t_year - taxdelinquencyyear)
 
 rm(list = c('pinfo', 'property_info'))
 #rm(list = c('df_test'))
@@ -186,10 +186,41 @@ ggplot(df, aes(logerror)) + stat_ecdf()
 #ggplot(df, aes(longitude,logerror)) + geom_point(size = 0.1 ) + geom_smooth()
 
 #ggplot(df, aes(t_day,logerror)) + geom_point(size = 0.1 ) + geom_smooth()
-#ggplot(df, aes(factor(threequarterbathnbr),logerror)) + geom_boxplot()
+#ggplot(df, aes(factor(propertylandusetypeid),logerror)) + geom_boxplot()
+#ggplot(df, aes(factor(propertylandusetypeid),logerror)) + geom_bar(position = "dodge", stat = "summary", fun.y = "mean")
+#ggplot(data.frame(propertylandusetypeid=df$propertylandusetypeid, res = df$logerror - pred.gbm_all), aes(factor(propertylandusetypeid),res)) + geom_bar(position = "dodge", stat = "summary", fun.y = "mean")
+
+#ggplot(df, aes(factor(propertylandusetypeid))) + geom_bar(stat="count")
+#ggplot(df_test, aes(factor(propertylandusetypeid))) + geom_bar(stat="count")
+
+#ggplot(df, aes(factor(heatingorsystemtypeid))) + geom_bar(stat="count")
+#ggplot(df_test, aes(factor(heatingorsystemtypeid))) + geom_bar(stat="count")
+
 
 #agg = ddply(df, .(parcelid), function(x) data.frame(count = length(x$parcelid), avg = mean(x$logerror), std = sd(x$logerror) ))
 #filter(agg, count > 1)
+
+#table(df$propertylandusetypeid) #combine 47 -> 31, 264 & 270 (townhouse) -> 260 (general)
+#table(df$buildingqualitytypeid)
+
+#31, 260, 263, 267 and 275 - have fewer that 100 observations 
+combine_heatingorsystemtypeid<- function(x) {
+  x[x %in% c('10','11','12','14','19', '21' )] = '14' #other
+  return(factor(x))
+}
+
+combine_propertytype_id <- function(x) {
+  x[x == '47'] = '31'
+  x[x == '264' | x == '270'] = '260'
+  return(factor(x))
+}
+
+df$propertylandusetypeid = combine_propertytype_id(df$propertylandusetypeid)
+df_test$propertylandusetypeid = combine_propertytype_id(df_test$propertylandusetypeid)
+
+df$heatingorsystemtypeid = combine_heatingorsystemtypeid(df$heatingorsystemtypeid)
+df_test$heatingorsystemtypeid = combine_heatingorsystemtypeid(df_test$heatingorsystemtypeid)
+
 
 ggplot_missing_count(df)
 
@@ -206,7 +237,6 @@ prediction_rf <- predict(model_rf, x.test)
 ```
 
 ## GBM All
-cv(5) = 0.0257
 ```{r gbm_all_model, fig.width = 8, fig.height = 6, dpi = 150, eval = TRUE, echo=TRUE}
 start_time <- proc.time()
 
@@ -300,13 +330,14 @@ marrangeGrob(plots, nrow=3, ncol=3)
 #plots = plot_gbmpartial_2d(model.gbm_all, best_it_all, as.character(filter(level2_interactions, interaction_score>0.1)$vars), output_type = 'link')
 #marrangeGrob(plots, nrow=2, ncol=2)
 
-
-plots <- llply(names(df) %in_set% imp_vars, function(vname){
+#plot important var profiles
+plots <- llply(imp_vars %in_set% names(df), function(vname){
   plot_result = plot_profile(pred.gbm_all, df[,fun_var], df[, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
   return (plot_result)
 })
 marrangeGrob(plots, nrow=3, ncol=3)
 
+#plot all others
 plots <- llply(names(df) %!in_set% imp_vars, function(vname){
   plot_result = plot_profile(pred.gbm_all, df[,fun_var], df[, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
   return (plot_result)

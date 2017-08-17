@@ -90,7 +90,7 @@ test = expand.grid(parcelid = property_info$parcelid, transactiondate = pred_dat
 train <- read.csv(file.path(working_folder,'Zillow/train_2016_v2.csv'), colClasses = c('integer', 'numeric', 'Date'))
 
 fun_var = 'logerror'
-remove_vars = c('latitude', 'longitude', #should not be there
+remove_vars = c(#'latitude', 'longitude', #should not be there
                 'regionidcity', 'regionidneighborhood','regionidzip', 'censustractandblock',#too many levels
                 'propertycountylandusecode', 'propertyzoningdesc', 'rawcensustractandblock',  #too many levels
                 'assessmentyear',  #no variation
@@ -113,8 +113,8 @@ non_vars = c(remove_vars, 'parcelid', 'transactiondate',
 
 nonsig_vars = c('fireplaceflag', 'yardbuildingsqft26', 'regionidcounty', 'poolsizesum', 
                 'finishedsquarefeet12','finishedsquarefeet13', 'finishedsquarefeet6','finishedsquarefeet15', 'basementsqft', 
-                'architecturalstyletypeid', 'taxdelinquencyflag', 'yardbuildingsqft17', 'bathroomcnt', 'fullbathcnt', 'finishedfloor1squarefeet', 'structuretaxvaluedollarcnt_pct',
-                	'threequarterbathnbr', 	'finishedsquarefeet50_diff', 'fips') #almost no splits (inf < 0.1)
+                'architecturalstyletypeid', 'taxdelinquencyflag', 'yardbuildingsqft17', 'bathroomcnt', 'fullbathcnt', 'finishedfloor1squarefeet', 'structuretaxvaluedollarcnt_pct'
+                 ) #almost no splits (inf < 0.1)
 
 #all data transforms
 pinfo = property_info
@@ -275,16 +275,16 @@ var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
 #var.monotone[allvars %in% c('taxdelinquency_age')] =   1
 #var.monotone[allvars %in% c('taxamount_pct')] =  -1
 
-max_it = 60*max_it_mult #64k is for s=0.001, 
+max_it = 40*max_it_mult #64k is for s=0.001, 
 
 model.gbm_all = gbm(formula.all, 
                 data = df[, all.vars(formula.all)], 
                 distribution = 'laplace', #absolute loss - but laplace has memory leak
                 n.trees = max_it,
-                shrinkage = 0.001, #0.001
-                bag.fraction = 0.8,
+                shrinkage = 0.002, #0.001
+                bag.fraction = 0.7,
                 cv.folds = 3, #5
-                interaction.depth = 4,#3
+                interaction.depth = 3,#3
                 train.fraction = 1.0,
                 var.monotone = var.monotone,
                 par.details=gbmParallel(num_threads=4),
@@ -296,8 +296,8 @@ saveRDS(model.gbm_all, model_file)
 #model.gbm_all = readRDS(model_file)
 
 #show best iteration
-best_it_all = gbm.perf(model.gbm_all, method = 'cv') 
-#best_it_all = max_it
+#best_it_all = gbm.perf(model.gbm_all, method = 'cv') 
+best_it_all = max_it
 print(best_it_all)
 grid()
 pred.gbm_all = predict(model.gbm_all, n.trees = best_it_all, newdata = df)
@@ -336,19 +336,22 @@ marrangeGrob(plots, nrow=3, ncol=3)
 plots = plot_gbm3partial(model.gbm_all, best_it_all, all.vars(formula.all) %!in_set% c(fun_var, imp_vars), output_type = 'link')
 marrangeGrob(plots, nrow=3, ncol=3)
 
+#plots = plot_gbmpartial_2d(model.gbm_all, best_it_all, c('airconditioningtypeid|bedroomcnt'), output_type = 'link')
+#marrangeGrob(plots, nrow=2, ncol=2)
+
 #plots = plot_gbmpartial_2d(model.gbm_all, best_it_all, as.character(filter(level2_interactions, interaction_score>0.1)$vars), output_type = 'link')
 #marrangeGrob(plots, nrow=2, ncol=2)
 
 #plot important var profiles
 plots <- llply(imp_vars %in_set% names(df), function(vname){
-  plot_result = plot_profile(pred.gbm_all, df[,fun_var], df[, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  plot_result = plot_profile(pred.gbm_all, df[,fun_var], df[, vname], bucket_count = 10, min_obs = 10, error_band ='none', average_value = 'median') + ggtitle(vname)
   return (plot_result)
 })
 marrangeGrob(plots, nrow=3, ncol=3)
 
 #plot all others
 plots <- llply(names(df) %!in_set% imp_vars, function(vname){
-  plot_result = plot_profile(pred.gbm_all, df[,fun_var], df[, vname], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  plot_result = plot_profile(pred.gbm_all, df[,fun_var], df[, vname], bucket_count = 10, min_obs = 10, error_band ='none', average_value = 'median') + ggtitle(vname)
   return (plot_result)
 })
 marrangeGrob(plots, nrow=3, ncol=3)
@@ -381,7 +384,7 @@ model.gbm_res = gbm(formula.res,
                 n.trees = max_it,
                 shrinkage = 0.001, #0.001
                 bag.fraction = 0.8,
-                interaction.depth = 4,
+                interaction.depth = 3,
                 train.fraction = 0.8,
                 n.cores = 4,
                 verbose = FALSE)

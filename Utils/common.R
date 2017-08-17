@@ -251,7 +251,7 @@ plot_gbmpartial_2d <- function(gbm_model, iter, variables, resolution = 100, out
   return (plots)
 }
 
-plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, error_band = c('normal', 'binom'), conf_level = 0.95){
+plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, error_band = c('normal', 'binom'), average_value = c('mean', 'median'), conf_level = 0.95){
   plot_result = ggplot() + geom_blank()
   
   factor_plot = FALSE
@@ -275,8 +275,14 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
   
   res = ddply(data.frame(buckets = buckets[index], actual = act[index], model = mod[index], profile = profile[index]), .(buckets), function(x) {
     ns = length(x$actual)
-    model_mean = mean(x$model)
-    actual_mean = mean(x$actual)
+    
+    if(average_value == 'mean'){
+      model_mean = mean(x$model)
+      actual_mean = mean(x$actual)
+    }else{
+      model_mean = median(x$model)
+      actual_mean = median(x$actual)
+    }
     actual_std = sd(x$actual)
     
     if(error_band == 'binom' & ns >= 1 )

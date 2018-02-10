@@ -371,3 +371,114 @@ write.xclip <- function(x, selection=c("primary", "secondary", "clipboard"), ...
 write.clipboard <- function(x, ...){
   write.xclip(x, "clipboard", ...)
 }
+
+
+#do all diagnostic plots
+plot_binmodel_predictions<-function(actual, model){
+  p1 = plot_binmodel_percentiles(actual, model, 10)
+  p2 = plot_binmodel_cdf(actual, model)
+  p3 = plot_binmodel_roc(actual, model)
+  p4 = plot_binmodel_density(actual, model)
+  grid.arrange(p1, p2, p3, p4, ncol=2)
+}
+
+#plot ROC curve
+plot_binmodel_roc<-function(actual, model){
+  dt = 0.01
+  thresholds = seq(0, 1, by = dt)
+  res = ldply(thresholds, .id = "threshold", function(x) {
+    cm = confusion_matrix(actual, model, x)
+    tp = cm$true_pos/cm$pos
+    fp = cm$false_pos/cm$neg
+    ccr = cm$ccr
+    data.frame(threshold = x, tp, fp, ccr)
+  })
+  
+  fp05 = res$fp[abs(res$threshold - 0.5)<dt][1]
+  
+  auc = trapez_rule_integration(res$fp, res$tp)
+  
+  ggplot(res, aes(fp, tp, color = threshold )) +  
+    geom_point(size = 1) + 
+    geom_line(size = 0.5)  + xlim(0, 1) + ylim(0, 1) +
+    geom_point(aes(fp, ccr), size = 1) + 
+    geom_abline(slope = 1, intercept = 0, colour = 'red', linetype = 2) +
+    geom_vline(xintercept  = fp05, colour = 'blue', linetype = 2) +
+  labs(x = "false positive",   y = "true positive") +
+  ggtitle(paste('auc:', round(auc, 6) ))
+}
+
+#plot density of predictions 
+plot_binmodel_density<-function(actual, model){
+  ggplot(data.frame(actual, model), aes(model, fill = factor(actual)))  + 
+    geom_histogram(binwidth = 0.1, bins = 10, boundary = 0) +
+    xlim(0, 1) +  scale_fill_manual(values = c('black', 'red'))
+}
+  
+#plot cdf of predictions
+plot_binmodel_cdf<-function(actual, model){
+  m1 = sort(model[actual == 1])
+  m0 = sort(model[actual == 0])
+
+  #estimate difference between cdf
+  xc = seq(0, 1, 0.01)
+  q1 = ecdf(m1)(xc)
+  q0 = ecdf(m0)(xc)
+  ks = 100 * max(abs(q1 - q0), na.rm = T)
+  
+  res1 = data.frame(p = m1, q = seq(0, 1, length.out = length(m1)), outcome = 'actual = 1')
+  res2 = data.frame(p = m0, q = seq(0, 1, length.out = length(m0)), outcome = 'actual = 0')
+  
+  res = rbind(res1, res2)
+  
+  ggplot(res, aes(p, q, group = outcome, color = outcome)) + 
+  geom_line(size = 1) + xlim(0, 1) + ylim(0, 1) +
+  ggtitle(paste('ks:', round(ks, 6) ))+
+  scale_color_manual(values = c('red', 'black')) +
+  labs(x = "probability",   y = "fraction")
+}
+ 
+#percentile plot, model vs average actuals  
+plot_binmodel_percentiles<-function(actual, model, n = 10, equal_count_buckets = FALSE){
+  xb = seq(0, n, 1) / n
+ 
+  if(equal_count_buckets){
+      xb =  unique(quantile(model, probs = xb, names = FALSE))
+  }
+  bucket = cut(model, xb, ordered_result = TRUE, include.lowest = TRUE)
+  
+  agg_buckets <- function(x) {
+    
+    n = length(x$actual)
+    avg_model = mean(x$model)
+    n_act = sum(x$actual)
+    conf_int = c(NA, NA)
+    
+    if(n>3){
+      conf_int = binom.test(n_act, n, p = avg_model, alternative = 'two.sided')$conf.int
+    }
+    
+    data.table(
+      avg_actual = n_act/n, 
+      avg_model = avg_model,
+      count = n,
+      ub = conf_int[1],
+      lb = conf_int[2]
+      )
+  }
+ 
+  df = data.table(actual, model, bucket)
+  res = df[!is.na(actual),agg_buckets(.SD), by = .(bucket)]
+ 
+  p = ggplot(res, aes(avg_model, avg_actual)) + 
+    geom_point() +  
+    geom_errorbar(aes(ymax = ub, ymin=lb), width=0) + 
+    geom_abline(slope = 1, intercept = 0, colour = 'red', linetype = 2) +
+    labs(x = "model",   y = "actual")
+  
+  if(equal_count_buckets){
+    p = p + scale_x_continuous(breaks = seq(0, 1, 0.1), limits = c(0,1)) +
+            scale_y_continuous(breaks = seq(0, 1, 0.1), limits = c(0,1))
+  }
+  return( p )
+}

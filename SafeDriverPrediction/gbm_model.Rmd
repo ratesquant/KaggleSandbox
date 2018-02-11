@@ -1,0 +1,154 @@
+---
+title: "Porto Seguro’s Safe Driver Prediction"
+author: "Alex"
+date: "February 11, 2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 6, dpi = 240)
+
+library(gbm)
+library(data.table)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+
+working_folder = 'C:/Dev/Kaggle/'
+
+source(file.path(working_folder, '/Utils/common.R'))
+
+
+```
+
+## Data
+
+```{r data}
+
+load_data <- function(working_folder){
+  
+  data_file = file.path(working_folder,'SafeDriverPrediction/data/all_data.rds')
+
+  if(file.exists(data_file)){
+    df = readRDS(data_file)
+  }else {
+    df_train = fread(file.path(working_folder,'SafeDriverPrediction/data/train.csv') )
+    df_test  = fread(file.path(working_folder,'SafeDriverPrediction/data/test.csv') )
+    
+    df_test[, target:=NA]
+    
+    df = rbind(df_test, df_train)
+    
+    #repalce -1 with NA
+    for (c_name in names(df)) {
+      set(df,which(df[[c_name]]==-1),c_name,NA)
+    }
+    
+    #convert to factors
+    cat_vars = names(df)[grepl('_cat',names(df))]
+    df[, (cat_vars):=lapply(.SD, as.factor), .SDcols = cat_vars]
+  
+    
+    saveRDS(df, data_file)
+  }
+   return (df)
+}
+
+df = load_data(working_folder)
+
+head(df)
+
+test_index = is.na(df$target)
+train_index = !is.na(df$target)
+
+results = list()
+```
+
+## Data View
+
+```{r data_view}
+obj_var = 'target'
+#var source: ind, reg, car, calc
+#var types: bin, cat
+
+c_names = names(df)
+cat_vars = c_names[grepl('_cat',c_names)]
+
+df_train = df[train_index,]
+
+sapply(df, levels)
+
+#plot cat var counts
+plots = llply(cat_vars, function(var_name) {
+ p = ggplot(df_train, aes_string(var_name)) + geom_bar()  +
+    ggtitle(var_name)
+ return( p )
+})
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+
+ggplot(df_train, aes(ps_car_11_cat)) + geom_bar()# a lot of levels
+
+```
+
+## GBM Model: All vars
+
+```{r gbm_model1}
+
+all_vars = names(df) %!in_set% c('id', 'target')
+
+set.seed(101)
+
+formula.gbm = formula(stri_join( 'target ~ ', stri_join(all_vars,collapse = ' + ')))
+
+model_vars = all.vars(formula.gbm) %!in_set% c('target')
+var.monotone = rep(0, length(model_vars))
+var.monotone[model_vars %in% c('')]  = -1
+var.monotone[model_vars %in% c('')]  =  1
+
+model.gbm  = gbm(formula.gbm,
+                 distribution = "bernoulli",
+                 n.trees = 1000,
+                 cv.folds = 5,
+                 shrinkage = 0.001,
+                 interaction.depth=3,
+                 train.fraction = 1.0,
+                 bag.fraction = 0.7,
+                 n.cores = 2,
+                 var.monotone = var.monotone,
+                 data = df[train_index,all.vars(formula.gbm), with = F])
+
+
+#roc.default(response = test$Class, predictor = gbm.test, plot = TRUE,     col = "red")
+
+#save solution
+res = df$target
+res[is.na(res)] = 0.5
+
+results$gbm1 = res
+
+```
+
+## Output File
+
+```{r output}
+
+for (model_name in names(results) ){
+  submit <- data.table(id = df$id[test_index], 
+                       target = results[[model_name]][test_index])
+  
+  submit = submit[order(submit$id),]
+  
+  file = file.path(working_folder, sprintf("SafeDriverPrediction/my_solution_%s.csv", model_name))
+  
+  fwrite(submit, file = file, row.names = FALSE)
+  
+  #utils::zip(paste(file, '.zip', sep = ''), file, flags = "-r9X")
+  zip(paste(file, '.zip', sep = ''), file)
+  
+  print(file)
+}
+```
+

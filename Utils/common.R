@@ -50,7 +50,9 @@ cor.mtest <- function(mat, conf.level = 0.95){
 gbm_interactions <- function(gbm_model, data, iter, min_influence = 1, degree = 2){
   gbm_summary = summary(gbm_model, n.trees = iter, plotit=FALSE)
   vars = gbm_summary$var[gbm_summary$rel.inf > min_influence]
+  
   all_combinations = combn(as.character(vars), degree, simplify = TRUE)
+  
   df = ldply(seq(dim(all_combinations)[2]), function(i) {
     interaction_score = try( interact.gbm(gbm_model, data, all_combinations[,i], n.trees = iter))
     if(!is.numeric(interaction_score)) 
@@ -308,7 +310,7 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
     }
     actual_std = sd(x$actual)
     
-    if(error_band == 'binom' & ns >= 1 )
+    if(error_band == 'binom' & ns >= 2 )
     {
       conf_int = binom.test(sum(x$actual!=0), ns, p = model_mean, alternative = 'two.sided', conf.level = conf_level)$conf.int
     }else if(error_band == 'normal' & ns >= 2 & actual_std > 1e-12 ){
@@ -343,8 +345,11 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
       res$buckets = factor(res$buckets)
       xlabels = levels(res$buckets)
       
-      plot_result = ggplot(res, aes(buckets, actual, group = 1)) + geom_point(color = 'black') + geom_line(color = 'black', size = 1) +
-        geom_point(aes(buckets, model), color = 'red') + geom_line(aes(buckets, model), color = 'red', size = 1) +
+      plot_result = ggplot(res, aes(buckets, actual, group = 1)) + 
+        geom_point(color = 'black') + 
+        geom_line(color = 'black', size = 1) +
+        #geom_point(aes(buckets, model), color = 'red') + 
+        geom_line(aes(buckets, model), color = 'red', size = 1) +
         ylab('actual (bk) vs model (rd)') + theme(legend.position = 'none', axis.title.x = element_blank(), axis.text.x = element_text(angle = 90, hjust = 1)) +
         scale_x_discrete(breaks = xlabels) +
         geom_ribbon(aes(ymax = actual_max, ymin = actual_min), fill = 'blue', alpha = 0.05) +
@@ -352,8 +357,11 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
         coord_cartesian(ylim = c(y_min, y_max)) 
       
     }else{
-      plot_result = ggplot(res, aes(profile, actual)) + geom_point(color = 'black') + geom_line(color = 'black', size = 1) +
-        geom_point(aes(profile, model), color = 'red') + geom_line(aes(profile, model), color = 'red', size = 1) +
+      plot_result = ggplot(res, aes(profile, actual)) + 
+        geom_point(color = 'black') + 
+        geom_line(color = 'black', size = 1) +
+        #geom_point(aes(profile, model), color = 'red') + 
+        geom_line(aes(profile, model), color = 'red', size = 1) +
         ylab('actual (bk) vs model (rd)') + theme(legend.position = 'none', axis.title.x = element_blank()) + 
         geom_ribbon(aes(ymax = actual_max, ymin = actual_min), fill = 'blue', alpha = 0.05) +
         geom_errorbar(aes(ymax = actual_max_break, ymin = actual_min_break), width = 0.0, color = 'blue', alpha = 0.3) +
@@ -398,9 +406,9 @@ write.clipboard <- function(x, ...){
 ## Binomial plot functions ----- 
 #do all diagnostic plots
 plot_binmodel_predictions<-function(actual, model){
-  p1 = plot_binmodel_percentiles(actual, model, 10)
+  p1 = plot_binmodel_roc(actual, model)
   p2 = plot_binmodel_cdf(actual, model)
-  p3 = plot_binmodel_roc(actual, model)
+  p3 = plot_binmodel_percentiles(actual, model, 10)
   p4 = plot_binmodel_density(actual, model)
   grid.arrange(p1, p2, p3, p4, ncol=2)
 }
@@ -524,8 +532,8 @@ plot_binmodel_percentiles<-function(actual, model, n = 10, equal_count_buckets =
  
   p = ggplot(res, aes(avg_model, avg_actual)) + 
     geom_point() +  
-    geom_line(color = 'gray') +  
-    geom_errorbar(aes(ymax = ub, ymin=lb), width=0) + 
+    geom_line(color = 'gray',alpha = 0.6) +  
+    geom_errorbar(aes(ymax = ub, ymin=lb), width=0, alpha = 0.6) + 
     geom_abline(slope = 1, intercept = 0, colour = 'red', linetype = 2) +
     geom_point(data = res[pvalue < 0.5 * (1.0- conf)], aes(avg_model, avg_actual), color = 'red') +
     labs(x = "model",   y = "actual") + 
@@ -537,4 +545,23 @@ plot_binmodel_percentiles<-function(actual, model, n = 10, equal_count_buckets =
             scale_y_continuous(breaks = seq(0, 1, 0.2), limits = c(0,1))
   }
   return( p )
+}
+
+beta_conf <- function(mean, n, conf_int = 0.95){
+    
+    alpha = mean * (n) #add 2 for uniform priors
+    beta = (1 - mean) * (n) #add 2 for uniform priors
+    
+    ci_lo = qbeta((1 - conf_int)/2, alpha, beta)
+    ci_up = qbeta((1 + conf_int)/2, alpha, beta)
+    
+    return( c(ci_lo, ci_up) )
+}
+
+t_conf <- function(mean, sigma, n, conf_int = 0.95){
+
+  ci_lo = mean + sigma * qt((1 - conf_int)/2, df = n - 1)/sqrt(n)
+  ci_up = mean + sigma * qt((1 + conf_int)/2, df = n - 1)/sqrt(n)
+  
+  return( c(ci_lo, ci_up) )
 }

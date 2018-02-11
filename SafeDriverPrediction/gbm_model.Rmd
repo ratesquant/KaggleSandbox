@@ -97,11 +97,14 @@ ggplot(df_train, aes(ps_car_11_cat)) + geom_bar()# a lot of levels
 
 ```{r gbm_model1}
 
+actual = as.numeric(df$target)
+
 all_vars = names(df) %!in_set% c('id', 'target')
+exclude_vars = c('ps_car_11_cat')
 
 set.seed(101)
 
-formula.gbm = formula(stri_join( 'target ~ ', stri_join(all_vars,collapse = ' + ')))
+formula.gbm = formula(stri_join( 'target ~ ', stri_join(all_vars %!in_set% exclude_vars,collapse = ' + ')))
 
 model_vars = all.vars(formula.gbm) %!in_set% c('target')
 var.monotone = rep(0, length(model_vars))
@@ -110,26 +113,50 @@ var.monotone[model_vars %in% c('')]  =  1
 
 model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
-                 n.trees = 1000,
-                 cv.folds = 5,
-                 shrinkage = 0.001,
+                 n.trees = 5000,
+                 cv.folds = 0,
+                 shrinkage = 0.01,
                  interaction.depth=3,
-                 train.fraction = 1.0,
+                 train.fraction = 0.7,
                  bag.fraction = 0.7,
                  n.cores = 2,
                  var.monotone = var.monotone,
-                 data = df[train_index,all.vars(formula.gbm), with = F])
+                 data = df[train_index,all.vars(formula.gbm), with = F],
+                 verbose = TRUE)
 
+plot_gbmiterations(model.gbm)
+best_it.gbm = gbm.perf(model.gbm, plot.it = F)
 
+pred.gbm = predict(model.gbm, n.trees = best_it.gbm, newdata = df, type = 'response')
+
+var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
+plot_gbminfluence(var_inf)
+#plot_binmodel_predictions(actual[train_index], pred.gbm[train_index])
+
+plot_binmodel_roc(actual[train_index], pred.gbm[train_index])
+
+plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var[var_inf$rel.inf>1.0]), output_type = 'response')
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+
+plots = llply(all_vars, function(var_name) {
+  p = plot_profile(pred.gbm[train_index], actual[train_index],df[[var_name]][train_index], error_band = 'binom') +
+    ggtitle(var_name)
+  return( p )
+})
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 #roc.default(response = test$Class, predictor = gbm.test, plot = TRUE,     col = "red")
 
 #save solution
-res = df$target
-res[is.na(res)] = 0.5
-
-results$gbm1 = res
+results$gbm1 = pred.gbm
 
 ```
+
+## GBM Model: Subset of vars
+
+```{r gbm_model2}
+
+```
+
 
 ## Output File
 

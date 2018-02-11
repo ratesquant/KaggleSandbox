@@ -106,3 +106,12 @@ marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
 plot_gbmpartial_2d(model.gbm, best_it.gbm, 'Age|Pclass', output_type = 'response')
 plot_gbmpartial_2d(model.gbm, best_it.gbm, 'Age|Sex', output_type = 'response')
 
+plot_profile(pred.gbm, actual,df$Age, error_band = 'binom')
+plot_profile(pred.gbm, actual,df$Pclass, error_band = 'binom')
+
+plots = llply(names(df) %!in_set% c('Survived','Ticket', 'Name', 'Cabin'), function(var_name) {
+  p = plot_profile(pred.gbm, actual,df[[var_name]], error_band = 'binom') +
+    ggtitle(var_name)
+  return( p )
+})
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)

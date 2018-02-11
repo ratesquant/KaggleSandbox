@@ -8,11 +8,12 @@ editor_options:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 6, dpi = 120)
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 6, dpi = 60)
 
 library(data.table)
 library(plyr)
 library(ggplot2)
+library(grid)
 library(gridExtra)
 library(wesanderson)
 
@@ -40,6 +41,13 @@ plots = llply(palettes, function(palette_name) {
 })
 
 marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+
+# gs <- lapply(1:9, function(ii) 
+#   grobTree(rectGrob(gp=gpar(fill=ii, alpha=0.5)), textGrob(ii)))
+# grid.arrange(grobs=gs, ncol=4, 
+#                top="top label", bottom="bottom\nlabel", 
+#                left="left label", right="right label")
+# grid.rect(gp=gpar(fill=NA))
 
 
 ```

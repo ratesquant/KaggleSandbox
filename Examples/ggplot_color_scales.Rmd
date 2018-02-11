@@ -1,0 +1,73 @@
+---
+title: "GGPlot Colour Scales"
+author: "Alex"
+date: "February 10, 2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 6, dpi = 120)
+
+library(data.table)
+library(plyr)
+library(ggplot2)
+library(gridExtra)
+library(wesanderson)
+
+```
+
+## Color Scales
+
+
+```{r color_scales}
+
+df <- data.table(expand.grid(x = seq(-2,2, by = 0.05), y = seq(-2,2, by =0.05)))
+df[, z:=  y * sin(x) * exp(-x*x - y*y)]
+
+div_palettes = c('BrBG', 'PiYG', 'PRGn', 'PuOr', 'RdBu', 'RdGy', 'RdYlBu', 'RdYlGn', 'Spectral')
+qul_palettes = c('Accent', 'Dark2', 'Paired', 'Pastel1', 'Pastel2', 'Set1', 'Set2', 'Set3')
+seq_palettes = c('Blues', 'BuGn', 'BuPu', 'GnBu', 'Greens', 'Greys', 'Oranges', 'OrRd', 'PuBu', 'PuBuGn', 'PuRd', 'Purples', 'RdPu', 'Reds', 'YlGn', 'YlGnBu', 'YlOrBr', 'YlOrRd')
+
+palettes = c(div_palettes, qul_palettes, seq_palettes)
+
+plots = llply(palettes, function(palette_name) {
+ p = ggplot(df, aes(x, y, fill = z)) + geom_raster() + 
+    scale_fill_distiller(palette = palette_name) +
+    ggtitle(palette_name)
+ return( p )
+})
+
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+
+
+```
+
+## Wes Anderson
+
+
+```{r wes_colors}
+names(wes_palettes)
+
+plots = llply(names(wes_palettes), function(palette_name) {
+ pal = wes_palette(palette_name)
+  
+  p = ggplot(data.frame(x=seq(length(pal)), y = rep(1,length(pal))), aes(x, y, fill = factor(x))) + 
+    geom_bar(stat = 'identity') + 
+    scale_fill_manual(values = pal) +
+    theme(legend.position = 'none', axis.text.y = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank()) +
+    ggtitle(palette_name)
+ return( p )
+})
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+
+plots = llply(names(wes_palettes), function(palette_name) {
+ p = ggplot(df, aes(x, y, fill = z)) + geom_raster() + 
+    scale_fill_gradientn(colors = wes_palette(palette_name, 20, type = "continuous")) +
+    ggtitle(palette_name)
+ return( p )
+})
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+```
+

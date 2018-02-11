@@ -74,7 +74,7 @@ var.monotone[model_vars %in% c('Fare')] =  1
 model.gbm  = gbm(formula.gbm, 
                             distribution = "bernoulli",
                             n.trees = 10000,
-                            cv.folds=5,
+                            cv.folds=10,
                             shrinkage = 0.001,
                             interaction.depth=3,
                  train.fraction = 1.0,
@@ -95,8 +95,10 @@ plot_binmodel_predictions(actual, pred.gbm)
 var_interaction = gbm_interactions(model.gbm, df, iter = best_it.gbm, min_influence = 1, degree = 2) 
 plot_gbminteractions(var_interaction)
 
+var_inter3 = gbm_interactions(model.gbm, df, iter = best_it.gbm, min_influence = 1, degree = 3) 
+
 plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var), output_type = 'response')
-marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+marrangeGrob(plots, nrow = 2, ncol = 3, top = NULL)
 
 plots = plot_gbmpartial_2d(model.gbm, best_it.gbm, as.character(subset(var_interaction,interaction_score>0.1)$vars), output_type = 'response')
 marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)

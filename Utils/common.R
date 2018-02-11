@@ -153,16 +153,22 @@ plot_gbmiterations <- function(gbm_model) {
 }
 
 
-plot_gbmpartial <- function(gbm_model, iter, variables, resolution = 100, output_type = 'response', add_rug = TRUE, max_run_points = 1024){
+plot_gbmpartial <- function(gbm_model, iter, variables, resolution = 100, output_type = 'response', add_rug = TRUE, max_rug_points = 1024){
   plots <- llply(variables, function(vname){
     plot_data = plot(gbm_model, i.var = vname, n.trees = iter, type = output_type, continuous.resolution = resolution, return.grid = TRUE)
+   
+    r_name = gbm_model$response.name
+    
     names(plot_data) <- c('x', 'y')
     
     plot_result <- ggplot() + geom_blank() 
     
     if(is.factor(plot_data$x)){
-      plot_result = ggplot(plot_data, aes(reorder(x, y), y, group = 1)) + geom_line(color = 'black', size = 1) +
-        theme(legend.position = 'none', axis.text.x = element_text(angle = 90, hjust = 1), axis.title.y = element_blank(), axis.title.x = element_blank()) + ggtitle(vname)
+      plot_result = ggplot(plot_data, aes(reorder(x, y), y, group = 1)) + 
+        geom_line(color = 'black', size = 1) +
+        geom_point() +
+        theme(legend.position = 'none', axis.text.x = element_text(angle = 90, hjust = 1), axis.title.y = element_blank(), axis.title.x = element_blank()) + 
+        ggtitle(vname)
     }else{
       plot_result = ggplot(plot_data, aes(x, y)) + geom_line(color = 'black', size = 1) +
         theme(legend.position = 'none', axis.title.y = element_blank(), axis.title.x = element_blank()) + ggtitle(vname)
@@ -172,7 +178,7 @@ plot_gbmpartial <- function(gbm_model, iter, variables, resolution = 100, output
         size_per_var = length(gbm_model$data$x) / length(gbm_model$var.names)
         xdata = gbm_model$data$x[1:size_per_var + (vname_index - 1) * size_per_var]
         
-        rug_index = sample.int(size_per_var, min(max_run_points, size_per_var))
+        rug_index = sample.int(size_per_var, min(max_rug_points, size_per_var))
           
         plot_result = plot_result + 
           geom_rug(data = data.frame(x = xdata[rug_index]), aes(x), sides = 'b', alpha = 0.2, size = 0.2, inherit.aes = FALSE) +
@@ -185,7 +191,7 @@ plot_gbmpartial <- function(gbm_model, iter, variables, resolution = 100, output
   return (plots)
 }
 
-plot_gbm3partial <- function(gbm_model, iter, variables, resolution = 100, output_type = 'response', add_rug = TRUE, max_run_points = 1024){
+plot_gbm3partial <- function(gbm_model, iter, variables, resolution = 100, output_type = 'response', add_rug = TRUE, max_rug_points = 1024){
   plots <- llply(variables, function(vname){
     plot_data = plot(gbm_model, var_index = vname, num_trees = iter, type = output_type, continuous_resolution = resolution, return_grid = TRUE)
     names(plot_data) <- c('x', 'y')
@@ -204,7 +210,7 @@ plot_gbm3partial <- function(gbm_model, iter, variables, resolution = 100, outpu
         size_per_var = length(gbm_model$gbm_data_obj$x) / length(gbm_model$variables$var_names)
         xdata = gbm_model$gbm_data_obj$x[1:size_per_var + (vname_index - 1) * size_per_var]
         
-        rug_index = sample.int(size_per_var, min(max_run_points, size_per_var))
+        rug_index = sample.int(size_per_var, min(max_rug_points, size_per_var))
         
         plot_result = plot_result + 
           geom_rug(data = data.frame(x = xdata[rug_index]), aes(x), sides = 'b', alpha = 0.2, size = 0.2, inherit.aes = FALSE) +
@@ -218,18 +224,34 @@ plot_gbm3partial <- function(gbm_model, iter, variables, resolution = 100, outpu
 }
 
 
-plot_gbmpartial_2d <- function(gbm_model, iter, variables, resolution = 100, output_type = 'response', add_rug = TRUE, max_run_points = 1024){
+plot_gbmpartial_2d <- function(gbm_model, iter, variables, resolution = 100, output_type = 'response', add_rug = TRUE, max_rug_points = 1024){
   plots <- llply(variables, function(vname){
     
     var_pair = strsplit(as.character(vname),'|', fixed = T)[[1]]
     plot_data = plot(gbm_model, i.var = var_pair, n.trees = iter, type = output_type, continuous.resolution = resolution, return.grid = TRUE)
-    names(plot_data) <- c('x1', 'x2', 'y')
     
-    plot_result = ggplot(plot_data, aes(x1, x2, z = y, fill = y)) + geom_raster() + scale_fill_distiller(palette = 'Spectral') +
-      xlab(var_pair[1]) + ylab(var_pair[2])
+    x_name = var_pair[1]
+    y_name = var_pair[2]
+    r_name = gbm_model$response.name
+    
+    names(plot_data) <- c(x_name, y_name, r_name)
+    
+    plot_result = ggplot() + geom_blank()
+    
+    if(is.factor(plot_data[,y_name])){
+    plot_result = ggplot(plot_data, aes_string(x_name, r_name, group = y_name, color = y_name)) + 
+      geom_line() + 
+      xlab(x_name) + ylab(r_name)
+    }else{
+      plot_result = ggplot(plot_data, aes_string(x_name, y_name, z = r_name, fill = r_name)) + 
+        geom_raster() + 
+        scale_fill_distiller(palette = 'Spectral') +
+        xlab(x_name) + ylab(y_name)
+      
+    }
         #theme(axis.title.y = element_blank(), axis.title.x = element_blank()) + ggtitle(vname)
     
-    if(add_rug)
+    if(add_rug & !is.factor(plot_data[,x_name]) & !is.factor(plot_data[,y_name]))
     {
       vname_index1 = match(var_pair[1], gbm_model$var.names)
       vname_index2 = match(var_pair[2], gbm_model$var.names)
@@ -238,12 +260,13 @@ plot_gbmpartial_2d <- function(gbm_model, iter, variables, resolution = 100, out
       xdata = gbm_model$data$x[1:size_per_var + (vname_index1 - 1) * size_per_var]
       ydata = gbm_model$data$x[1:size_per_var + (vname_index2 - 1) * size_per_var]
       
-      if(max_run_points<=0){
-        max_run_points = size_per_var
+      if(max_rug_points<=0){
+        max_rug_points = size_per_var
       }
-      rug_index = sample.int(size_per_var, min(max_run_points, size_per_var))
+      rug_index = sample.int(size_per_var, min(max_rug_points, size_per_var))
       
-      plot_result = plot_result + geom_point(data = data.frame(x = xdata[rug_index], y = ydata[rug_index]), aes(x, y), alpha = 0.2, size = 0.2, inherit.aes = FALSE, color = 'black')
+      plot_result = plot_result + 
+        geom_point(data = data.frame(x = xdata[rug_index], y = ydata[rug_index]), aes(x, y), alpha = 0.2, size = 0.2, inherit.aes = FALSE, color = 'black')
     }
     
     return (plot_result)
@@ -456,7 +479,7 @@ plot_binmodel_cdf<-function(actual, model){
     scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0, 1.0) ) +
   annotate("text", label = sprintf('KS = %0.2f', ks), x = 0, y = 1, hjust = 'left', vjust = 'top', color = 'gray', size = 5) +
   scale_color_manual(values = c('red', 'black', 'gray')) +
-  labs(x = "probability",   y = "fraction") + 
+  labs(x = "probability",   y = "ecdf") + 
     theme(legend.position = 'none')
   
   return (p)

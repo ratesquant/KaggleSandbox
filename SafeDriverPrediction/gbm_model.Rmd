@@ -8,10 +8,12 @@ editor_options:
 ---
 
 ```{r setup, include=FALSE}
+rm(list = ls())
 knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 6, dpi = 240)
 
 library(gbm)
 library(data.table)
+library(plyr)
 library(stringi)
 library(ggplot2)
 library(gridExtra)
@@ -48,7 +50,7 @@ load_data <- function(working_folder){
     }
     
     #convert to factors
-    cat_vars = names(df)[grepl('_cat',names(df))]
+    cat_vars = names(df)[grepl('(_cat)|(_bin)',names(df))]
     df[, (cat_vars):=lapply(.SD, as.factor), .SDcols = cat_vars]
   
     
@@ -79,7 +81,7 @@ cat_vars = c_names[grepl('_cat',c_names)]
 
 df_train = df[train_index,]
 
-sapply(df, levels)
+#sapply(df, levels)
 
 #plot cat var counts
 plots = llply(cat_vars, function(var_name) {
@@ -91,69 +93,109 @@ marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 
 ggplot(df_train, aes(ps_car_11_cat)) + geom_bar()# a lot of levels
 
+#outcome based sampling
+set.seed(101)
+
+n_events = sum(df$target[train_index] == 1)
+n_non_events = sum(df$target[train_index] == 0)
+n_total = length(df$target[train_index] )
+non_event_sample = sample.int(n_non_events,n_events,replace = FALSE)
+sampling_correction = log(n_events/(n_total - n_events))
+train_index_small = train_index
+train_index_small = (df$target==1) & !is.na(df$target)
+train_index_small[ which(df$target==0)[non_event_sample]] = TRUE
+
+table(df$target[train_index])
+table(df$target[train_index_small])
+
+print(sprintf('%d (p = %.4f)', n_events, 100*n_events/n_total))
+
 ```
 
 ## GBM Model: All vars
-
+AUC = 0.6353 (0.29154 - best score)
+current: 0.27507 0.26964
 ```{r gbm_model1}
 
 actual = as.numeric(df$target)
 
 all_vars = names(df) %!in_set% c('id', 'target')
-exclude_vars = c('ps_car_11_cat')
+exclude_vars = c('ps_car_11_cat', 
+                 'ps_ind_11_bin','ps_ind_10_bin','ps_ind_13_bin','ps_car_02_cat', 'ps_calc_20_bin','ps_calc_20_bin','ps_calc_18_bin','ps_ind_12_bin','ps_ind_14','ps_calc_19_bin','ps_car_10_cat', 'ps_calc_17_bin', 'ps_ind_18_bin','ps_calc_15_bin', 'ps_calc_16_bin', 'ps_car_08_cat') #inf <0.1
 
-set.seed(101)
+set.seed(1012356)
 
 formula.gbm = formula(stri_join( 'target ~ ', stri_join(all_vars %!in_set% exclude_vars,collapse = ' + ')))
 
 model_vars = all.vars(formula.gbm) %!in_set% c('target')
 var.monotone = rep(0, length(model_vars))
-var.monotone[model_vars %in% c('')]  = -1
-var.monotone[model_vars %in% c('')]  =  1
+var.monotone[model_vars %in% c('ps_car_13', 'ps_reg_03', 'ps_reg_02', 'ps_reg_01')]  = 1
+var.monotone[model_vars %in% c('ps_ind_15', 'ps_car_14')]  =  -1
 
 model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
-                 n.trees = 5000,
+                 n.trees = 10000,
                  cv.folds = 0,
-                 shrinkage = 0.01,
+                 shrinkage = 0.002,
                  interaction.depth=3,
-                 train.fraction = 0.7,
+                 train.fraction = 0.8,
                  bag.fraction = 0.7,
                  n.cores = 2,
                  var.monotone = var.monotone,
-                 data = df[train_index,all.vars(formula.gbm), with = F],
+                 data = df[train_index_small, all.vars(formula.gbm), with = F],
                  verbose = TRUE)
 
 plot_gbmiterations(model.gbm)
 best_it.gbm = gbm.perf(model.gbm, plot.it = F)
 
-pred.gbm = predict(model.gbm, n.trees = best_it.gbm, newdata = df, type = 'response')
+pred.gbm = predict(model.gbm, n.trees = best_it.gbm, type = 'response')
 
+#influence
 var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
 plot_gbminfluence(var_inf)
-#plot_binmodel_predictions(actual[train_index], pred.gbm[train_index])
+print(var_inf)
 
-plot_binmodel_roc(actual[train_index], pred.gbm[train_index])
+#interactions
+var_interaction = gbm_interactions(model.gbm, df[train_index_small,], iter = best_it.gbm, min_influence = 1, degree = 2) 
+plot_gbminteractions(var_interaction)
+
+plot_binmodel_predictions(actual[train_index_small], pred.gbm)
 
 plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var[var_inf$rel.inf>1.0]), output_type = 'response')
-marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 
 plots = llply(all_vars, function(var_name) {
-  p = plot_profile(pred.gbm[train_index], actual[train_index],df[[var_name]][train_index], error_band = 'binom') +
+  p = plot_profile(pred.gbm, actual[train_index_small],df[[var_name]][train_index_small], error_band = 'binom') +
     ggtitle(var_name)
   return( p )
 })
-marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 #roc.default(response = test$Class, predictor = gbm.test, plot = TRUE,     col = "red")
 
-#save solution
-results$gbm1 = pred.gbm
 
+#save solution
+pred.gbm_link = predict(model.gbm, n.trees = best_it.gbm, newdata = df, type = 'link')
+pred.gbm_full = 1.0 / (1.0 + exp(-pred.gbm_link - sampling_correction))
+
+results$gbm1 = pred.gbm_full
+
+#var not in model
+plots = llply(exclude_vars %in_set% names(df), function(var_name) {
+  p = plot_profile(pred.gbm_full[train_index], actual[train_index],df[[var_name]][train_index], error_band = 'binom') +
+    ggtitle(var_name)
+  return( p )
+})
+marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+
+p1 = plot_binmodel_percentiles(actual[train_index], pred.gbm_full[train_index], n = 10, equal_count_buckets = T)
+p2 = plot_binmodel_percentiles(actual[train_index], pred.gbm_full[train_index], n = 10, equal_count_buckets = F)
+grid.arrange(p1,p2)
 ```
 
 ## GBM Model: Subset of vars
 
 ```{r gbm_model2}
+imp_vars = c('ps_car_13','ps_car_06_cat','ps_ind_05_cat','ps_reg_03')
 
 ```
 

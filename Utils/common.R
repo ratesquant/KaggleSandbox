@@ -349,8 +349,9 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
         geom_point(color = 'black') + 
         geom_line(color = 'black', size = 1) +
         #geom_point(aes(buckets, model), color = 'red') + 
-        geom_line(aes(buckets, model), color = 'red', size = 1) +
-        ylab('actual (bk) vs model (rd)') + theme(legend.position = 'none', axis.title.x = element_blank(), axis.text.x = element_text(angle = 90, hjust = 1)) +
+        geom_line(aes(buckets, model), color = 'red', size = 1, alpha= 0.8) +
+        ylab('actual (bk) vs model (rd)') + 
+        theme(legend.position = 'none', axis.title.x = element_blank(), axis.text.x = element_text(angle = 90, hjust = 1)) +
         scale_x_discrete(breaks = xlabels) +
         geom_ribbon(aes(ymax = actual_max, ymin = actual_min), fill = 'blue', alpha = 0.05) +
         geom_errorbar(aes(ymax = actual_max_break, ymin = actual_min_break), width = 0.0, color = 'blue', alpha = 0.3) +
@@ -361,8 +362,9 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
         geom_point(color = 'black') + 
         geom_line(color = 'black', size = 1) +
         #geom_point(aes(profile, model), color = 'red') + 
-        geom_line(aes(profile, model), color = 'red', size = 1) +
-        ylab('actual (bk) vs model (rd)') + theme(legend.position = 'none', axis.title.x = element_blank()) + 
+        geom_line(aes(profile, model), color = 'red', size = 1, alpha= 0.8) +
+        ylab('actual (bk) vs model (rd)') + 
+        theme(legend.position = 'none', axis.title.x = element_blank()) + 
         geom_ribbon(aes(ymax = actual_max, ymin = actual_min), fill = 'blue', alpha = 0.05) +
         geom_errorbar(aes(ymax = actual_max_break, ymin = actual_min_break), width = 0.0, color = 'blue', alpha = 0.3) +
         coord_cartesian(ylim = c(y_min, y_max)) 
@@ -401,6 +403,12 @@ write.xclip <- function(x, selection=c("primary", "secondary", "clipboard"), ...
 
 write.clipboard <- function(x, ...){
   write.xclip(x, "clipboard", ...)
+}
+
+#copy to clipboard, works on win
+cc <- function(x,...){
+  #write.table(x, "clipboard-16384", sep="\t", row.names=FALSE,...)
+  write.table(x, "clipboard-1024", sep="\t", row.names=FALSE,...)
 }
 
 ## Binomial plot functions ----- 
@@ -496,7 +504,9 @@ plot_binmodel_cdf<-function(actual, model){
 #percentile plot, model vs average actuals  
 #actual - NA are excluded, model should not have NA
 plot_binmodel_percentiles<-function(actual, model, n = 10, equal_count_buckets = FALSE, conf = 0.95){
-  xb = seq(0, n, 1) / n
+  
+  max_model = min(1.0, max(model, na.rm = T) + 1.0 / length(model))
+  xb = max_model * seq(0, n, 1) / n
  
   if(equal_count_buckets){
       xb =  unique(quantile(model, probs = xb, names = FALSE, na.rm = TRUE))
@@ -522,8 +532,7 @@ plot_binmodel_percentiles<-function(actual, model, n = 10, equal_count_buckets =
       count = n,
       ub = conf_int[1],
       lb = conf_int[2],
-      pvalue =  conf_int[3]
-      )
+      pvalue =  conf_int[3])
   }
  
   df = data.table(actual, model, bucket)
@@ -537,13 +546,13 @@ plot_binmodel_percentiles<-function(actual, model, n = 10, equal_count_buckets =
     geom_abline(slope = 1, intercept = 0, colour = 'red', linetype = 2) +
     geom_point(data = res[pvalue < 0.5 * (1.0- conf)], aes(avg_model, avg_actual), color = 'red') +
     labs(x = "model",   y = "actual") + 
-    geom_rug(sides = 'b', alpha = 0.2) +
+#   geom_rug(sides = 'b', alpha = 0.2) +
     theme(legend.position = 'none')
   
-  if(equal_count_buckets){
-    p = p + scale_x_continuous(breaks = seq(0, 1, 0.2), limits = c(0,1)) +
-            scale_y_continuous(breaks = seq(0, 1, 0.2), limits = c(0,1))
-  }
+  # if(!equal_count_buckets){
+  #   p = p + scale_x_continuous(breaks = seq(0, 1, 0.2), limits = c(0,1)) +
+  #           scale_y_continuous(breaks = seq(0, 1, 0.2), limits = c(0,1))
+  # }
   return( p )
 }
 

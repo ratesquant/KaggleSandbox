@@ -428,6 +428,14 @@ integrate_step_function<-function(x, y){
    return( sum(dx * ys[-length(y)]) )
 }
 
+
+integrate_function<-function(x, y){
+  index = order(x)
+  dx = diff(x[index])
+  ys = y[index]
+  return( sum(0.5 * dx * (ys[-1] + ys[-length(y)])) )
+}
+
 #plot ROC curve
 plot_binmodel_roc<-function(actual, model){
   non_event = actual == 0
@@ -440,7 +448,7 @@ plot_binmodel_roc<-function(actual, model){
   
   res = data.table(q01 = rev(1 - q0), q11 = rev(1 - q1))
   
-  auc = 1.0 - integrate_step_function(q0, q1) # GINI = 2 * AUC -1
+  auc = 1.0 - integrate_function(q0, q1) # GINI = 2 * AUC -1
   
   xb = seq(0, 1, by = 0.2)
   
@@ -451,7 +459,7 @@ plot_binmodel_roc<-function(actual, model){
     geom_abline(slope = 1, intercept = 0, colour = 'red', linetype = 2) +
     geom_ribbon(aes(ymin = q01, ymax = q11), fill = 'blue', alpha = 0.2) +
     labs(x = "false positive",   y = "true positive") +
-    annotate('text', label = sprintf('AUC = %.4f', auc), x = 0, y = 1, hjust = 'left', vjust = 'top', color = 'gray', size = 5) +
+    annotate('text', label = sprintf('AUC = %.4f', auc), x = 1, y = 0, hjust = 'right', vjust = 'bottom', color = 'gray', size = 5) +
   theme(legend.position = 'none')
   
   return(p)
@@ -459,6 +467,15 @@ plot_binmodel_roc<-function(actual, model){
 
 #plot density of predictions 
 plot_binmodel_density<-function(actual, model, n = 20){
+  p = ggplot(data.frame(act = factor(actual), model), aes(model, fill = act))  + 
+    geom_density(adjust = 0.25, alpha = 0.5, color = 'black') +
+    scale_fill_manual(values = c('black', 'red')) +
+    #scale_x_continuous(limits = c(min(model), max(model))) +
+    theme(legend.position = 'none') 
+  return (p)
+}
+
+plot_binmodel_histogram<-function(actual, model, n = 20){
   
   breaks = max(model, na.rm = T) * seq(0, max(model, na.rm = T), length.out = n + 1)
   p = ggplot(data.frame(actual, model), aes(model, fill = factor(actual)))  + 
@@ -512,13 +529,12 @@ plot_binmodel_percentiles<-function(actual, model, n = 10, equal_count_buckets =
       xb =  unique(quantile(model, probs = xb, names = FALSE, na.rm = TRUE))
       xb[1] = floor(n * xb[1]) / n # include zero when close
   }
-  bucket = cut(model, xb, ordered_result = TRUE, include.lowest = TRUE)
+  bucket = cut(model, xb, include.lowest = TRUE)
   
   agg_buckets <- function(x) {
-    
     n = length(x$actual)
     avg_model = mean(x$model)
-    n_act = sum(x$actual)
+    n_act = sum(x$actual!=0)
     conf_int = c(NA, NA, NA)
     
     if(n>3){
@@ -536,8 +552,7 @@ plot_binmodel_percentiles<-function(actual, model, n = 10, equal_count_buckets =
   }
  
   df = data.table(actual, model, bucket)
-  res = df[!is.na(actual),agg_buckets(.SD), by = .(bucket)]
-  #res = df[complete.cases(actual, model),agg_buckets(.SD), by = .(bucket)]
+  res = df[complete.cases(actual, model),agg_buckets(.SD), by = .(bucket)]
  
   p = ggplot(res, aes(avg_model, avg_actual)) + 
     geom_point() +  

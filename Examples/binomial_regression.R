@@ -28,8 +28,6 @@ summary(model.glm)
 
 pred.glm = predict(model.glm, data = df, type = 'response')
 
-ggplot(data.frame(actual, model), aes(model, group = factor(actual == 0) )) + stat_ecdf()
-
 plot_binmodel_predictions(actual, pred.glm)
 plot_binmodel_percentiles(actual, pred.glm, n = 20, equal_count_buckets = T)
 plot_binmodel_cdf(actual, pred.glm)

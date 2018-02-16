@@ -535,7 +535,7 @@ plot_binmodel_percentiles<-function(actual, model, n = 10, equal_count_buckets =
     n = length(x$actual)
     avg_model = mean(x$model)
     n_act = sum(x$actual!=0)
-    conf_int = c(NA, NA, NA)
+    conf_int = c(NaN, NaN, NaN)
     
     if(n>3){
       test_res = binom.test(n_act, n, p = avg_model, alternative = 'two.sided')

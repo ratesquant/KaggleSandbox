@@ -54,7 +54,9 @@ load_data <- function(working_folder){
     #convert to factors
     cat_vars = names(df)[grepl('(_cat)|(_bin)',names(df))]
     df[, (cat_vars):=lapply(.SD, as.factor), .SDcols = cat_vars]
-  
+    
+    int_columns = names(df)[which(lapply(df, class) == 'integer')] %!in_set% c('id')
+    df[, (int_columns):=lapply(.SD, as.numeric), .SDcols = int_columns]
     
     saveRDS(df, data_file)
   }
@@ -123,7 +125,7 @@ actual = as.numeric(df$target)
 
 all_vars = names(df) %!in_set% c('id', 'target')
 exclude_vars = c('ps_car_11_cat', 
-                 'ps_ind_11_bin','ps_ind_10_bin','ps_ind_13_bin','ps_car_02_cat', 'ps_calc_20_bin','ps_calc_20_bin','ps_calc_18_bin','ps_ind_12_bin','ps_ind_14','ps_calc_19_bin','ps_car_10_cat', 'ps_calc_17_bin', 'ps_ind_18_bin','ps_calc_15_bin', 'ps_calc_16_bin', 'ps_car_08_cat','ps_calc_03','ps_calc_01', 'ps_calc_09','ps_calc_12') #inf <0.1
+                 'ps_ind_11_bin','ps_ind_10_bin','ps_ind_13_bin','ps_car_02_cat', 'ps_calc_20_bin','ps_calc_20_bin','ps_calc_18_bin','ps_ind_12_bin','ps_ind_14','ps_calc_19_bin','ps_car_10_cat', 'ps_calc_17_bin', 'ps_ind_18_bin','ps_calc_15_bin', 'ps_calc_16_bin', 'ps_car_08_cat','ps_calc_03','ps_calc_01', 'ps_calc_09','ps_calc_12','ps_calc_03') #inf <0.1
 
 set.seed(1012356)
 
@@ -136,11 +138,11 @@ var.monotone[model_vars %in% c('ps_ind_15', 'ps_car_14')]  =  -1
 
 model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
-                 n.trees = 10000,
-                 cv.folds = 0,
+                 n.trees = 8000,
+                 cv.folds = 5,
                  shrinkage = 0.002,
                  interaction.depth=4,
-                 train.fraction = 0.7,
+                 train.fraction = 1.0,
                  bag.fraction = 0.7,
                  n.cores = 2,
                  var.monotone = var.monotone,
@@ -192,8 +194,10 @@ plots = llply(exclude_vars %in_set% names(df), function(var_name) {
 })
 marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 
-p1 = plot_binmodel_percentiles(actual[train_index], pred.gbm_full[train_index], n = 10, equal_count_buckets = T)
-p2 = plot_binmodel_percentiles(actual[train_index], pred.gbm_full[train_index], n = 10, equal_count_buckets = F)
+plot_profile(pred.gbm_full[train_index], actual[train_index],df[['ps_car_11_cat']][train_index], error_band = 'binom') 
+
+p1 = plot_binmodel_percentiles(actual[train_index], pred.gbm_full[train_index], n = 20, equal_count_buckets = T)
+p2 = plot_binmodel_percentiles(actual[train_index], pred.gbm_full[train_index], n = 20, equal_count_buckets = F)
 grid.arrange(p1,p2)
 ```
 

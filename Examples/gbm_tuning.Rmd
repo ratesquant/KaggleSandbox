@@ -1,0 +1,111 @@
+---
+title: "GBM Tuning"
+author: "Alex"
+date: "February 17, 2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(gbm)
+library(data.table)
+library(plyr)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(xgboost)
+library(wesanderson)
+#library(caret)
+
+working_folder = 'C:/Dev/Kaggle/'
+
+source(file.path(working_folder, '/Utils/common.R'))
+
+```
+
+## Data
+
+```{r load_data}
+df = fread(file.path(working_folder,'/Titanic/input/train.csv'))
+
+df[,Pclass := factor(Pclass)]
+df[,Sex := factor(Sex)]
+df[,Survived := as.numeric(Survived)]
+
+actual = df$Survived
+
+cat_vars = c('Pclass','Sex','Embarked')
+df[, (cat_vars):=lapply(.SD, as.factor), .SDcols = cat_vars]
+
+factor_vars = names(df)[sapply(df, class) == 'factor']
+
+```
+
+## GBM
+
+```{r gbm_funct, echo=FALSE}
+run_gbm<-function(formula.gbm, df, max_it, shrinkage, depth, bag_pct){
+  
+set.seed(1023946765)
+model_vars = all.vars(formula.gbm) %!in_set% c('Survived')
+var.monotone = rep(0, length(model_vars))
+
+model.gbm  = gbm(formula.gbm, 
+                            distribution = "bernoulli",
+                            n.trees = max_it,
+                            cv.folds=10,
+                            shrinkage = shrinkage,
+                            interaction.depth=depth,
+                 train.fraction = 1.0,
+                 bag.fraction = bag_pct,
+                 n.cores = 2,
+                 var.monotone = var.monotone,
+                 data = df[,all.vars(formula.gbm), with = F],
+                verbose = FALSE)
+
+ best_it.gbm = gbm.perf(model.gbm, plot.it = F)
+  pred.gbm = predict(model.gbm, n.trees = best_it.gbm, type = 'response')
+  
+  auc = gbm.roc.area(df$Survived, pred.gbm)
+  data.frame(it = seq(max_it), depth, bag_pct, shrinkage, max_it,
+             auc, best_it = best_it.gbm, 
+             train_error = model.gbm$train.error, 
+             cv_error = model.gbm$cv.error,
+             min_cv_error = model.gbm$cv.error[best_it.gbm])
+}
+
+formula.gbm = formula(Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked)
+
+
+```
+
+
+## GBM Tuning
+
+```{r gbm_tune echo=FALSE}
+
+params = expand.grid(depth = c(1,2,3,4), shrinkage = c(0.1,0.01,0.005), max_it = 50000, bag_pct = c(0.6,0.8,1.0))
+
+res = ldply(seq(nrow(params)), function(i){
+  p = params[i,]
+  res = run_gbm(formula.gbm, df,p$max_it, p$shrinkage, p$depth, p$bag_pct)
+})
+
+ggplot(res, aes(it, cv_error, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(depth~bag_pct)
+
+ggplot(res, aes(it, train_error, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(depth~bag_pct)
+
+ggplot(res, aes(depth, min_cv_error, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(~bag_pct)
+
+ggplot(res, aes(depth, auc, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(~bag_pct)
+
+ggplot(res, aes(depth, best_it, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(~bag_pct)
+
+```
+

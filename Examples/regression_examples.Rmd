@@ -1,0 +1,241 @@
+---
+title: "Regression Example: Swirl"
+author: "Alex"
+date: "February 17, 2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(gbm)
+library(data.table)
+library(plyr)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(xgboost)
+library(wesanderson)
+#library(caret)
+
+working_folder = 'C:/Dev/Kaggle/'
+
+source(file.path(working_folder, '/Utils/common.R'))
+```
+
+```{r data_set}
+N = 200 # number of points per class
+D = 2 # dimensionality
+K = 4 # number of classes
+
+df = ldply(seq(K), function(ki){
+  r = seq(0, 1, length.out = N)
+  t = seq(ki*5,(ki+1)*5,length.out =N) + rnorm(N)*0.2 
+  data.frame(x = r*sin(t), y = r*cos(t), z = ki-1)
+})
+
+df = data.table(df[sample(nrow(df)),])
+df = df[, z:=z %% 2]
+
+ggplot(df, aes(x, y, color = factor(z) )) + geom_point()
+
+actual = df$z
+
+```
+
+##Logistic regression
+
+```{r logistic_reg}
+
+model.glm = glm('z~ x + y', df, family = binomial(link=logit))
+
+print(summary(model.glm))
+
+pred.glm = predict(model.glm, type = 'response')
+
+plot_binmodel_predictions(actual, pred.glm)
+
+#blot boundary
+df_plot = expand.grid(x = seq(-1, 1, by = 0.02), y = seq(-1, 1, by = 0.02))
+df_plot$prob = predict(model.glm, newdata = df_plot, type = 'response')
+
+p1 = ggplot() + 
+        geom_raster(data = df_plot, aes(x, y, fill = prob )) +  
+  scale_fill_gradientn(colors = wes_palette('FantasticFox', 5, type = "continuous"))+
+  geom_point(data = df, aes(x, y, color = factor(z) )) 
+p2 = ggplot() + 
+        geom_raster(data = df_plot, aes(x, y, fill = prob>0.5 )) +  
+  scale_fill_brewer(palette = 'Greys') +
+  geom_point(data = df, aes(x, y, color = factor(z) )) 
+grid.arrange(p1,p2, nrow = 1)
+```
+
+## GBM: depth 1
+
+```{r gbm_1d}
+
+run_gbm <- function(depth = 1) {
+  formula.gbm = formula('z ~ x + y')
+  
+  model.gbm  = gbm(formula.gbm,
+                   distribution = "bernoulli",
+                   n.trees = 10000,
+                   cv.folds = 5,
+                   shrinkage = 0.02,
+                   interaction.depth=depth,
+                   train.fraction = 1.0,
+                   bag.fraction = 0.8,
+                   n.cores = 2,
+                   data = df,
+                   verbose = FALSE)
+  
+  print(plot_gbmiterations(model.gbm))
+  
+  best_it.gbm = gbm.perf(model.gbm, plot.it = F)
+  print(best_it.gbm)
+  
+  plots = plot_gbmpartial(model.gbm, best_it.gbm, c('x','y'), output_type = 'response')
+  print(marrangeGrob(plots, nrow = 1, ncol = 2, top = NULL))
+  
+  pred.gbm = predict(model.gbm, n.trees = best_it.gbm, type = 'response')
+  print(plot_binmodel_predictions(actual, pred.gbm))
+  
+  plots = llply(all.vars(formula.gbm), function(var_name) {
+    p = plot_profile(pred.gbm, actual,df[[var_name]], error_band = 'binom', min_obs = 3) +
+      ggtitle(var_name) +  theme(title =element_text(size=8))
+    return( p )
+  })
+  print(marrangeGrob(plots, nrow = 1, ncol = 3, top = NULL))
+  
+  plots = plot_gbmpartial_2d(model.gbm, best_it.gbm,c('x|y'), output_type = 'response')
+  print(marrangeGrob(plots, nrow = 1, ncol = 1, top = NULL))
+  
+  df_plot$prob = predict(model.gbm, newdata = df_plot, n.trees = best_it.gbm, type = 'response')
+  
+  p1 = ggplot() + 
+          geom_raster(data = df_plot, aes(x, y, fill = prob )) +  
+    scale_fill_gradientn(colors = wes_palette('FantasticFox', 5, type = "continuous"))+
+    geom_point(data = df, aes(x, y, color = factor(z) )) 
+  p2 = ggplot() + 
+          geom_raster(data = df_plot, aes(x, y, fill = prob>0.5 )) +  
+    scale_fill_brewer(palette = 'Greys') +
+    geom_point(data = df, aes(x, y, color = factor(z) )) 
+  print(grid.arrange(p1,p2, nrow = 1))
+}
+
+run_gbm(1)
+
+```
+
+## GBM: depth 2
+
+```{r gbm_2d}
+
+run_gbm(2)
+
+```
+
+
+## GBM: tuning
+
+```{r gbm_tunning}
+
+run_gbm_tune <- function(depth = 1, shrinkage = 0.02, max_it = 10000, bag_pct = 0.8) {
+  formula.gbm = formula('z ~ x + y')
+  
+  model.gbm  = gbm(formula.gbm,
+                   distribution = "bernoulli",
+                   n.trees = max_it,
+                   cv.folds = 5,
+                   shrinkage = shrinkage,
+                   interaction.depth=depth,
+                   train.fraction = 1.0,
+                   bag.fraction = bag_pct,
+                   n.cores = 2,
+                   data = df,
+                   verbose = FALSE)
+
+  best_it.gbm = gbm.perf(model.gbm, plot.it = F)
+  pred.gbm = predict(model.gbm, n.trees = best_it.gbm, type = 'response')
+  error = model.gbm$train.error[best_it.gbm]
+  cv_error = model.gbm$cv.error[best_it.gbm]
+  
+  auc = gbm.roc.area(df$z, pred.gbm)
+  data.frame(auc, best_it = best_it.gbm, error, cv_error)
+}
+
+params = expand.grid(depth = c(1,2,3,4), shrinkage = c(0.1,0.01,0.005), max_it = c(1, 5, 10)*1000, bag_pct = c(0.6,0.8,1.0))
+
+res = ldply(seq(nrow(params)), function(i){
+  p = params[i,]
+  res = run_gbm_tune(p$depth, p$shrinkage, p$max_it, p$bag_pct)
+  cbind(p, res)
+})
+
+ggplot(res, aes(factor(depth), cv_error, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(max_it~bag_pct)
+
+ggplot(res, aes(factor(depth), cv_error-error, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(max_it~bag_pct)
+
+ggplot(res, aes(factor(depth), auc, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(max_it~bag_pct)
+
+ggplot(res, aes(factor(depth), best_it, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(max_it~bag_pct)
+
+ggplot(res, aes(factor(depth), max_it - best_it, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(max_it~bag_pct)
+```
+
+
+## GBM: tuning2
+```{r gbm_tunning2}
+
+run_gbm_tune2 <- function(depth = 1, shrinkage = 0.02, max_it = 10000, bag_pct = 0.8) {
+  formula.gbm = formula('z ~ x + y')
+  
+  model.gbm  = gbm(formula.gbm,
+                   distribution = "bernoulli",
+                   n.trees = max_it,
+                   cv.folds = 5,
+                   shrinkage = shrinkage,
+                   interaction.depth=depth,
+                   train.fraction = 1.0,
+                   bag.fraction = bag_pct,
+                   n.cores = 2,
+                   data = df,
+                   verbose = FALSE)
+
+  best_it.gbm = gbm.perf(model.gbm, plot.it = F)
+  pred.gbm = predict(model.gbm, n.trees = best_it.gbm, type = 'response')
+  
+  auc = gbm.roc.area(df$z, pred.gbm)
+  data.frame(it = seq(max_it), depth, bag_pct, shrinkage, max_it,
+             auc, best_it = best_it.gbm, 
+             train_error = model.gbm$train.error, 
+             cv_error = model.gbm$cv.error,
+             min_cv_error = model.gbm$cv.error[best_it.gbm])
+}
+
+params = expand.grid(depth = c(1,2,3,4), shrinkage = c(0.1,0.01,0.005), max_it = 30000, bag_pct = c(0.6,0.8,1.0))
+
+res = ldply(seq(nrow(params)), function(i){
+  p = params[i,]
+  res = run_gbm_tune2(p$depth, p$shrinkage, p$max_it, p$bag_pct)
+})
+
+ggplot(res, aes(it, cv_error, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(depth~bag_pct)
+
+ggplot(res, aes(it, train_error, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(depth~bag_pct)
+
+ggplot(res, aes(depth, min_cv_error, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(~bag_pct)
+
+ggplot(res, aes(depth, auc, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(~bag_pct)
+
+ggplot(res, aes(depth, best_it, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(~bag_pct)
+
+
+
+```
+

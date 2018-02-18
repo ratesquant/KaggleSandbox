@@ -9,6 +9,9 @@ rms_log <-function(y, x) {
   return ( sqrt( mean ( (log(y+1) - log(x+1))^2 )))
 } 
 
+logit <- function(x){
+  return (1.0 / (1.0 + exp(-x)))
+}
 
 normalize_data <- function(x){
   ecdf_norm<-function(x) {
@@ -436,7 +439,7 @@ integrate_function<-function(x, y){
   return( sum(0.5 * dx * (ys[-1] + ys[-length(y)])) )
 }
 
-#plot ROC curve
+#plot ROC curve (KS is a largest distance from 1,1 line)
 plot_binmodel_roc<-function(actual, model){
   non_event = actual == 0
   m1 = sort(model[!non_event])
@@ -465,6 +468,38 @@ plot_binmodel_roc<-function(actual, model){
   return(p)
 }
 
+#CAP (cummulative Accuracy Profile), aka Lift Curve, Power Curve, 
+#AR is equal to GINI index
+plot_binmodel_cap<-function(actual, model){
+  non_event = actual == 0
+  m1 = sort(model[!non_event])
+  m0 = sort(model) # this is the main difference between Lift and ROC
+  
+  avg_prob = 1.0 - sum(!non_event)/length(actual)
+  
+  xc = sort(c(0, model, 1))
+  q1 = ecdf(m1)(xc)
+  q0 = ecdf(m0)(xc)
+  
+  res = data.table(q01 = rev(1 - q0), q11 = rev(1 - q1))
+  
+  ar = (1.0 - 2.0*integrate_function(q0, q1))/avg_prob
+  
+  xb = seq(0, 1, by = 0.2)
+  
+  p = ggplot(res, aes(q01, q11)) +  
+    geom_step() + 
+    scale_x_continuous(breaks = xb, limits = c(0, 1)) +
+    scale_y_continuous(breaks = xb, limits = c(0, 1)) +
+    geom_abline(slope = 1, intercept = 0, colour = 'red', linetype = 2) +
+    geom_ribbon(aes(ymin = q01, ymax = q11), fill = 'blue', alpha = 0.2) +
+    labs(x = "fraction of total",   y = "fraction of events") +
+    annotate('text', label = sprintf('AR = %.4f', ar), x = 1, y = 0, hjust = 'right', vjust = 'bottom', color = 'gray', size = 5) +
+    theme(legend.position = 'none')
+  
+  return(p)
+}
+
 #plot density of predictions 
 plot_binmodel_density<-function(actual, model, n = 20){
   p = ggplot(data.frame(act = factor(actual), model), aes(model, fill = act))  + 
@@ -484,7 +519,19 @@ plot_binmodel_histogram<-function(actual, model, n = 20){
     theme(legend.position = 'none')
   return (p)
 }
+ 
+binmodel_ks<-function(actual, model){
+  non_event = actual == 0
+  m1 = sort(model[!non_event])
+  m0 = sort(model[ non_event])
   
+  #estimate difference between cdf
+  xc = sort(c(0, model, 1))
+  q1 = ecdf(m1)(xc)
+  q0 = ecdf(m0)(xc)
+  ks = 100.0 * max(abs(q1 - q0), na.rm = T)
+  return (ks)
+}
 #plot cdf of predictions
 plot_binmodel_cdf<-function(actual, model){
   non_event = actual == 0

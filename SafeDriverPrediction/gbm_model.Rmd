@@ -136,7 +136,7 @@ actual = as.numeric(df$target)
 #only keep several car_11 levels
 
 df[,ps_car_11_cat_ex:=as.character(ps_car_11_cat)]
-df[ps_car_11_cat %!in% c('49','51','50','62','84','20','17','18','94','58','63','81','72'), ps_car_11_cat_ex:='otr']
+df[ps_car_11_cat %!in% c('49','51','50','62','84','20','17','18','94','58','63','81','72','35','97','85','46','65','21','35'), ps_car_11_cat_ex:='otr']
 df[,ps_car_11_cat_ex:=factor(ps_car_11_cat_ex)]
 table(df$ps_car_11_cat_ex[train_index_small])
 
@@ -159,16 +159,16 @@ var.monotone[model_vars %in% c('ps_car_13', 'ps_reg_03', 'ps_reg_02', 'ps_reg_01
 var.monotone[model_vars %in% c('ps_ind_15', 'ps_car_14','ps_calc_13','ps_calc_04')]  =  -1
 
 cv_folds = 0
-max_it = 10000
+max_it = 8100
 
 model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
                  n.trees = max_it,
                  cv.folds = cv_folds,
                  shrinkage = 0.002,
-                 interaction.depth=6,
+                 interaction.depth=7,
                  train.fraction = 1.0,
-                 bag.fraction = 0.8,
+                 bag.fraction = 0.7,# 0.5 for small samples, 0.7 for large
                  n.cores = 2,
                  var.monotone = var.monotone,
                  data = df[train_index_small, all.vars(formula.gbm), with = F],
@@ -231,6 +231,7 @@ p2 = plot_binmodel_percentiles(actual[train_index], pred.gbm_full[train_index], 
 grid.arrange(p1,p2)
 
 #df_plot = data.table(act = actual[train_index], model = pred.gbm_full[train_index], prof = df[['ps_car_11_cat']][train_index])
+#cc(df_plot[,.(.N,model = mean(model), act = mean(act)), by =.(prof)])
 #ggplot(df_plot[,.(.N,model = mean(model), act = mean(act)), by =.(prof)], aes(prof, model)) + geom_point() + geom_point(aes(prof, act), color = 'red')
 ```
 

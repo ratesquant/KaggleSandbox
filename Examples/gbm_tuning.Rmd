@@ -22,6 +22,7 @@ library(zip)
 library(xgboost)
 library(wesanderson)
 #library(caret)
+#https://statweb.stanford.edu/~jhf/ftp/stobst.pdf
 
 working_folder = 'C:/Dev/Kaggle/'
 
@@ -138,5 +139,45 @@ ggplot(res, aes(depth, auc, group =bag_pct, color =factor(bag_pct) )) + geom_lin
 
 ggplot(res, aes(depth, best_it, group =bag_pct, color =factor(bag_pct) )) + geom_line() + geom_point()
 
+```
+
+## GBM AUC
+
+```{r gbm_AUC}
+
+set.seed(1023946765)
+model_vars = all.vars(formula.gbm) %!in_set% c('Survived')
+var.monotone = rep(0, length(model_vars))
+
+model.gbm  = gbm(formula.gbm, 
+                            distribution = "bernoulli",
+                            n.trees = 2000,
+                            cv.folds=10,
+                            shrinkage = 0.01,
+                            interaction.depth=5,
+                 train.fraction = 1.0,
+                 bag.fraction = 0.6,
+                 n.cores = 2,
+                 var.monotone = var.monotone,
+                 data = df[,all.vars(formula.gbm), with = F],
+                 verbose = FALSE)
+
+ best_it.gbm = gbm.perf(model.gbm, plot.it = F)
+ pred.gbm = predict(model.gbm, n.trees = best_it.gbm, type = 'response')
+
+ res = ldply(seq( length(model.gbm$cv.error)), function(it){
+  pred.gbm = predict(model.gbm, n.trees = it, type = 'response')
+   auc = gbm.roc.area(df$Survived, pred.gbm)
+   data.frame(it, auc, 
+              cv_error = model.gbm$cv.error[it],
+              ks = 0.01*binmodel_ks(df$Survived, pred.gbm))
+ })
+  
+ggplot(res, aes(it, cv_error)) + geom_line() + geom_vline(xintercept = best_it.gbm, color = 'red')
+ggplot(res, aes(it, auc)) + geom_line() + geom_vline(xintercept = best_it.gbm, color = 'red')
+ggplot(res, aes(it, ks)) + geom_line() + geom_vline(xintercept = best_it.gbm, color = 'red')
+
+ggplot(res, aes(auc, cv_error)) + geom_point()
+ggplot(res, aes(auc, ks)) + geom_point()
 ```
 

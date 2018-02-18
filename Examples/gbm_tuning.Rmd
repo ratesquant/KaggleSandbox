@@ -49,7 +49,7 @@ factor_vars = names(df)[sapply(df, class) == 'factor']
 
 ## GBM
 
-```{r gbm_funct, echo=FALSE}
+```{r gbm_funct}
 run_gbm<-function(formula.gbm, df, max_it, shrinkage, depth, bag_pct){
   
 set.seed(1023946765)
@@ -67,16 +67,16 @@ model.gbm  = gbm(formula.gbm,
                  n.cores = 2,
                  var.monotone = var.monotone,
                  data = df[,all.vars(formula.gbm), with = F],
-                verbose = FALSE)
+                 verbose = FALSE)
 
  best_it.gbm = gbm.perf(model.gbm, plot.it = F)
-  pred.gbm = predict(model.gbm, n.trees = best_it.gbm, type = 'response')
+ pred.gbm = predict(model.gbm, n.trees = best_it.gbm, type = 'response')
   
   auc = gbm.roc.area(df$Survived, pred.gbm)
   data.frame(it = seq(max_it), depth, bag_pct, shrinkage, max_it,
              auc, best_it = best_it.gbm, 
-             train_error = model.gbm$train.error, 
-             cv_error = model.gbm$cv.error,
+             train_error =  model.gbm$train.error, 
+             cv_error = pmin(model.gbm$cv.error[1], model.gbm$cv.error),
              min_cv_error = model.gbm$cv.error[best_it.gbm])
 }
 
@@ -88,24 +88,55 @@ formula.gbm = formula(Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare + Emb
 
 ## GBM Tuning
 
-```{r gbm_tune echo=FALSE}
+```{r gbm_tune, eval = TRUE}
 
-params = expand.grid(depth = c(1,2,3,4), shrinkage = c(0.1,0.01,0.005), max_it = 50000, bag_pct = c(0.6,0.8,1.0))
+params = expand.grid(depth = seq(7), 
+                     shrinkage = c(0.05,0.01,0.005,0.001), 
+                     max_it = 5*1000, 
+                     bag_pct = c(0.6,0.8,1.0))
 
 res = ldply(seq(nrow(params)), function(i){
   p = params[i,]
   res = run_gbm(formula.gbm, df,p$max_it, p$shrinkage, p$depth, p$bag_pct)
 })
 
-ggplot(res, aes(it, cv_error, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(depth~bag_pct)
+ggplot(res, aes(it, cv_error, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(bag_pct ~ depth)
 
-ggplot(res, aes(it, train_error, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(depth~bag_pct)
+ggplot(res, aes(it, train_error, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(bag_pct ~ depth)
 
 ggplot(res, aes(depth, min_cv_error, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(~bag_pct)
 
 ggplot(res, aes(depth, auc, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(~bag_pct)
 
 ggplot(res, aes(depth, best_it, group =shrinkage, color =factor(shrinkage) )) + geom_line() + facet_grid(~bag_pct)
+
+```
+
+## GBM Depth
+
+```{r gbm_tune_depth}
+
+params = expand.grid(depth = c(seq(7),10), shrinkage = c(0.01), max_it = 3*1000, bag_pct = c(0.4, 0.6,0.8,1.0))
+
+res = ldply(seq(nrow(params)), function(i){
+  p = params[i,]
+  res = run_gbm(formula.gbm, df,p$max_it, p$shrinkage, p$depth, p$bag_pct)
+})
+
+ggplot(res, aes(it, cv_error, group =depth, color =factor(depth) )) + geom_line() +
+  facet_wrap(~bag_pct)
+
+ggplot(res, aes(it, cv_error, group =bag_pct, color =factor(bag_pct) )) + geom_line() +
+  facet_wrap(~depth)
+
+ggplot(res, aes(it, train_error, group =depth, color =factor(depth) )) + geom_line() +
+   facet_wrap(~bag_pct)
+
+ggplot(res, aes(depth, min_cv_error, group =bag_pct, color =factor(bag_pct) )) + geom_line()+ geom_point()
+
+ggplot(res, aes(depth, auc, group =bag_pct, color =factor(bag_pct) )) + geom_line()+ geom_point()
+
+ggplot(res, aes(depth, best_it, group =bag_pct, color =factor(bag_pct) )) + geom_line() + geom_point()
 
 ```
 

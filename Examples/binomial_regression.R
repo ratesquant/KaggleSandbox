@@ -1,5 +1,6 @@
 library(gbm)
 library(rpart)
+library(party)
 library(data.table)
 library(tree)
 library(plyr)
@@ -45,22 +46,40 @@ plot_binmodel_cdf(actual, pred.tree)
 
 ## Random forest ------ 
 set.seed(101)
-model.rf = randomForest(as.factor(Survived) ~ Pclass + Sex,  data = df, ntree=5000, importance=TRUE)
+model.rf = randomForest(as.factor(Survived) ~ Pclass + Sex  + SibSp + Parch + Fare + Embarked,  
+                        data = df, ntree=5000, importance=TRUE, na.action = na.omit)
 summary(model.rf)
 importance(model.rf)
 plot(model.rf)
+varImpPlot(model.rf)
 
 ggplot(data.table(model.rf$err.rate), aes(seq_along(OOB),OOB)) + geom_point()
 
 pred.rf = predict(model.rf, data = df, type = 'prob')[,2]
 
-plot_binmodel_percentiles(actual, pred.rf, n = 10, equal_count_buckets = T)
-plot_binmodel_cdf(actual, pred.rf)
+plot_binmodel_predictions(actual, pred.rf)
 
+## Random forest: utilizing conditional inference trees
+model.rf2 <- cforest(as.factor(Survived) ~ Pclass + Sex + Age + SibSp + Parch + Fare +
+                 Embarked,
+               data = df, 
+               controls=cforest_unbiased(ntree=2000, mtry=3))
 
-## Random forest ------ 
+res = predict(model.rf2, df, OOB=TRUE, type = "prob")
+res = ldply(res, function(a) { data.frame(unlist(a))})
 
-model.ct = ctree(as.factor(Survived) ~ Pclass + Sex + age, data=df)
+pred.rf2 = res[,3]
+plot_binmodel_predictions(actual, pred.rf2)
+
+## Conditional Inference Trees ------ 
+
+model.ct = ctree(as.factor(Survived) ~ Pclass + Sex + Age + SibSp + Parch + Fare +
+                   Embarked, data=df)
+pred.ct = predict(model.ct, df, type = "prob")
+pred.ct = ldply(pred.ct, function(a) { data.frame(a[1], a[2])})[,2]
+plot_binmodel_predictions(actual, pred.ct)
+plot(model.ct)
+
 
 ##  GBM ------ 
 set.seed(101)

@@ -165,11 +165,11 @@ model.gbm  = gbm(formula.gbm,
  best_it.gbm = gbm.perf(model.gbm, plot.it = F)
  pred.gbm = predict(model.gbm, n.trees = best_it.gbm, type = 'response')
 
- res = ldply(seq( length(model.gbm$cv.error)), function(it){
+ res = ldply(seq(length(model.gbm$cv.error)), function(it){
   pred.gbm = predict(model.gbm, n.trees = it, type = 'response')
    auc = gbm.roc.area(df$Survived, pred.gbm)
    data.frame(it, auc, 
-              cv_error = model.gbm$cv.error[it],
+              cv_error = ifelse(it == 0, NaN, model.gbm$cv.error[it]),
               ks = 0.01*binmodel_ks(df$Survived, pred.gbm))
  })
   

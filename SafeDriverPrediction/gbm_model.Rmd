@@ -110,7 +110,7 @@ set.seed(101)
 n_events = sum(df$target[train_index] == 1)
 n_non_events = sum(df$target[train_index] == 0)
 n_total = length(df$target[train_index] )
-non_event_sample_size = min(3*n_events,n_non_events)
+non_event_sample_size = min(5*n_events,n_non_events)
 sample_size = non_event_sample_size + n_events
 non_event_sample = sample.int(n_non_events,non_event_sample_size,replace = FALSE)
 sampling_correction = log(( sample_size - n_events ) / (n_total - n_events))
@@ -155,8 +155,8 @@ formula.gbm = formula(stri_join( 'target ~ ', stri_join(all_vars %!in_set% exclu
 
 model_vars = all.vars(formula.gbm) %!in_set% c('target')
 var.monotone = rep(0, length(model_vars))
-var.monotone[model_vars %in% c('ps_car_13', 'ps_reg_03', 'ps_reg_02', 'ps_reg_01', 'ps_car_15','ps_calc_10','ps_calc_03','ps_calc_08','ps_car_12','ps_car_02','ps_calc_14','ps_calc_02')]  = 1
-var.monotone[model_vars %in% c('ps_ind_15', 'ps_car_14','ps_calc_13','ps_calc_04')]  =  -1
+#var.monotone[model_vars %in% c('ps_car_13', 'ps_reg_03', 'ps_reg_02', 'ps_reg_01', 'ps_car_15','ps_calc_10','ps_calc_03','ps_calc_08','ps_car_12','ps_car_02','ps_calc_14','ps_calc_02')]  = 1
+#var.monotone[model_vars %in% c('ps_ind_15', 'ps_car_14','ps_calc_13','ps_calc_04')]  =  -1
 
 cv_folds = 0
 max_it = 8100

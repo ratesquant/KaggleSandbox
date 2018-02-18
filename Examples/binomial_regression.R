@@ -23,47 +23,55 @@ df[, (cat_vars):=lapply(.SD, as.factor), .SDcols = cat_vars]
 
 factor_vars = names(df)[sapply(df, class) == 'factor']
 
-## Logistic ------ 
-model.glm = glm('Survived ~ Pclass + Sex', family = binomial(link = "logit"), data = df)
+sapply(df, function(x) any(is.na(x)))
+
+## Logistic ------ ks = 55.23
+model.glm = glm('Survived ~ Pclass + Sex + SibSp ', family = binomial(link = "logit"), data = df)
 summary(model.glm)
 
 pred.glm = predict(model.glm, data = df, type = 'response')
 
 plot_binmodel_predictions(actual, pred.glm)
-plot_binmodel_percentiles(actual, pred.glm, n = 20, equal_count_buckets = T)
-plot_binmodel_cdf(actual, pred.glm)
 
-## Tree -------------
-model.tree = tree('Survived ~ Pclass + Sex',  data = df)
+## Tree ------------- ks=63.22
+model.tree = tree('Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked',  data = df)
 summary(model.tree)
 plot(model.tree)
 text(model.tree, pretty = 0)
 
 pred.tree = predict(model.tree, newdata = df, type = 'vector')
-plot_binmodel_percentiles(actual, pred.tree, n = 20, equal_count_buckets = F)
-plot_binmodel_cdf(actual, pred.tree)
+plot_binmodel_predictions(actual, pred.tree)
 
 
-## Random forest ------ 
+## Random forest ------ ks=63.19
+#does not handle missing values
 set.seed(101)
-model.rf = randomForest(as.factor(Survived) ~ Pclass + Sex  + SibSp + Parch + Fare + Embarked,  
-                        data = df, ntree=5000, importance=TRUE, na.action = na.omit)
+df_imp = df
+df_imp$Survived = factor(df_imp$Survived)
+df_imp <- rfImpute(Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked, df_imp)
+model.rf = randomForest(Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked,  
+                        data = df_imp, ntree=5000, importance=TRUE, na.action = na.omit)
 summary(model.rf)
 importance(model.rf)
 plot(model.rf)
 varImpPlot(model.rf)
 
-ggplot(data.table(model.rf$err.rate), aes(seq_along(OOB),OOB)) + geom_point()
+ggplot(data.table(model.rf$err.rate), aes(seq_along(OOB),OOB)) + geom_line()
 
 pred.rf = predict(model.rf, data = df, type = 'prob')[,2]
 
 plot_binmodel_predictions(actual, pred.rf)
 
-## Random forest: utilizing conditional inference trees
+#result <- rfcv(df_imp, df_imp$Survived, cv.fold=3)
+#with(result, plot(n.var, error.cv, log="x", type="o", lwd=2))
+
+## Random forest: utilizing conditional inference trees ----- (ks=68.94)
 model.rf2 <- cforest(as.factor(Survived) ~ Pclass + Sex + Age + SibSp + Parch + Fare +
                  Embarked,
                data = df, 
                controls=cforest_unbiased(ntree=2000, mtry=3))
+varimp(model.rf2)
+varimp(model.rf2, conditional = TRUE)
 
 res = predict(model.rf2, df, OOB=TRUE, type = "prob")
 res = ldply(res, function(a) { data.frame(unlist(a))})
@@ -73,8 +81,7 @@ plot_binmodel_predictions(actual, pred.rf2)
 
 ## Conditional Inference Trees ------ 
 
-model.ct = ctree(as.factor(Survived) ~ Pclass + Sex + Age + SibSp + Parch + Fare +
-                   Embarked, data=df)
+model.ct = ctree(as.factor(Survived) ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked, data=df)
 pred.ct = predict(model.ct, df, type = "prob")
 pred.ct = ldply(pred.ct, function(a) { data.frame(a[1], a[2])})[,2]
 plot_binmodel_predictions(actual, pred.ct)
@@ -82,20 +89,22 @@ plot(model.ct)
 
 
 ##  GBM ------ 
+#73.86, 0.9290 0.81427  
+#67.91  0.9022 0.83416
 set.seed(101)
-formula.gbm = formula(Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare)
+formula.gbm = formula(Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked)
 model_vars = all.vars(formula.gbm) %!in_set% c('Survived')
 var.monotone = rep(0, length(model_vars))
 var.monotone[model_vars %in% c('Age')]  = -1
-var.monotone[model_vars %in% c('Fare')] =  1
+var.monotone[model_vars %in% c('')] =  1
 model.gbm  = gbm(formula.gbm, 
                             distribution = "bernoulli",
-                            n.trees = 10000,
+                            n.trees = 1000,
                             cv.folds=10,
-                            shrinkage = 0.001,
-                            interaction.depth=3,
+                            shrinkage = 0.01,
+                            interaction.depth=5,
                  train.fraction = 1.0,
-                 bag.fraction = 0.7,
+                 bag.fraction = 0.6,
                  n.cores = 2,
                  var.monotone = var.monotone,
                  data = df[,all.vars(formula.gbm), with = F])
@@ -115,7 +124,7 @@ plot_gbminteractions(var_interaction)
 var_inter3 = gbm_interactions(model.gbm, df, iter = best_it.gbm, min_influence = 1, degree = 3) 
 
 plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var), output_type = 'response')
-marrangeGrob(plots, nrow = 2, ncol = 3, top = NULL)
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 
 plots = plot_gbmpartial_2d(model.gbm, best_it.gbm, as.character(subset(var_interaction,interaction_score>0.1)$vars), output_type = 'response')
 marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)

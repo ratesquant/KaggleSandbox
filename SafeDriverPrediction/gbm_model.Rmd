@@ -110,8 +110,10 @@ set.seed(101)
 n_events = sum(df$target[train_index] == 1)
 n_non_events = sum(df$target[train_index] == 0)
 n_total = length(df$target[train_index] )
-non_event_sample = sample.int(n_non_events,n_events,replace = FALSE)
-sampling_correction = log(n_events/(n_total - n_events))
+non_event_sample_size = min(3*n_events,n_non_events)
+sample_size = non_event_sample_size + n_events
+non_event_sample = sample.int(n_non_events,non_event_sample_size,replace = FALSE)
+sampling_correction = log(( sample_size - n_events ) / (n_total - n_events))
 train_index_small = train_index
 train_index_small = (df$target==1) & !is.na(df$target)
 train_index_small[ which(df$target==0)[non_event_sample]] = TRUE
@@ -134,18 +136,18 @@ actual = as.numeric(df$target)
 #only keep several car_11 levels
 
 df[,ps_car_11_cat_ex:=as.character(ps_car_11_cat)]
-df[ps_car_11_cat %!in% c('49','51','62','84','20','17'), ps_car_11_cat_ex:='otr']
+df[ps_car_11_cat %!in% c('49','51','50','62','84','20','17','18','94','58','63','81','72'), ps_car_11_cat_ex:='otr']
 df[,ps_car_11_cat_ex:=factor(ps_car_11_cat_ex)]
 table(df$ps_car_11_cat_ex[train_index_small])
 
-df[,ps_car_04_cat_ex:=as.character(ps_car_04_cat)]
-df[ps_car_04_cat %in% c('3','4','5','7','6'),ps_car_04_cat_ex:='otr']
-df[,ps_car_04_cat_ex:=factor(ps_car_04_cat_ex)]
-table(df$ps_car_04_cat_ex[train_index_small])
+#df[,ps_car_04_cat_ex:=as.character(ps_car_04_cat)]
+#df[ps_car_04_cat %in% c('3','4','5','7','6'),ps_car_04_cat_ex:='otr']
+#df[,ps_car_04_cat_ex:=factor(ps_car_04_cat_ex)]
+#table(df$ps_car_04_cat_ex[train_index_small])
 
 all_vars = names(df) %!in_set% c('id', 'target')
 exclude_vars = c('ps_car_11_cat',
-                 'ps_ind_11_bin','ps_ind_10_bin','ps_ind_13_bin','ps_car_02_cat', 'ps_calc_20_bin','ps_calc_20_bin','ps_calc_18_bin','ps_ind_12_bin','ps_ind_14','ps_calc_19_bin','ps_car_10_cat', 'ps_calc_17_bin', 'ps_ind_18_bin','ps_calc_15_bin', 'ps_calc_16_bin', 'ps_car_08_cat','ps_calc_01', 'ps_calc_09','ps_calc_12') #inf <0.1
+                 'ps_ind_11_bin','ps_ind_10_bin','ps_ind_13_bin', 'ps_calc_20_bin','ps_calc_20_bin','ps_calc_18_bin','ps_ind_12_bin','ps_ind_14','ps_calc_19_bin','ps_car_10_cat', 'ps_calc_17_bin', 'ps_ind_18_bin','ps_calc_15_bin', 'ps_calc_16_bin','ps_calc_01', 'ps_calc_09','ps_calc_12','ps_car_02_cat') #inf <0.1
 
 set.seed(1012356)
 
@@ -153,8 +155,8 @@ formula.gbm = formula(stri_join( 'target ~ ', stri_join(all_vars %!in_set% exclu
 
 model_vars = all.vars(formula.gbm) %!in_set% c('target')
 var.monotone = rep(0, length(model_vars))
-var.monotone[model_vars %in% c('ps_car_13', 'ps_reg_03', 'ps_reg_02', 'ps_reg_01', 'ps_car_15')]  = 1
-var.monotone[model_vars %in% c('ps_ind_15', 'ps_car_14')]  =  -1
+var.monotone[model_vars %in% c('ps_car_13', 'ps_reg_03', 'ps_reg_02', 'ps_reg_01', 'ps_car_15','ps_calc_10','ps_calc_03','ps_calc_08','ps_car_12','ps_car_02','ps_calc_14','ps_calc_02')]  = 1
+var.monotone[model_vars %in% c('ps_ind_15', 'ps_car_14','ps_calc_13','ps_calc_04')]  =  -1
 
 cv_folds = 0
 max_it = 10000
@@ -164,13 +166,16 @@ model.gbm  = gbm(formula.gbm,
                  n.trees = max_it,
                  cv.folds = cv_folds,
                  shrinkage = 0.002,
-                 interaction.depth=5,
+                 interaction.depth=6,
                  train.fraction = 1.0,
                  bag.fraction = 0.8,
                  n.cores = 2,
                  var.monotone = var.monotone,
                  data = df[train_index_small, all.vars(formula.gbm), with = F],
                  verbose = FALSE)
+
+saveRDS(model.gbm, file.path(working_folder,'SafeDriverPrediction/model.rds'))
+#model.gbm = readRDS(file.path(working_folder,'SafeDriverPrediction/model.rds'))
 
 plot_gbmiterations(model.gbm)
 
@@ -193,7 +198,7 @@ marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
 
 plot_binmodel_predictions(actual[train_index_small], pred.gbm)
 
-plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var[var_inf$rel.inf>1.0]), output_type = 'response')
+plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var[var_inf$rel.inf>0.1]), output_type = 'response')
 marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 
 plots = llply(all.vars(formula.gbm), function(var_name) {
@@ -219,9 +224,14 @@ marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 
 plot_profile(pred.gbm_full[train_index], actual[train_index],df[['ps_car_11_cat']][train_index], error_band = 'binom') 
 
+plot_profile(pred.gbm_full[train_index], actual[train_index],df[['ps_car_11_cat_ex']][train_index], error_band = 'binom') 
+
 p1 = plot_binmodel_percentiles(actual[train_index], pred.gbm_full[train_index], n = 20, equal_count_buckets = T)
 p2 = plot_binmodel_percentiles(actual[train_index], pred.gbm_full[train_index], n = 20, equal_count_buckets = F)
 grid.arrange(p1,p2)
+
+#df_plot = data.table(act = actual[train_index], model = pred.gbm_full[train_index], prof = df[['ps_car_11_cat']][train_index])
+#ggplot(df_plot[,.(.N,model = mean(model), act = mean(act)), by =.(prof)], aes(prof, model)) + geom_point() + geom_point(aes(prof, act), color = 'red')
 ```
 
 ## XGBoost Model:

@@ -1,0 +1,68 @@
+---
+title: "Overfitting"
+author: "Alex"
+date: "February 18, 2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(gbm)
+library(data.table)
+library(plyr)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(xgboost)
+#library(caret)
+
+working_folder = 'C:/Dev/Kaggle/'
+
+source(file.path(working_folder, '/Utils/common.R'))
+
+```
+
+## Data
+
+```{r data}
+n = 5000
+k = 50
+
+df = data.table(matrix(rnorm(n * (k + 1)), nrow = n))
+setnames(df,"V51","y")
+
+```
+
+## GBM
+
+```{r gbm}
+
+model.gbm  = gbm(formula("y ~ ."),
+                 distribution = "gaussian",
+                 n.trees = 100,
+                 cv.folds = 5,
+                 shrinkage = 0.01,
+                 interaction.depth=7,
+                 train.fraction = 0.7,
+                 bag.fraction = 0.7,# 0.5 for small samples, 0.7 for large
+                 n.cores = 2,
+                 data = df,
+                 verbose = FALSE)
+
+plot_gbmiterations(model.gbm)
+
+best_it.gbm = gbm.perf(model.gbm, plot.it = F)
+
+pred.gbm = predict(model.gbm, n.trees = best_it.gbm)
+
+var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
+plot_gbminfluence(var_inf)
+
+
+```

@@ -1,0 +1,57 @@
+---
+title: "Evaluation Metrics"
+author: "Alex"
+date: "February 18, 2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(gbm)
+library(data.table)
+library(plyr)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(xgboost)
+library(wesanderson)
+#library(caret)
+
+working_folder = 'C:/Dev/Kaggle/'
+
+source(file.path(working_folder, '/Utils/common.R'))
+```
+
+## Data
+Confusion Matrix
+Gain and Lift Chart
+Kolmogorov Smirnov Chart
+AUC - ROC
+Gini Coefficient
+```{r date}
+n = 500
+x = rnorm(n)
+y = as.numeric(runif(n) > logit(x+1))
+df = data.table(x, y)
+
+model.glm = glm('y ~ x', family = binomial(link = "logit"), data = df)
+summary(model.glm)
+pred.glm = predict(model.glm, type = 'response') 
+
+plot_binmodel_predictions(y, pred.glm)
+plot_binmodel_cap(y, pred.glm)
+plot_profile(pred.glm, y, x)
+
+p1 = plot_binmodel_cap(y, pred.glm)
+p2 = plot_binmodel_roc(y, pred.glm)
+grid.arrange(p1,p2, nrow = 1)
+
+```
+

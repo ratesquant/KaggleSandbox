@@ -20,6 +20,7 @@ library(ggplot2)
 library(gridExtra)
 library(zip)
 library(xgboost)
+library(corrplot)
 #library(caret)
 
 working_folder = 'C:/Dev/Kaggle/'
@@ -110,7 +111,7 @@ set.seed(101)
 n_events = sum(df$target[train_index] == 1)
 n_non_events = sum(df$target[train_index] == 0)
 n_total = length(df$target[train_index] )
-non_event_sample_size = min(5*n_events,n_non_events)
+non_event_sample_size = min(3*n_events,n_non_events)
 sample_size = non_event_sample_size + n_events
 non_event_sample = sample.int(n_non_events,non_event_sample_size,replace = FALSE)
 sampling_correction = log(( sample_size - n_events ) / (n_total - n_events))
@@ -122,6 +123,10 @@ table(df$target[train_index])
 table(df$target[train_index_small])
 
 print(sprintf('%d (p = %.4f)', n_events, 100*n_events/n_total))
+
+corr_matrix = cor(df[,names(which(sapply(df, is.numeric))), with = F ], use="complete.obs")
+corrplot(corr_matrix, method="number", number.cex = 0.5, number.digits = 1)
+corrplot(corr_matrix, method="circle", number.cex = 0.5, order="hclust")
 
 ```
 

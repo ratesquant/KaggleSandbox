@@ -97,8 +97,40 @@ df[,WoodDeckSFRatio := WoodDeckSF/GrLivArea]
 df[,ScreenPorchRatio := ScreenPorch/GrLivArea]
 df[,LowQualFinSFRatio := LowQualFinSF/GrLivArea]
 df[,LowQualFinSFLog := log(LowQualFinSF + 1)]
+df[,X1stFlrSFLog := log(X1stFlrSF + 1)]
+df[,TotalBsmtSFLog := log(TotalBsmtSF + 1)]
 
 df[,RoomAvgArea :=  GrLivArea / TotRmsAbvGrd]
+
+#reduce number of catagories
+df[,isBrkFace :=  as.numeric(Exterior1st =='BrkFace') ]
+df[,isVinylSd :=  as.numeric(Exterior1st =='VinylSd') ]
+df[,isBanked  :=  as.numeric(LandContour =='Bnk') ]
+df[,isTypFunc :=  as.numeric(Functional == 'Typ')]
+df[,isAttGarageType :=  as.numeric(GarageType %in% c('Attchd','BuiltIn'))]
+df[,isUnfGarage:=  as.numeric(GarageFinish=='Unf')]
+df[,isCondition1Norm:=  as.numeric(Condition1=='Norm')]
+
+
+df[,isFireplaceQuPoor :=  as.numeric(FireplaceQu == 'Po')]
+df[,isFireplace2Plus :=  as.numeric(Fireplaces>1)]
+df[,isFullBath3Plus :=  as.numeric(FullBath>=3)]
+
+
+
+df[,KitchenQualEx :=  KitchenQual]
+df[KitchenQual == 'Fa',KitchenQualEx :=  'TA']
+df[,KitchenQualEx :=  factor(KitchenQualEx)]
+
+df[,BsmtFinType1Ex :=  BsmtFinType1]
+df[BsmtFinType1 %in% c('GLQ','ALQ'), BsmtFinType1Ex :=  'GQ']
+df[BsmtFinType1 %in% c('Unf','Rec'), BsmtFinType1Ex :=  'Rec']
+df[BsmtFinType1 %in% c('LwQ','BLQ'), BsmtFinType1Ex :=  'LQ']
+df[,BsmtFinType1Ex :=  factor(BsmtFinType1Ex)]
+
+
+
+table(df[,.(BsmtFinType1Ex,BsmtFinType1)])
 
 ```
 
@@ -130,13 +162,12 @@ ggplot(df, aes(HouseAge, HouseAge - RemodAge)) + geom_point()
 
 ## Variables
 ```{r gbm_vars}
-cat_vars = c('Neighborhood', 'BsmtQual', 'GarageFinish', 'KitchenQual', 'FireplaceQu', 'GarageType', 'ExterQual', 
-             'Functional', 'OverallCond', 'SaleCondition', 'CentralAir', 
-             'LandContour', 'MoSold', 'FullBath', 'BsmtFullBath', 'Condition1', 
-             'ExterCond', 'Exterior1st','Exterior2nd', 'BsmtFinType1', 'MSZoning',  'Fireplaces')
-con_vars = c('OverallQual', 'GrLivAreaLog', 'TotalBsmtSF', 'GarageCars', 
+cat_vars = c('BsmtQual', 'isUnfGarage', 'KitchenQualEx', 'isFireplaceQuPoor', 'isAttGarageType', 'ExterQual', 
+             'isTypFunc', 'OverallCond', 'SaleCondition', 'CentralAir', 
+             'isBanked', 'MoSold', 'isFullBath3Plus', 'BsmtFullBath', 'isCondition1Norm', 'BsmtFinType1Ex',  'isFireplace2Plus','isBrkFace')
+con_vars = c('OverallQual', 'GrLivAreaLog', 'TotalBsmtSFLog', 'GarageCars', 
              'OpenPorchSFRatio', 'ScreenPorchRatio', 'WoodDeckSFRatio', 'RemodAge', 'HouseAge', 
-             'YrSold','X1stFlrSF','BsmtFinSF1','LotArea','GarageArea')
+             'X1stFlrSFLog','BsmtFinSF1','LotAreaLog','GarageArea')
 #removed: LotFrontageRatio
 #quesinable vars: MasVnrAreaRatio, MasVnrArea, LotFrontageRatio
 #corr_matrix = cor(df[,con_vars], use="complete.obs")
@@ -157,7 +188,7 @@ results = list()
 
 ## Tune GBM
 
-```{r gbm_tune, eval = TRUE}
+```{r gbm_tune, eval = FALSE}
 
 fit_gbm <- function(formula.all, dfs, shrinkage, max_it, depth, bag_pct){
   var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
@@ -230,7 +261,7 @@ ggplot(res, aes(depth, best_it, group = shrinkage, color = factor(shrinkage))) +
                 n.trees = 4000,
                 shrinkage = 0.01, #0.01 or less
                 bag.fraction = 0.8,
-                interaction.depth = 4,
+                interaction.depth = 5,
                 cv.folds = 5,
                 train.fraction = 1.0,
                 var.monotone = var.monotone,
@@ -269,8 +300,10 @@ marrangeGrob(plots, nrow=4, ncol=4)
 
 var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
 
-var.monotone[allvars %in% c('OverallQual','OverallCond', 'GarageCars', 'ScreenPorch', 'LotArea', 'GrLivAreaLog','BsmtFullBath','WoodDeckSFRatio', 'OpenPorchSFRatio', 'ScreenPorchRatio', 'TotRmsAbvGrd', 'BsmtFinRatio', 'GarageArea','TotalBsmtSF')] = 1
+var.monotone[allvars %in% c('OverallQual','OverallCond', 'GarageCars', 'ScreenPorch', 'LotArea','LotAreaLog', 'GrLivAreaLog','BsmtFullBath','WoodDeckSFRatio', 'OpenPorchSFRatio', 'ScreenPorchRatio', 'TotRmsAbvGrd', 'BsmtFinRatio', 'GarageArea','TotalBsmtSF','BsmtFinSF1','X1stFlrSF')] = 1
 var.monotone[allvars %in% c('RemodAge', 'HouseAge')] = -1
+
+multi_level_cat_vars= c('Neighborhood','Exterior1st','Exterior2nd','Condition1','GarageType','MSZoning','Functional','BsmtFinType1')
 
 max_it = 3 * 1000 
 #0.01517, 0.001
@@ -280,8 +313,8 @@ model.gbm = gbm(formula.all,
                 distribution = 'gaussian',
                 n.trees = max_it,
                 shrinkage = 0.01, #0.001
-                bag.fraction = 0.7,
-                interaction.depth = 4,
+                bag.fraction = 0.8,
+                interaction.depth = 5,
                 cv.folds = 5,
                 train.fraction = 1.0,
                 var.monotone = var.monotone,
@@ -303,37 +336,52 @@ print(vars.importance)
 #write.clipboard(vars.importance, sep = '\t')
 
 #plot interactions
-#level2_interactions = gbm_interactions(model.gbm,  df[train_index, all.vars(formula.all)], iter = best_it, 1, 2)
-#plot_gbminteractions(level2_interactions)
+var_interaction = gbm_interactions(model.gbm, df[train_index,], iter = best_it, min_influence = 1, degree = 2) 
+plot_gbminteractions(subset(var_interaction, interaction_score>0.05))
+print(var_interaction)
 
+plots = plot_gbmpartial_2d(model.gbm, best_it.gbm, as.character(subset(var_interaction,interaction_score>0.1)$vars), output_type = 'response')
+marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
+
+#plot partials
 plots = plot_gbmpartial(model.gbm, best_it, as.character(vars.importance$var)[vars.importance$rel.inf>.1], output_type = 'link')
 marrangeGrob(plots, nrow=4, ncol=4)
+
+plots =  plot_gbmpartial(model.gbm, best_it, multi_level_cat_vars %in_set% all.vars(formula.all), output_type = 'link')
+marrangeGrob(plots, nrow=2, ncol=2)
 
 print(paste('vars to remove:', paste(vars.importance$var[vars.importance$rel.inf<=.1],collapse = ' ')))
 plots = plot_gbmpartial(model.gbm, best_it, as.character(vars.importance$var)[vars.importance$rel.inf<=.1], output_type = 'link')
 marrangeGrob(plots, nrow=4, ncol=4)
 
 #correlation for model vars
-df_num = df[train_index, !sapply(df, is.factor ), with =F]
+df_num = df[train_index, sapply(df, is.numeric ), with =F]
 df_num = df_num[,names(df_num) %in% all.vars(formula.all),with =F]
 df_num[,Residual := SalePriceLog - pred.gbm[train_index]]  
 corr_matrix = cor(df_num, use="complete.obs")
-corrplot(corr_matrix, type="lower", order ="hclust",  addrect=3)
+corrplot(corr_matrix, type="lower",  addrect=3)
 
 
 #profiles with respect to model vars (should match well)
 plots <- llply(all.vars(formula.all), function(vname){
-  plot_result = plot_profile(pred.gbm[train_index], df$SalePriceLog[train_index], df[[vname]][train_index],error_band ='normal') + ggtitle(vname)
+  plot_result = plot_profile(pred.gbm[train_index], df$SalePriceLog[train_index], df[[vname]][train_index], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
   return (plot_result)
 })
 marrangeGrob(plots, nrow=4, ncol=4)
 
 #profiles with respect to extra vars
 plots <- llply(names(df)[-1] %!in_set% all.vars(formula.all), function(vname){
-  plot_result = plot_profile(pred.gbm[train_index], df$SalePriceLog[train_index], df[[vname]][train_index], error_band ='normal') + ggtitle(vname)
+  plot_result = plot_profile(pred.gbm[train_index], df$SalePriceLog[train_index], df[[vname]][train_index], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
   return (plot_result)
 })
 marrangeGrob(plots, nrow=4, ncol=4)
+
+#profiles with respect to extra vars
+plots <- llply(multi_level_cat_vars %in_set% names(df), function(vname){
+  plot_result = plot_profile(pred.gbm[train_index], df$SalePriceLog[train_index], df[[vname]][train_index], bucket_count = 10, min_obs = 10, error_band ='normal') + ggtitle(vname)
+  return (plot_result)
+})
+marrangeGrob(plots, nrow=2, ncol=2)
 
 
 ```

@@ -3,6 +3,8 @@ title: "Clicks"
 author: "Alex"
 date: "March 8, 2018"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -10,21 +12,22 @@ rm(list = ls())
 knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
 options(warn=-1)
 
-library(reshape2)
+#library(reshape2)
 library(ggplot2)
-library(Hmisc)
+#library(Hmisc)
 library(plyr)
 library(gridExtra)
 
 library(gbm)
-library(randomForest)
-library(nnet)
-library(e1071)
-library(MASS)
+#library(randomForest)
+#library(nnet)
+#library(e1071)
+#library(MASS)
 library(corrplot)
 library(data.table)
 library(lubridate)
-
+library(stringi)
+library(zip)
 ```
 
 ## Loand Data
@@ -41,24 +44,145 @@ working_folder = 'C:/Dev/Kaggle/'
 source(file.path(working_folder, 'Utils/common.R'))
 
 train <- fread(file.path(working_folder,'Clicks/data/train.csv'), check.names = TRUE)
-test  <- fread(file.path(working_folder,'Clicks/data/test.csv'), check.names = TRUE) # 1459   80
-test[,SalePrice := NA]
-df = rbind(train, test)
-df[,SalePrice := 1e-3 * SalePrice]
+test  <- fread(file.path(working_folder,'Clicks/data/test.csv'),  check.names = TRUE) # 1459   80
 
-test_index = is.na(df$SalePrice)
-train_index = !test_index
+#outcome based sampling
+set.seed(random_seed)
 
-df[, train_set := factor(!is.na(SalePrice)) ]
-summary(cars)
+n_events = sum(train$is_attributed != 0)
+n_non_events = sum(train$is_attributed == 0)
+
+n_total = length(train$is_attributed)
+non_event_sample_size = min(1*n_events,n_non_events)
+sample_size = non_event_sample_size + n_events
+
+non_event_sample = sample.int(n_non_events,non_event_sample_size,replace = FALSE)
+sampling_correction = log(( sample_size - n_events ) / (n_total - n_events))
+
+train_index_small = train$is_attributed != 0
+train_index_small[ which(train$is_attributed==0)[non_event_sample]] = TRUE
+
+table(train$is_attributed)
+table(train$is_attributed[train_index_small])
+
+print(sprintf('%d (p = %.4f)', n_events, 100*n_events/n_total))
+
+df = train[train_index_small,]
+rm(train)
+
+df[, click_time_sec:=second(click_time)]
+df[, click_time_min:=minute(click_time)]
+df[, click_time_hour:=hour(click_time)]
+df[, click_time_day:=day(click_time)]
+
+test[, click_time_hour:=hour(click_time)]
+
+gc()
+
+#attributed_time - not sure why we need this
+
 ```
 
-## Including Plots
+## View Data
+```{r view_data}
 
-You can also embed plots, for example:
+table(df[,.(device)])
+table(df[,.(is_attributed)])
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+ggplot(df[,.(.N, p = mean(is_attributed)), by = .(ip)][N>1,], aes(N, p)) + geom_point()
+
+#
+avg_app = df[,.(.N, p = mean(is_attributed)), by = .(app)]
+avg_app = avg_app[order(p),]
+avg_app[,app_ex := seq(nrow(avg_app))]
+df[, app_ex := avg_app$app_ex[match(app,avg_app$app)] ]
+test[, app_ex := avg_app$app_ex[match(app,avg_app$app)] ]
+
+
+avg_channel = df[,.(.N, p = mean(is_attributed)), by = .(channel)]
+avg_channel = avg_channel[order(p),]
+avg_channel[,channel_ex := seq(nrow(avg_channel))]
+df[, channel_ex := avg_channel$channel_ex[match(channel,avg_channel$channel)] ]
+test[, channel_ex := avg_channel$channel_ex[match(channel,avg_channel$channel)] ]
+
+avg_os = df[,.(.N, p = mean(is_attributed)), by = .(os)]
+avg_os = avg_os[order(p),]
+avg_os[,os_ex := seq(nrow(avg_os))]
+df[, os_ex := avg_os$os_ex[match(os,avg_os$os)] ]
+test[, os_ex := avg_os$os_ex[match(os,avg_os$os)] ]
+
+avg_ip = df[,.(.N, p = mean(is_attributed)), by = .(ip)]
+df[, ip_count := avg_ip$N[match(ip,avg_ip$ip)] ]
+test[, ip_count := avg_ip$N[match(ip,avg_ip$ip)]  ]
+
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## Model
+```{r model}
+set.seed(random_seed)
+
+cv_folds = 5
+max_it = 5000
+
+model_vars = c('app_ex','device','os_ex','channel_ex','click_time_hour','ip_count')
+
+formula.gbm = formula(stri_join( 'is_attributed ~ ', stri_join(model_vars, collapse = ' + ')))
+
+var.monotone = rep(0, length(model_vars))
+
+model.gbm  = gbm(formula.gbm,
+                 distribution = "bernoulli",
+                 n.trees = max_it,
+                 cv.folds = cv_folds,
+                 shrinkage = 0.01,
+                 interaction.depth=5,
+                 train.fraction = 1.0,
+                 bag.fraction = 0.7,# 0.5 for small samples, 0.7 for large
+                 n.cores = 2,
+                 var.monotone = var.monotone,
+                 data = df[, all.vars(formula.gbm), with = F],
+                 verbose = FALSE)
+
+plot_gbmiterations(model.gbm)
+
+best_it.gbm = ifelse(cv_folds==0, max_it, gbm.perf(model.gbm, plot.it = F))
+
+#influence
+var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
+plot_gbminfluence(var_inf)
+print(var_inf)
+
+plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var[var_inf$rel.inf>0.1]), output_type = 'response')
+marrangeGrob(plots, nrow = 3, ncol = 2, top = NULL)
+
+pred.gbm = predict(model.gbm, n.trees = best_it.gbm, type = 'response')
+plot_binmodel_roc(df$is_attributed, pred.gbm)
+gbm.roc.area(df$is_attributed, pred.gbm) #0.9700636
+#0.970
+
+plots = llply(c(all.vars(formula.gbm),'click_time_sec', 'click_time_min','click_time_sec'), function(var_name) {
+  p = plot_profile(pred.gbm, df$is_attributed, df[[var_name]], error_band = 'binom') +
+    ggtitle(var_name) +  theme(title =element_text(size=8))
+  return( p )
+})
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+
+#compute prediction
+pred.gbm_link = predict(model.gbm, n.trees = best_it.gbm, newdata = test, type = 'link')
+model_pred = 1.0 / (1.0 + exp(-pred.gbm_link - sampling_correction))
+
+```
+
+
+## Submit
+
+```{r submit, echo=FALSE}
+
+  submit <- data.table(click_id = test$click_id, is_attributed = model_pred)
+  file = file.path(working_folder, "Clicks/model_pred.csv")
+  fwrite(submit, file = file, row.names = FALSE)
+  zip(paste(file, '.zip', sep = ''), file)
+  print(file)
+
+```

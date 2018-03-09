@@ -1,0 +1,64 @@
+---
+title: "Clicks"
+author: "Alex"
+date: "March 8, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(reshape2)
+library(ggplot2)
+library(Hmisc)
+library(plyr)
+library(gridExtra)
+
+library(gbm)
+library(randomForest)
+library(nnet)
+library(e1071)
+library(MASS)
+library(corrplot)
+library(data.table)
+library(lubridate)
+
+```
+
+## Loand Data
+
+```{r data_load}
+
+# READ DATA ---- 
+
+random_seed = 12345678
+
+working_folder = 'C:/Dev/Kaggle/'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
+source(file.path(working_folder, 'Utils/common.R'))
+
+train <- fread(file.path(working_folder,'Clicks/data/train.csv'), check.names = TRUE)
+test  <- fread(file.path(working_folder,'Clicks/data/test.csv'), check.names = TRUE) # 1459   80
+test[,SalePrice := NA]
+df = rbind(train, test)
+df[,SalePrice := 1e-3 * SalePrice]
+
+test_index = is.na(df$SalePrice)
+train_index = !test_index
+
+df[, train_set := factor(!is.na(SalePrice)) ]
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

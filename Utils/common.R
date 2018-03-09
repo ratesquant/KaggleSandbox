@@ -48,6 +48,11 @@ cor.mtest <- function(mat, conf.level = 0.95){
   return(list(p.mat, lowCI.mat, uppCI.mat))
 }
 
+cutq <- function(x, probs = seq(0, 1, 0.1), na.rm = TRUE, include.lowest = TRUE){
+  res = cut(x, breaks = quantile(x,probs = probs, na.rm = na.rm),include.lowest = include.lowest)
+  return(res)
+}
+
 ## GBM plotting functions ----------
 
 gbm_interactions <- function(gbm_model, data, iter, min_influence = 1, degree = 2){
@@ -353,7 +358,7 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
         geom_line(color = 'black', size = 1) +
         #geom_point(aes(buckets, model), color = 'red') + 
         geom_line(aes(buckets, model), color = 'red', size = 1, alpha= 0.8) +
-        ylab('actual (bk) vs model (rd)') + 
+        #ylab('actual (bk) vs model (rd)') + 
         theme(legend.position = 'none', axis.title.x = element_blank(), axis.text.x = element_text(angle = 90, hjust = 1)) +
         scale_x_discrete(breaks = xlabels) +
         geom_ribbon(aes(ymax = actual_max, ymin = actual_min), fill = 'blue', alpha = 0.05) +
@@ -366,12 +371,19 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
         geom_line(color = 'black', size = 1) +
         #geom_point(aes(profile, model), color = 'red') + 
         geom_line(aes(profile, model), color = 'red', size = 1, alpha= 0.8) +
-        ylab('actual (bk) vs model (rd)') + 
+        #ylab('actual (bk) vs model (rd)') + 
         theme(legend.position = 'none', axis.title.x = element_blank()) + 
         geom_ribbon(aes(ymax = actual_max, ymin = actual_min), fill = 'blue', alpha = 0.05) +
         geom_errorbar(aes(ymax = actual_max_break, ymin = actual_min_break), width = 0.0, color = 'blue', alpha = 0.3) +
         coord_cartesian(ylim = c(y_min, y_max)) 
-      }
+    }
+    
+    res_conf_bk = subset(res,confidence_break==1)
+    if(nrow(res_conf_bk)>0)
+    {
+      plot_result = plot_result +      
+        geom_point(data = res_conf_bk, aes(profile, model), color = 'red')
+    }
     
   }
   return (plot_result)

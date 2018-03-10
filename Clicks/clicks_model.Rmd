@@ -74,12 +74,12 @@ df[, click_time_sec:=second(click_time)]
 df[, click_time_min:=minute(click_time)]
 df[, click_time_hour:=hour(click_time)]
 df[, click_time_day:=day(click_time)]
+df[, click_time_hour_ex:=click_time_hour + (click_time_min + click_time_sec/60)/60]
+df[, click_time_seconds := as.double(difftime(click_time, min(click_time), unit="secs"))]
 
 test[, click_time_hour:=hour(click_time)]
 
 gc()
-
-#attributed_time - not sure why we need this
 
 ```
 
@@ -89,7 +89,7 @@ gc()
 table(df[,.(device)])
 table(df[,.(is_attributed)])
 
-ggplot(df[,.(.N, p = mean(is_attributed)), by = .(ip)][N>1,], aes(N, p)) + geom_point()
+#ggplot(df[,.(.N, p = mean(is_attributed)), by = .(ip)][N>1,], aes(N, p)) + geom_point()
 
 #
 avg_app = df[,.(.N, p = mean(is_attributed)), by = .(app)]
@@ -111,21 +111,41 @@ avg_os[,os_ex := seq(nrow(avg_os))]
 df[, os_ex := avg_os$os_ex[match(os,avg_os$os)] ]
 test[, os_ex := avg_os$os_ex[match(os,avg_os$os)] ]
 
-avg_ip = df[,.(.N, p = mean(is_attributed)), by = .(ip)]
-df[, ip_count := avg_ip$N[match(ip,avg_ip$ip)] ]
-test[, ip_count := avg_ip$N[match(ip,avg_ip$ip)]  ]
+avg_device = df[,.(.N, p = mean(is_attributed)), by = .(device)]
+avg_device = avg_device[order(p),]
+avg_device[,device_ex := seq(nrow(avg_device))]
+df[, device_ex := avg_device$device_ex[match(device,avg_device$device)] ]
+test[, device_ex := avg_device$device_ex[match(device,avg_device$device)] ]
+
+avg_ip = df[,.(.N, p = mean(is_attributed), 
+               os_per_ip = length(unique(os)),  
+               app_per_ip = length(unique(app)),
+               channel_per_ip = length(unique(channel)) ), by = .(ip)]
+df[, ip_count     := avg_ip$N[match(ip,avg_ip$ip) ] ]
+df[, ip_count_log := log(ip_count+1) ]
+df[, ip_prior := avg_ip$p[match(ip,avg_ip$ip)] ]
+df[, os_per_ip := avg_ip$os_per_ip[match(ip,avg_ip$ip)] ]
+df[, app_per_ip := avg_ip$app_per_ip[match(ip,avg_ip$ip)] ]
+df[, channel_per_ip := avg_ip$channel_per_ip[match(ip,avg_ip$ip)] ]
 
 
+
+test[, ip_count     := avg_ip$N[match(ip,avg_ip$ip) ] ]
+test[, ip_count_log := log(ip_count+1) ]
+test[, ip_prior := avg_ip$p[match(ip,avg_ip$ip)]  ]
+
+#check is the same ip can have multiple os, device or channel
+#time diff between clicks and ming time difference is not relevant
 ```
 
 ## Model
 ```{r model}
 set.seed(random_seed)
 
-cv_folds = 5
-max_it = 5000
+cv_folds = 0
+max_it = 1000
 
-model_vars = c('app_ex','device','os_ex','channel_ex','click_time_hour','ip_count')
+model_vars = c('app_ex','device_ex','os_ex','channel_ex','ip_prior','click_time_hour')
 
 formula.gbm = formula(stri_join( 'is_attributed ~ ', stri_join(model_vars, collapse = ' + ')))
 
@@ -137,7 +157,7 @@ model.gbm  = gbm(formula.gbm,
                  cv.folds = cv_folds,
                  shrinkage = 0.01,
                  interaction.depth=5,
-                 train.fraction = 1.0,
+                 train.fraction = 0.8,
                  bag.fraction = 0.7,# 0.5 for small samples, 0.7 for large
                  n.cores = 2,
                  var.monotone = var.monotone,
@@ -153,24 +173,29 @@ var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
 plot_gbminfluence(var_inf)
 print(var_inf)
 
-plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var[var_inf$rel.inf>0.1]), output_type = 'response')
-marrangeGrob(plots, nrow = 3, ncol = 2, top = NULL)
+plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var), output_type = 'response')
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 
 pred.gbm = predict(model.gbm, n.trees = best_it.gbm, type = 'response')
 plot_binmodel_roc(df$is_attributed, pred.gbm)
+plot_binmodel_percentiles(df$is_attributed, pred.gbm, n = 50)
 gbm.roc.area(df$is_attributed, pred.gbm) #0.9700636
 #0.970
 
-plots = llply(c(all.vars(formula.gbm),'click_time_sec', 'click_time_min','click_time_sec'), function(var_name) {
-  p = plot_profile(pred.gbm, df$is_attributed, df[[var_name]], error_band = 'binom') +
+plots = llply(c(all.vars(formula.gbm),'click_time_min','click_time_sec','click_time_hour','ip_count','ip_prior','click_time_seconds','click_time_hour_ex'), function(var_name) {
+  p = plot_profile(pred.gbm, df$is_attributed, df[[var_name]], error_band = 'binom', bucket_count = 20) +
     ggtitle(var_name) +  theme(title =element_text(size=8))
   return( p )
 })
 marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 
-#compute prediction
-pred.gbm_link = predict(model.gbm, n.trees = best_it.gbm, newdata = test, type = 'link')
-model_pred = 1.0 / (1.0 + exp(-pred.gbm_link - sampling_correction))
+extra_vars = c('ip_count_log', 'os_per_ip','app_per_ip','channel_per_ip')
+plots = llply(extra_vars, function(var_name) {
+  p = plot_profile(pred.gbm, df$is_attributed, df[[var_name]], error_band = 'binom', bucket_count = 50) +
+    ggtitle(var_name) +  theme(title =element_text(size=8))
+  return( p )
+})
+marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
 
 ```
 
@@ -179,10 +204,15 @@ model_pred = 1.0 / (1.0 + exp(-pred.gbm_link - sampling_correction))
 
 ```{r submit, echo=FALSE}
 
+  #compute prediction
+  pred.gbm_link = predict(model.gbm, n.trees = best_it.gbm, newdata = test, type = 'link')
+  model_pred = 1.0 / (1.0 + exp(-pred.gbm_link - sampling_correction))
+
+
   submit <- data.table(click_id = test$click_id, is_attributed = model_pred)
   file = file.path(working_folder, "Clicks/model_pred.csv")
   fwrite(submit, file = file, row.names = FALSE)
-  zip(paste(file, '.zip', sep = ''), file)
+  zip(paste(file, '.zip', sep = ''), file, compression_level = 9)
   print(file)
 
 ```

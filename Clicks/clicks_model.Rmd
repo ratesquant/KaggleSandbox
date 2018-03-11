@@ -53,7 +53,7 @@ n_events = sum(train$is_attributed != 0)
 n_non_events = sum(train$is_attributed == 0)
 
 n_total = length(train$is_attributed)
-non_event_sample_size = min(1*n_events,n_non_events)
+non_event_sample_size = min(3*n_events,n_non_events)
 sample_size = non_event_sample_size + n_events
 
 non_event_sample = sample.int(n_non_events,non_event_sample_size,replace = FALSE)
@@ -80,6 +80,7 @@ df[, click_time_seconds := as.double(difftime(click_time, min(click_time), unit=
 test[, click_time_hour:=hour(click_time)]
 
 gc()
+tables()
 
 ```
 
@@ -136,6 +137,95 @@ test[, ip_prior := avg_ip$p[match(ip,avg_ip$ip)]  ]
 
 #check is the same ip can have multiple os, device or channel
 #time diff between clicks and ming time difference is not relevant
+
+df_num = df[, sapply(df, is.numeric ), with =F]
+corr_matrix = cor(df_num, use="pairwise.complete.obs")
+corr_matrix[is.na(corr_matrix)]<-0
+corrplot(corr_matrix,method = "circle",  type = "lower",  tl.cex = 0.4, order = "hclust")
+#corrplot(corr_matrix, method = "square", tl.cex = 0.4, order = "hclust")
+
+```
+
+## Tune
+```{r model_tune, eval = F}
+
+fit_gbm <- function(formula.all, dfs, dfs_out, shrinkage, max_it, depth, bag_pct){
+  
+  set.seed(random_seed)
+
+  var.monotone = rep(0, length(model_vars))
+  
+  model.gbm  = gbm(formula.all,
+                   distribution = "bernoulli",
+                   n.trees = max_it,
+                   cv.folds = 4,
+                   shrinkage = shrinkage,
+                   interaction.depth=depth,
+                   train.fraction = 1.0,
+                   bag.fraction = bag_pct,# 0.5 for small samples, 0.7 for large
+                   n.cores = 2,
+                   var.monotone = var.monotone,
+                   data = dfs,
+                   verbose = FALSE)
+
+  plot_gbmiterations(model.gbm)
+  
+  pred.gbm = predict(model.gbm, n.trees = best_it.gbm, type = 'response')
+  roc = gbm.roc.area(dfs$is_attributed, pred.gbm) 
+  
+  pred.gbm_out = predict(model.gbm, n.trees = best_it.gbm, newdata = dfs_out, type = 'response')
+  roc_out = gbm.roc.area(dfs_out$is_attributed, pred.gbm_out) 
+  
+  data.frame(it = seq(max_it), depth, bag_pct, shrinkage, max_it,
+             best_it = gbm.perf(model.gbm, plot.it = F), 
+             train_error =  model.gbm$train.error, 
+             cv_error = model.gbm$cv.error,
+             roc = roc,
+             roc_out = roc_out,
+             min_cv_error = min(model.gbm$cv.error))
+}
+
+
+model_vars = c('app_ex','device_ex','os_ex','channel_ex','ip_prior')
+
+formula.all = formula(stri_join( 'is_attributed ~ ', stri_join(model_vars, collapse = ' + ')))
+
+set.seed(random_seed)
+sample_index1 = sample.int(nrow(df), 50000)
+sample_index2 = sample.int(nrow(df),100000)
+length(intersect(sample_index1, sample_index2))
+
+dfs1 = df[sample_index1, all.vars(formula.all), with =FALSE]
+dfs2 = df[sample_index2, all.vars(formula.all), with =FALSE]
+
+params = expand.grid(depth = c(2,3,4,5,6,7), 
+                     shrinkage = c(0.02,0.01), 
+                     max_it = 3000, 
+                     bag_pct = c(0.8,0.9,1.0))
+
+res = ldply(seq(nrow(params)), function(i){
+  p = params[i,]
+  res = fit_gbm(formula.all, dfs1, dfs2, p$shrinkage, p$max_it, p$depth, p$bag_pct)
+})
+
+#best cv(4): 3, 0.9, 0.01, 2500 (depth, bag, shrink, it)
+#best auc  : 2, 0.9, 0.02, 1200
+
+setDT(res)
+
+ggplot(res[it>400,], aes(it, cv_error, group = shrinkage, color = factor(shrinkage))) + geom_line() + facet_grid(depth ~ bag_pct)
+
+ggplot(res, aes(depth, best_it, group = shrinkage, color = factor(shrinkage))) + 
+  geom_line() + geom_point() +  facet_wrap(~bag_pct)
+
+ggplot(res, aes(depth, min_cv_error, group = shrinkage, color = factor(shrinkage))) + 
+  geom_line() + geom_point() +  facet_wrap(~bag_pct)
+
+ggplot(res, aes(depth, roc_out, group = shrinkage, color = factor(shrinkage))) + 
+  geom_line() + geom_point() +  facet_wrap(~bag_pct)
+
+
+print( head(res[order(-roc_out),]) )
 ```
 
 ## Model
@@ -143,9 +233,9 @@ test[, ip_prior := avg_ip$p[match(ip,avg_ip$ip)]  ]
 set.seed(random_seed)
 
 cv_folds = 0
-max_it = 1000
+max_it = 2000
 
-model_vars = c('app_ex','device_ex','os_ex','channel_ex','ip_prior','click_time_hour')
+model_vars = c('app_ex','device_ex','os_ex','channel_ex','ip_prior')
 
 formula.gbm = formula(stri_join( 'is_attributed ~ ', stri_join(model_vars, collapse = ' + ')))
 
@@ -155,10 +245,10 @@ model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
                  n.trees = max_it,
                  cv.folds = cv_folds,
-                 shrinkage = 0.01,
-                 interaction.depth=5,
-                 train.fraction = 0.8,
-                 bag.fraction = 0.7,# 0.5 for small samples, 0.7 for large
+                 shrinkage = 0.02,
+                 interaction.depth=3,
+                 train.fraction = 0.5,
+                 bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
                  n.cores = 2,
                  var.monotone = var.monotone,
                  data = df[, all.vars(formula.gbm), with = F],
@@ -182,6 +272,12 @@ plot_binmodel_percentiles(df$is_attributed, pred.gbm, n = 50)
 gbm.roc.area(df$is_attributed, pred.gbm) #0.9700636
 #0.970
 
+roc_boot = ldply(seq(128), function(i){
+  sample_index = sample.int(nrow(df), 0.2*nrow(df))
+  res = data.frame(roc = gbm.roc.area(df$is_attributed[sample_index], pred.gbm[sample_index]))
+})
+ggplot(roc_boot, aes(roc)) + geom_histogram()
+
 plots = llply(c(all.vars(formula.gbm),'click_time_min','click_time_sec','click_time_hour','ip_count','ip_prior','click_time_seconds','click_time_hour_ex'), function(var_name) {
   p = plot_profile(pred.gbm, df$is_attributed, df[[var_name]], error_band = 'binom', bucket_count = 20) +
     ggtitle(var_name) +  theme(title =element_text(size=8))
@@ -189,13 +285,13 @@ plots = llply(c(all.vars(formula.gbm),'click_time_min','click_time_sec','click_t
 })
 marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 
-extra_vars = c('ip_count_log', 'os_per_ip','app_per_ip','channel_per_ip')
+extra_vars = c('ip_count_log', 'os_per_ip','app_per_ip','channel_per_ip','click_time_day')
 plots = llply(extra_vars, function(var_name) {
   p = plot_profile(pred.gbm, df$is_attributed, df[[var_name]], error_band = 'binom', bucket_count = 50) +
     ggtitle(var_name) +  theme(title =element_text(size=8))
   return( p )
 })
-marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
+marrangeGrob(plots, nrow = 3, ncol = 2, top = NULL)
 
 ```
 
@@ -204,7 +300,7 @@ marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
 
 ```{r submit, echo=FALSE}
 
-  #compute prediction
+  #compute prediction (sampling_correction = -6.000771)
   pred.gbm_link = predict(model.gbm, n.trees = best_it.gbm, newdata = test, type = 'link')
   model_pred = 1.0 / (1.0 + exp(-pred.gbm_link - sampling_correction))
 

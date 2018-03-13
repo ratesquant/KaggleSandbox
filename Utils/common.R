@@ -612,6 +612,9 @@ plot_binmodel_percentiles<-function(actual, model, n = 10, equal_count_buckets =
  
   df = data.table(actual, model, bucket)
   res = df[complete.cases(actual, model),agg_buckets(.SD), by = .(bucket)]
+  
+  #Brier score
+  bs = sqrt(sum(res$count * (res$avg_model - res$avg_actual)^2)/sum(res$count))
  
   p = ggplot(res, aes(avg_model, avg_actual)) + 
     geom_point() +  
@@ -620,6 +623,7 @@ plot_binmodel_percentiles<-function(actual, model, n = 10, equal_count_buckets =
     geom_abline(slope = 1, intercept = 0, colour = 'red', linetype = 2) +
     geom_point(data = res[pvalue < 0.5 * (1.0- conf)], aes(avg_model, avg_actual), color = 'red') +
     labs(x = "model",   y = "actual") + 
+    annotate("text", label = sprintf('BS = %0.4f', bs), x = 0, y = 1, hjust = 'left', vjust = 'top', color = 'gray', size = 5) +
 #   geom_rug(sides = 'b', alpha = 0.2) +
     theme(legend.position = 'none')
   

@@ -45,6 +45,7 @@ source(file.path(working_folder, 'Utils/common.R'))
 
 train <- fread(file.path(working_folder,'Clicks/data/train.csv'), check.names = TRUE)
 test  <- fread(file.path(working_folder,'Clicks/data/test.csv'),  check.names = TRUE) # 1459   80
+gc()
 
 #outcome based sampling
 set.seed(random_seed)
@@ -62,8 +63,8 @@ sampling_correction = log(( sample_size - n_events ) / (n_total - n_events))
 train_index_small = train$is_attributed != 0
 train_index_small[ which(train$is_attributed==0)[non_event_sample]] = TRUE
 
-table(train$is_attributed)
-table(train$is_attributed[train_index_small])
+train[,.(.N), by = .(is_attributed)]
+train[train_index_small,.(.N), by = .(is_attributed)]
 
 print(sprintf('%d (p = %.4f)', n_events, 100*n_events/n_total))
 
@@ -79,7 +80,7 @@ df[, click_time_seconds := as.double(difftime(click_time, min(click_time), unit=
 
 test[, click_time_hour:=hour(click_time)]
 
-gc()
+gc(reset = T)
 tables()
 
 ```
@@ -88,35 +89,24 @@ tables()
 ```{r view_data}
 
 table(df[,.(device)])
+table(df[,.(os)])
 table(df[,.(is_attributed)])
 
 #ggplot(df[,.(.N, p = mean(is_attributed)), by = .(ip)][N>1,], aes(N, p)) + geom_point()
 
-#
-avg_app = df[,.(.N, p = mean(is_attributed)), by = .(app)]
-avg_app = avg_app[order(p),]
-avg_app[,app_ex := seq(nrow(avg_app))]
-df[, app_ex := avg_app$app_ex[match(app,avg_app$app)] ]
-test[, app_ex := avg_app$app_ex[match(app,avg_app$app)] ]
-
-
-avg_channel = df[,.(.N, p = mean(is_attributed)), by = .(channel)]
-avg_channel = avg_channel[order(p),]
-avg_channel[,channel_ex := seq(nrow(avg_channel))]
-df[, channel_ex := avg_channel$channel_ex[match(channel,avg_channel$channel)] ]
-test[, channel_ex := avg_channel$channel_ex[match(channel,avg_channel$channel)] ]
-
-avg_os = df[,.(.N, p = mean(is_attributed)), by = .(os)]
-avg_os = avg_os[order(p),]
-avg_os[,os_ex := seq(nrow(avg_os))]
-df[, os_ex := avg_os$os_ex[match(os,avg_os$os)] ]
-test[, os_ex := avg_os$os_ex[match(os,avg_os$os)] ]
-
-avg_device = df[,.(.N, p = mean(is_attributed)), by = .(device)]
-avg_device = avg_device[order(p),]
-avg_device[,device_ex := seq(nrow(avg_device))]
-df[, device_ex := avg_device$device_ex[match(device,avg_device$device)] ]
-test[, device_ex := avg_device$device_ex[match(device,avg_device$device)] ]
+for (vname in c('app', 'channel', 'os','device','ip')) {
+  avg = df[,.(.N, p = mean(get('is_attributed'))), by = vname]
+  avg = avg[order(p),]
+  rare = avg[N<100,][[vname]] #ggplot(avg, aes(log10(N), p)) + geom_point()
+  avg[,ex := seq(0, 1, length.out = nrow(avg))]
+  df[,   stri_join(vname,'_ex') := avg$ex[match(get(vname),avg[[vname]])] ]
+  test[, stri_join(vname,'_ex') := avg$ex[match(get(vname),avg[[vname]])] ]
+   
+  df[,   stri_join(vname,'_f') := factor(ifelse(get(vname) %in% rare, -1, get(vname))) ]
+  test[, stri_join(vname,'_f') := factor(ifelse(get(vname) %in% rare, -1, get(vname))) ]
+}
+#foo[, "newcol" := lapply(.SD, mean), by = "id", .SDcols = "oldcol"]
+#foo[,"newcol":=mean(get("oldcol")), by="id"]
 
 avg_ip = df[,.(.N, p = mean(is_attributed), 
                os_per_ip = length(unique(os)),  
@@ -130,7 +120,6 @@ df[, app_per_ip := avg_ip$app_per_ip[match(ip,avg_ip$ip)] ]
 df[, channel_per_ip := avg_ip$channel_per_ip[match(ip,avg_ip$ip)] ]
 
 
-
 test[, ip_count     := avg_ip$N[match(ip,avg_ip$ip) ] ]
 test[, ip_count_log := log(ip_count+1) ]
 test[, ip_prior := avg_ip$p[match(ip,avg_ip$ip)]  ]
@@ -141,7 +130,7 @@ test[, ip_prior := avg_ip$p[match(ip,avg_ip$ip)]  ]
 df_num = df[, sapply(df, is.numeric ), with =F]
 corr_matrix = cor(df_num, use="pairwise.complete.obs")
 corr_matrix[is.na(corr_matrix)]<-0
-corrplot(corr_matrix,method = "circle",  type = "lower",  tl.cex = 0.4, order = "hclust")
+corrplot(corr_matrix,method = "circle",  type = "lower",  tl.cex = 0.6, order = "hclust")
 #corrplot(corr_matrix, method = "square", tl.cex = 0.4, order = "hclust")
 
 ```
@@ -186,7 +175,7 @@ fit_gbm <- function(formula.all, dfs, dfs_out, shrinkage, max_it, depth, bag_pct
 }
 
 
-model_vars = c('app_ex','device_ex','os_ex','channel_ex','ip_prior')
+model_vars = c('app_f','channel_f','os_f','device_f', 'ip_ex')
 
 formula.all = formula(stri_join( 'is_attributed ~ ', stri_join(model_vars, collapse = ' + ')))
 
@@ -198,22 +187,22 @@ length(intersect(sample_index1, sample_index2))
 dfs1 = df[sample_index1, all.vars(formula.all), with =FALSE]
 dfs2 = df[sample_index2, all.vars(formula.all), with =FALSE]
 
-params = expand.grid(depth = c(2,3,4,5,6,7), 
+params = expand.grid(depth = c(2,3,4,5,6), 
                      shrinkage = c(0.02,0.01), 
-                     max_it = 3000, 
-                     bag_pct = c(0.8,0.9,1.0))
+                     max_it = 2000, 
+                     bag_pct = c(0.9,0.95,1.0))
 
 res = ldply(seq(nrow(params)), function(i){
   p = params[i,]
   res = fit_gbm(formula.all, dfs1, dfs2, p$shrinkage, p$max_it, p$depth, p$bag_pct)
 })
 
-#best cv(4): 3, 0.9, 0.01, 2500 (depth, bag, shrink, it)
-#best auc  : 2, 0.9, 0.02, 1200
+#best cv(4): 2, 1.0, 0.02, 500 (depth, bag, shrink, it)
+#best auc  : 3, 1.0, 0.02, 300
 
 setDT(res)
 
-ggplot(res[it>400,], aes(it, cv_error, group = shrinkage, color = factor(shrinkage))) + geom_line() + facet_grid(depth ~ bag_pct)
+ggplot(res[it>100,], aes(it, cv_error, group = shrinkage, color = factor(shrinkage))) + geom_line() + facet_grid(depth ~ bag_pct)
 
 ggplot(res, aes(depth, best_it, group = shrinkage, color = factor(shrinkage))) + 
   geom_line() + geom_point() +  facet_wrap(~bag_pct)
@@ -229,13 +218,23 @@ print( head(res[order(-roc_out),]) )
 ```
 
 ## Model
+                            var     rel.inf
+app_f                     app_f 84.78566939
+ip_ex                     ip_ex  7.73918798
+channel_f             channel_f  6.85732206
+os_f                       os_f  0.53114889
+device_f               device_f  0.06677186
+click_time_hour click_time_hour  0.01989983
 ```{r model}
 set.seed(random_seed)
 
-cv_folds = 0
-max_it = 2000
+sapply(df[,sapply(df, is.factor ), with =F], function(x) {length(levels(x))})
 
-model_vars = c('app_ex','device_ex','os_ex','channel_ex','ip_prior')
+cv_folds = 0
+max_it = 1000
+
+#model_vars = c('app_ex','device_ex','os_ex','channel_ex','ip_prior')
+model_vars = c('app_f','channel_f','os_f','device_f', 'ip_ex','click_time_hour')
 
 formula.gbm = formula(stri_join( 'is_attributed ~ ', stri_join(model_vars, collapse = ' + ')))
 
@@ -246,9 +245,9 @@ model.gbm  = gbm(formula.gbm,
                  n.trees = max_it,
                  cv.folds = cv_folds,
                  shrinkage = 0.02,
-                 interaction.depth=3,
+                 interaction.depth=6,
                  train.fraction = 0.5,
-                 bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
+                 bag.fraction = 1.0,# 0.5 for small samples, 0.7 for large
                  n.cores = 2,
                  var.monotone = var.monotone,
                  data = df[, all.vars(formula.gbm), with = F],
@@ -257,6 +256,7 @@ model.gbm  = gbm(formula.gbm,
 plot_gbmiterations(model.gbm)
 
 best_it.gbm = ifelse(cv_folds==0, max_it, gbm.perf(model.gbm, plot.it = F))
+best_it.gbm = gbm.perf(model.gbm, plot.it = F) #0.28861
 
 #influence
 var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
@@ -264,34 +264,37 @@ plot_gbminfluence(var_inf)
 print(var_inf)
 
 plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var), output_type = 'response')
-marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
 
 pred.gbm = predict(model.gbm, n.trees = best_it.gbm, type = 'response')
-plot_binmodel_roc(df$is_attributed, pred.gbm)
-plot_binmodel_percentiles(df$is_attributed, pred.gbm, n = 50)
-gbm.roc.area(df$is_attributed, pred.gbm) #0.9700636
-#0.970
+#plot_binmodel_roc(df$is_attributed, pred.gbm)
+#plot_binmodel_percentiles(df$is_attributed, pred.gbm, n = 50)
+calibrate.plot(df$is_attributed, pred.gbm)
+gbm.roc.area(df$is_attributed, pred.gbm) #0.9747768
+
 
 roc_boot = ldply(seq(128), function(i){
-  sample_index = sample.int(nrow(df), 0.2*nrow(df))
+  sample_index = sample.int(nrow(df), 0.1*nrow(df))
   res = data.frame(roc = gbm.roc.area(df$is_attributed[sample_index], pred.gbm[sample_index]))
 })
-ggplot(roc_boot, aes(roc)) + geom_histogram()
+ggplot(roc_boot, aes(roc)) + geom_histogram(bins = 16)
 
-plots = llply(c(all.vars(formula.gbm),'click_time_min','click_time_sec','click_time_hour','ip_count','ip_prior','click_time_seconds','click_time_hour_ex'), function(var_name) {
+extra_vars = c('ip_ex','ip_count_log','os_per_ip','app_per_ip','channel_per_ip',
+               'app_ex','device_ex','channel_ex','os_ex',
+               'click_time_day','click_time_min','click_time_sec','click_time_hour','click_time_seconds','click_time_hour_ex',
+               'ip_count','ip_prior')
+
+plots = llply(c(all.vars(formula.gbm), extra_vars), function(var_name) {
   p = plot_profile(pred.gbm, df$is_attributed, df[[var_name]], error_band = 'binom', bucket_count = 20) +
     ggtitle(var_name) +  theme(title =element_text(size=8))
   return( p )
 })
-marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
 
-extra_vars = c('ip_count_log', 'os_per_ip','app_per_ip','channel_per_ip','click_time_day')
-plots = llply(extra_vars, function(var_name) {
-  p = plot_profile(pred.gbm, df$is_attributed, df[[var_name]], error_band = 'binom', bucket_count = 50) +
-    ggtitle(var_name) +  theme(title =element_text(size=8))
-  return( p )
-})
-marrangeGrob(plots, nrow = 3, ncol = 2, top = NULL)
+plot_profile(pred.gbm, df$is_attributed, df$app_ex, error_band = 'binom', bucket_count = 20)
+plot_profile(pred.gbm, df$is_attributed, df$ip_ex, error_band = 'binom', bucket_count = 20)
+plot_profile(pred.gbm, df$is_attributed, df$channel_ex, error_band = 'binom', bucket_count = 20)
+plot_profile(pred.gbm, df$is_attributed, factor(df$click_time_hour), error_band = 'binom', bucket_count = 20)
 
 ```
 

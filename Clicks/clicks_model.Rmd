@@ -45,7 +45,7 @@ source(file.path(working_folder, 'Utils/common.R'))
 
 train <- fread(file.path(working_folder,'Clicks/data/train.csv'), check.names = TRUE)
 test  <- fread(file.path(working_folder,'Clicks/data/test.csv'),  check.names = TRUE) # 1459   80
-gc()
+gc(reset=TRUE)
 
 #outcome based sampling
 set.seed(random_seed)
@@ -54,7 +54,7 @@ n_events = sum(train$is_attributed != 0)
 n_non_events = sum(train$is_attributed == 0)
 
 n_total = length(train$is_attributed)
-non_event_sample_size = min(3*n_events,n_non_events)
+non_event_sample_size = min(4*n_events,n_non_events)
 sample_size = non_event_sample_size + n_events
 
 non_event_sample = sample.int(n_non_events,non_event_sample_size,replace = FALSE)
@@ -234,7 +234,7 @@ cv_folds = 0
 max_it = 1000
 
 #model_vars = c('app_ex','device_ex','os_ex','channel_ex','ip_prior')
-model_vars = c('app_f','channel_f','os_f','device_f', 'ip_ex','click_time_hour')
+model_vars = c('app_f','channel_f','os_f','device_f', 'ip_ex')
 
 formula.gbm = formula(stri_join( 'is_attributed ~ ', stri_join(model_vars, collapse = ' + ')))
 
@@ -244,10 +244,10 @@ model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
                  n.trees = max_it,
                  cv.folds = cv_folds,
-                 shrinkage = 0.02,
+                 shrinkage = 0.015,
                  interaction.depth=6,
-                 train.fraction = 0.5,
-                 bag.fraction = 1.0,# 0.5 for small samples, 0.7 for large
+                 train.fraction = 0.7,
+                 bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
                  n.cores = 2,
                  var.monotone = var.monotone,
                  data = df[, all.vars(formula.gbm), with = F],
@@ -264,7 +264,7 @@ plot_gbminfluence(var_inf)
 print(var_inf)
 
 plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var), output_type = 'response')
-marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
+marrangeGrob(plots, nrow = 2, ncol = 3, top = NULL)
 
 pred.gbm = predict(model.gbm, n.trees = best_it.gbm, type = 'response')
 #plot_binmodel_roc(df$is_attributed, pred.gbm)

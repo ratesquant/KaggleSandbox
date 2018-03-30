@@ -16,6 +16,8 @@ options(warn=-1)
 library(ggplot2)
 #library(Hmisc)
 library(plyr)
+library(dplyr)
+library(zoo)
 library(gridExtra)
 
 library(gbm)
@@ -54,7 +56,7 @@ n_events = sum(train$is_attributed != 0)
 n_non_events = sum(train$is_attributed == 0)
 
 n_total = length(train$is_attributed)
-non_event_sample_size = min(4*n_events,n_non_events)
+non_event_sample_size = min(2*n_events,n_non_events)
 sample_size = non_event_sample_size + n_events
 
 non_event_sample = sample.int(n_non_events,non_event_sample_size,replace = FALSE)
@@ -112,6 +114,7 @@ avg_ip = df[,.(.N, p = mean(is_attributed),
                os_per_ip = length(unique(os)),  
                app_per_ip = length(unique(app)),
                channel_per_ip = length(unique(channel)) ), by = .(ip)]
+df[, ip_hash     := ip %% 1024 ]
 df[, ip_count     := avg_ip$N[match(ip,avg_ip$ip) ] ]
 df[, ip_count_log := log(ip_count+1) ]
 df[, ip_prior := avg_ip$p[match(ip,avg_ip$ip)] ]
@@ -119,10 +122,35 @@ df[, os_per_ip := avg_ip$os_per_ip[match(ip,avg_ip$ip)] ]
 df[, app_per_ip := avg_ip$app_per_ip[match(ip,avg_ip$ip)] ]
 df[, channel_per_ip := avg_ip$channel_per_ip[match(ip,avg_ip$ip)] ]
 
+df[order(click_time), click_time_rmean := cummean(c(0, diff(click_time_seconds))), by = .(ip) ]
+df[order(click_time), click_time_diff := c(0, diff(click_time_seconds)/60), by = .(ip) ]
+df[order(click_time), click_count := seq_along(click_time_seconds), by = .(ip) ]
+df[order(click_time), click_count_min := 60*seq_along(click_time_seconds)/(click_time_seconds -min(click_time_seconds)), by = .(ip) ]
+
+setDT(test)[, new := cumsum(!duplicated(entries))]
+test[, .(cum_unique_entries = new[.N]), by = exp]
+
+df[order(click_time), apps_per_ip := cumsum(!duplicated(app)), by = .(ip) ]
+df[order(click_time), channel_per_ip := cumsum(!duplicated(channel)), by = .(ip) ]
+
+
+df[, click_count_log := log10(click_count) ]
+
+df[, ip_app_count := length(unique(app)), by = .(ip) ]
+df[, ip_channel_count := length(unique(channel)), by = .(ip) ]
+
+#df[order(click_time), ip_rmean := cummean(is_attributed), by = .(ip) ]
+df[ip == '204158',]
 
 test[, ip_count     := avg_ip$N[match(ip,avg_ip$ip) ] ]
 test[, ip_count_log := log(ip_count+1) ]
 test[, ip_prior := avg_ip$p[match(ip,avg_ip$ip)]  ]
+test[order(click_time), click_count := seq_along(click_id), by = .(ip) ]
+test[, click_count_log := log10(click_count)]
+
+test[order(click_time), apps_per_ip := cumsum(!duplicated(app)), by = .(ip) ]
+test[order(click_time), channel_per_ip := cumsum(!duplicated(channel)), by = .(ip) ]
+
 
 #check is the same ip can have multiple os, device or channel
 #time diff between clicks and ming time difference is not relevant
@@ -225,16 +253,23 @@ channel_f             channel_f  6.85732206
 os_f                       os_f  0.53114889
 device_f               device_f  0.06677186
 click_time_hour click_time_hour  0.01989983
+
+                var    rel.inf
+app_f         app_f 92.8141853
+channel_f channel_f  6.2163190
+os_f           os_f  0.8580457
+device_f   device_f  0.1114500
+
 ```{r model}
 set.seed(random_seed)
 
-sapply(df[,sapply(df, is.factor ), with =F], function(x) {length(levels(x))})
+#sapply(df[,sapply(df, is.factor ), with =F], function(x) {length(levels(x))})
 
 cv_folds = 0
 max_it = 1000
 
 #model_vars = c('app_ex','device_ex','os_ex','channel_ex','ip_prior')
-model_vars = c('app_f','channel_f','os_f','device_f', 'ip_ex')
+model_vars = c('app_f','channel_f','os_f','device_f','click_count_log', 'apps_per_ip')
 
 formula.gbm = formula(stri_join( 'is_attributed ~ ', stri_join(model_vars, collapse = ' + ')))
 
@@ -246,7 +281,7 @@ model.gbm  = gbm(formula.gbm,
                  cv.folds = cv_folds,
                  shrinkage = 0.015,
                  interaction.depth=6,
-                 train.fraction = 0.7,
+                 train.fraction = 0.6,
                  bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
                  n.cores = 2,
                  var.monotone = var.monotone,
@@ -290,6 +325,14 @@ plots = llply(c(all.vars(formula.gbm), extra_vars), function(var_name) {
   return( p )
 })
 marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
+
+plot_profile(pred.gbm, df$is_attributed, log(1+df[['click_time_diff']]), error_band = 'binom', bucket_count = 50)
+
+plot_profile(pred.gbm, df$is_attributed, df[['click_count_log']], error_band = 'binom', bucket_count = 50)
+
+plot_profile(pred.gbm, df$is_attributed, df[['click_count_min']], error_band = 'binom', bucket_count = 50)
+
+plot_profile(pred.gbm, df$is_attributed, df[['apps_per_ip']], error_band = 'binom', bucket_count = 50)
 
 plot_profile(pred.gbm, df$is_attributed, df$app_ex, error_band = 'binom', bucket_count = 20)
 plot_profile(pred.gbm, df$is_attributed, df$ip_ex, error_band = 'binom', bucket_count = 20)

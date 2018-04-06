@@ -1,0 +1,108 @@
+---
+title: "LendingClub Rejections"
+author: "Alex"
+date: "April 4, 2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(gbm)
+library(data.table)
+library(plyr)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(corrplot)
+library(forcats)
+library(foreach)
+#library(caret)
+
+working_folder = 'C:/Dev/Kaggle/'
+
+source(file.path(working_folder, '/Utils/common.R'))
+```
+
+## Load Data
+
+```{r load_data}
+
+ #read files
+ file_list = list.files( file.path(working_folder,'LendingClub/data/'), 
+            pattern = 'RejectStats*', full.names = T)
+
+ rds_data_file = file.path(working_folder,'LendingClub/data/RejectStats.rds')
+ 
+ if(file.exists(rds_data_file)){
+   df = readRDS(rds_data_file)
+ }else {
+   df = ldply(file_list, function(data_file){
+      df = fread(data_file, skip = 0, check.names = TRUE)
+      df$filename = basename(data_file)
+      df
+   })
+   
+   setDT(df)
+   
+    #process data
+   df[, dti := as.numeric(sub('%','',Debt.To.Income.Ratio))]
+   df[, amount := 1e-3*as.numeric(Amount.Requested)]
+   df[, date := as.Date(Application.Date)]
+   df[, date_month := date ]
+   df[, credit_score := as.numeric(Risk_Score)]
+   df[, credit_score_b := cut(credit_score, breaks=c(0, 550, 650, 700, 750, 999), include.lowest = T, ordered_result = T)]
+   df[, loan_purpose:=fct_collapse(Loan.Title, 
+                                   credit_card = "Credit card refinancing",
+                                   small_business = c('small_business','Business','Business Loan'),
+                                   major_purchase = 'Major purchase',
+                                   debt_cons = c('debt_consolidation','Debt consolidation'),
+                                   car = c('Car financing','car'),
+                                   house = c('Home improvement','house','Home buying'),
+                                   medical = 'Medical expenses',
+                                   other = 'Other',
+                                   vacation = 'Vacation',
+                                   moving = 'Moving and relocation',
+                                   education = 'Learning and training',
+                                   green = c('Green loan','renewable_energy')
+                                   )]
+   
+   df[, emp_length := as.numeric(gsub('[a-z<+]','',Employment.Length))]
+   df[grepl('[<]', Employment.Length), emp_length := 0]
+   
+   mday(df$date_month)<-1
+   
+   saveRDS(df, rds_data_file)
+ }
+ 
+ 
+ 
+ table(df[,.(loan_purpose, Loan.Title)])
+```
+
+## View Data
+```{r view_data}
+
+ggplot(df[,.(.N), by = .(date, credit_score_b)], aes(date, N, group = credit_score_b, color = credit_score_b)) + geom_line()
+
+ggplot(df[,.(.N), by = .(date_month,credit_score_b)], aes(date_month, N, group = credit_score_b, color = credit_score_b)) + geom_line()
+
+ggplot(df[amount<50,], aes(amount, group = credit_score_b, color = credit_score_b)) + geom_density()
+ggplot(df[dti<100,], aes(dti, group = credit_score_b, color = credit_score_b)) + 
+  geom_density(adjust = 0.2)
+ggplot(df, aes(credit_score)) + geom_density(adjust = 0.2)
+
+ggplot(df[dti<100 & credit_score >800,], aes(dti)) + geom_density(adjust = 0.2)
+
+ggplot(df, aes(loan_purpose, group = credit_score_b, fill = credit_score_b)) + geom_bar() + 
+  theme(axis.text.x  = element_text(angle = 90, hjust = 1)) + coord_flip()
+
+ggplot(df, aes(factor(emp_length), group = credit_score_b, fill = credit_score_b)) + geom_bar() + 
+  theme(axis.text.x  = element_text(angle = 90, hjust = 1)) + coord_flip()
+
+```

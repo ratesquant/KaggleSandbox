@@ -1,0 +1,57 @@
+---
+title: "LendingClub"
+author: "Alex"
+date: "April 4, 2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(gbm)
+library(data.table)
+library(plyr)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(corrplot)
+#library(caret)
+
+working_folder = 'C:/Dev/Kaggle/'
+
+source(file.path(working_folder, '/Utils/common.R'))
+```
+
+## Load Data
+
+```{r load_data}
+
+ date_columns = c('issue_d','last_pymnt_d', 'next_pymnt_d','last_credit_pull_d',
+                  'debt_settlement_flag_date',	'settlement_status',	'settlement_date',
+                  'hardship_start_date',	'hardship_end_date',	'payment_plan_start_date')
+
+ char_columns = c('id','term','int_rate','grade','sub_grade','emp_title',
+                  'emp_length','home_ownership',
+                  'verification_status','loan_status',
+                  'pymnt_plan','url','desc','purpose','title','zip_code','addr_state',
+                  'earliest_cr_line','revol_util','initial_list_status','application_type',
+                  'hardship_flag','disbursement_method','debt_settlement_flag',
+                  'hardship_type',	'hardship_reason',	'hardship_status','hardship_loan_status',
+                  'settlement_status',
+                  date_columns)
+
+ #read files
+ data_file = file.path(working_folder,'LendingClub/data/LoanStats_securev1_2016Q2.csv')
+ df = fread(data_file, skip = 0, nrow = 1000)
+
+ num_vars = names(df) %!in_set% char_columns
+ df[, (num_vars):=lapply(.SD, as.numeric), .SDcols = num_vars]
+ 
+ #process data
+ 
+```

@@ -20,6 +20,10 @@ library(ggplot2)
 library(gridExtra)
 library(zip)
 library(corrplot)
+library(forcats)
+library(survival)
+library(foreach)
+library(lubridate)
 #library(caret)
 
 working_folder = 'C:/Dev/Kaggle/'
@@ -31,27 +35,247 @@ source(file.path(working_folder, '/Utils/common.R'))
 
 ```{r load_data}
 
- date_columns = c('issue_d','last_pymnt_d', 'next_pymnt_d','last_credit_pull_d',
-                  'debt_settlement_flag_date',	'settlement_status',	'settlement_date',
-                  'hardship_start_date',	'hardship_end_date',	'payment_plan_start_date')
-
- char_columns = c('id','term','int_rate','grade','sub_grade','emp_title',
-                  'emp_length','home_ownership',
-                  'verification_status','loan_status',
-                  'pymnt_plan','url','desc','purpose','title','zip_code','addr_state',
-                  'earliest_cr_line','revol_util','initial_list_status','application_type',
-                  'hardship_flag','disbursement_method','debt_settlement_flag',
-                  'hardship_type',	'hardship_reason',	'hardship_status','hardship_loan_status',
-                  'settlement_status',
-                  date_columns)
-
- #read files
- data_file = file.path(working_folder,'LendingClub/data/LoanStats_securev1_2016Q2.csv')
- df = fread(data_file, skip = 0, nrow = 1000)
-
- num_vars = names(df) %!in_set% char_columns
- df[, (num_vars):=lapply(.SD, as.numeric), .SDcols = num_vars]
+ #all csv files are combined in rds
+ rds_data_file = file.path(working_folder,'LendingClub/data/LoanStats.rds')
  
+ if(file.exists(rds_data_file)){
+   df = readRDS(rds_data_file)
+ }else{
+   
+   #read files
+   file_list = list.files( file.path(working_folder,'LendingClub/data/'), 
+              pattern = 'LoanStats.*csv', full.names = T)
+
+   df = foreach(data_file = file_list, .combine = 'rbind') %do% {
+     print(data_file)
+     #data_file = file.path(working_folder,'LendingClub/data/LoanStats3b_securev1.csv')
+     
+      df = fread(data_file, skip = 0, check.names = TRUE)
+      df$filename = basename(data_file)
+      df
+   }
+   columns = names(df)
+   columns[grep('_date$', columns)]
+  
+   date_columns = c('issue_d','last_pymnt_d', 'next_pymnt_d','last_credit_pull_d',
+                    'debt_settlement_flag_date',	'settlement_date', 'earliest_cr_line',
+                    'hardship_start_date',	'hardship_end_date',	'payment_plan_start_date')
+  
+   char_columns = c('id','member_id','term','int_rate','grade','sub_grade','emp_title',
+                    'emp_length','home_ownership',
+                    'verification_status','loan_status',
+                    'pymnt_plan','url','desc','purpose','title','zip_code','addr_state',
+                    'revol_util','initial_list_status','application_type',
+                    'hardship_flag','disbursement_method','debt_settlement_flag',
+                    'hardship_type',	'hardship_reason',	'hardship_status','hardship_loan_status',
+                    'settlement_status','filename',
+                    date_columns)
+   
+   format_dates <-function(x){as.Date(stri_join('1-', x), '%d-%b-%Y')}
+   
+   df[, (date_columns):=lapply(.SD, format_dates), .SDcols = date_columns]
+  
+   num_vars = names(df) %!in_set% char_columns
+   df[, (num_vars):=lapply(.SD, as.numeric), .SDcols = num_vars]
+   
+   saveRDS(df, rds_data_file)
+   
+   #cc(df[1:1000,columns %!in_set% char_columns, with = F])
+ }
  #process data
+
+date = max(df$last_pymnt_d, na.rm = T)
+
+df[, abs_return:=total_pymnt/funded_amnt - 1.0]
+df[, severity:=1.0 - total_rec_prncp/funded_amnt]
+df[, vintage:=year(issue_d)]
+df[, upb:=funded_amnt - total_rec_prncp]
+df[, loan_age:= 12*(year(last_pymnt_d) - year(issue_d)) + month(last_pymnt_d) - month(issue_d)]
+df[,emp_years:=as.numeric(sub('[+]? years?', '',emp_length))]
+df[emp_length=='< 1 year',emp_years:=0]
+
+df[, term_y   := fct_recode(term, '3y'=' 36 months', '5y' = ' 60 months')]
  
+df[, status   := fct_recode(loan_status, X='Charged Off', 
+                          C = 'Current', 
+                          P = 'Fully Paid', 
+                          D0 = 'In Grace Period',
+                          D1 = 'Late (16-30 days)',
+                          D2 = 'Late (31-120 days)',
+                          D = 'Default')]
+df[, ind_co := as.numeric(status=='X')]
+df[, ind_po := as.numeric(status=='P')]
+df[, ind_ac := 1-pmax(ind_co,ind_po) ]
+df[, revol_util_pct := as.numeric(sub('%','',as.character(revol_util) ))]
+df[, annual_inc_log:=log10(annual_inc + 1)]
+
+id_vars = c('id','member_id', 'zip_code','url')
+cat_vars = names(df)[which(sapply(df, is.character))] %!in_set% id_vars
+df[,(cat_vars):=lapply(.SD, factor), .SDcols = cat_vars]
+
+df[, grade_num:=as.numeric(grade)]
+df[, sub_grade_num:=as.numeric(sub_grade)]
+df[, grade_full:=1 + sub_grade_num %/% 5 + (sub_grade_num %% 5)/5-0.2]
+
+
+table(df$loan_status, df$status)
+table(df$grade_num, df$grade)
+
+gc(reset=T)
+ 
+```
+
+## View Data
+
+```{r view_data}
+
+ggplot(df[, .(active = mean(ind_ac)), by =.(issue_d, term_y)], aes(issue_d, active, group = term_y, color = term_y)) +   geom_line()
+
+ggplot(df[, .(upb = 1e-6*sum(funded_amnt),upb_log = log10(sum(funded_amnt)), .N), by =.(issue_d, grade)], aes(issue_d, upb_log, group = grade, color = grade)) +   geom_line()
+
+#'Charged Off',
+ggplot(df[loan_status %in% c('Fully Paid'), .(abs_return = sum(total_pymnt)/sum(funded_amnt) - 1, .N), by =.(issue_d, grade)], aes(issue_d, abs_return, group = grade, color = grade)) + 
+  geom_line()
+
+ggplot(df[, .(abs_return = sum(total_pymnt)/sum(funded_amnt), .N), by =.(issue_d, loan_status, term)], aes(issue_d, abs_return, group = term, color = term)) + 
+  geom_line() + facet_wrap(~loan_status)
+
+ggplot(df[, .(abs_return = sum(total_pymnt)/sum(funded_amnt), .N), by =.(issue_d, term)], aes(issue_d, abs_return, group = term, color = term)) + 
+  geom_line()
+
+ggplot(df[, .(upb = sum(funded_amnt) - sum(total_rec_prncp), .N), by =.(vintage, loan_status)], aes(vintage, log10(upb), group = loan_status, color = loan_status)) + 
+  geom_line()
+
+ggplot(df[loan_status %in% c('Charged Off','Fully Paid'), .(abs_return = sum(total_pymnt)/sum(funded_amnt) - 1, return = 1e-6*(sum(total_pymnt) - sum(funded_amnt))), by =.(issue_d, grade, term)], aes(issue_d, return, group = term, color = term)) + 
+  geom_line() + facet_wrap(~grade)
+
+ggplot(df[loan_status %in% c('Charged Off','Fully Paid'), .(abs_return = sum(total_pymnt)/sum(funded_amnt) - 1, .N), by =.(last_pymnt_d, grade, term)], aes(last_pymnt_d, abs_return, group = term, color = term)) + 
+  geom_line() + facet_wrap(~grade)
+
+ggplot(df[, .(ret = sum(total_pymnt)/sum(funded_amnt), .N), by =.(issue_d, loan_status, term)], aes(issue_d, N, group = loan_status, color = loan_status)) + 
+  geom_line() + facet_wrap(~term)
+
+ggplot(df[grade %in% c('A', 'B', 'C', 'D'), .(charged_off = mean(as.numeric(loan_status=='Charged Off'))), by =.(issue_d, term, grade)], aes(issue_d, charge_off, color = grade, group = grade)) + 
+  geom_line() + facet_wrap(~term)
+
+ggplot(df[grade %in% c('A', 'B', 'C', 'D'), .(charged_off = mean(ind_co)), by =.(issue_d, term, grade)], aes(issue_d, charged_off, color = grade, group = grade)) + 
+  geom_line() + facet_wrap(~term)
+
+ggplot(df[grade %in% c('A', 'B', 'C', 'D') & ind_ac==0, .(charged_off = mean(ind_co)), by =.(issue_d, term, grade)], aes(issue_d, charged_off, color = grade, group = grade)) + 
+  geom_line() + facet_wrap(~term)
+
+```
+
+## Survival model
+
+```{r survival_model}
+ggplot(df, aes(loan_age, group = term_y, fill = term_y)) + geom_density(alpha = 0.2)
+
+df.survfit <- survfit(Surv(loan_age, ind_ac == 0) ~ term, data=df)
+
+plot(df.survfit, xlab = "Time", ylab="Survival",col=c("black", "red"), lty = 1:2)
+
+df.surv.dif <- survdiff(Surv(loan_age, ind_ac == 0) ~ term, data=df)
+
+df.coxph <- coxph(Surv(loan_age, ind_ac == 0) ~ term, data = df)
+summary(df.coxph)
+cox.zph(df.coxph)#p-value is less than 0.05 indicates that the hazards are not proportional
+
+```
+
+## Return model
+filters 
+- employment >= 1
+- dti < 20
+- annual_inc > 60k
+- inq_last_6mths <= 1
+- mths_since_last_delinq >=24
+- term = 3y
+
+```{r return_model}
+
+df[, my_filter := (term_y == '3y' & grade %in% c('A','B','C') & emp_years>=1 & dti<=20 & inq_last_6mths<=1 & mths_since_last_delinq>=24 & annual_inc > 60000)]
+
+ggplot(df[term_y == '3y' & grade %in% c('A','B','C'),.(.N), by = .(my_filter, vintage, grade)], aes(vintage, N, group = my_filter, color = my_filter)) + geom_line() + facet_wrap(~grade)
+
+df_s = df[term_y == '3y' & issue_d<max(last_pymnt_d, na.rm=T) %m-% months(36) & grade %in% c('A','B','C'), ]
+table(df_s$status, df_s$ind_po)
+
+res = df_s[!is.na(my_filter),.(.N, co_pct = mean(ind_co), roi = sum(total_pymnt)/sum(funded_amnt) -1.0, 
+              ploss = sum(total_rec_prncp)/sum(funded_amnt) -1.0, 
+              upb = 1e-6*sum(funded_amnt)), by = .(vintage, grade,my_filter)]
+
+ggplot(res, aes(issue_d, roi, group = grade, color = grade)) + geom_line()
+ggplot(res, aes(issue_d, upb, group = grade, color = grade)) + geom_line()
+
+ggplot(res, aes(vintage, ploss, group = my_filter, color = my_filter)) + geom_line() + facet_wrap(~grade)
+ggplot(res, aes(vintage, roi, group = my_filter, color = my_filter)) + geom_line() + facet_wrap(~grade)
+
+df_s[,loan_dur:=0.5*as.numeric(last_pymnt_d-issue_d)/365.25]
+df_s[is.na(loan_dur),loan_dur:=1/12]
+df_s[,ret:=total_pymnt/funded_amnt -1.0]
+df_s[,roi:=log((total_pymnt+1)/funded_amnt)/loan_dur]
+df_s[,ploss:=total_rec_prncp/funded_amnt -1.0]
+
+df_s[is.na(roi), .(total_pymnt, funded_amnt, loan_dur, roi,last_pymnt_d,next_pymnt_d, issue_d, id)]
+
+##GBM model
+obj_var = 'roi'
+allvars = c('grade','emp_years','home_ownership',
+            'verification_status','purpose','sub_grade','initial_list_status',
+            'mths_since_last_major_derog','inq_last_6mths','mths_since_last_delinq',
+            'pub_rec','pub_rec_bankruptcies','funded_amnt','dti','annual_inc')
+
+#allvars = names(df) %!in% c('SalePrice')
+formula.all = formula (paste( obj_var, ' ~', paste(allvars, collapse = '+')) )
+
+var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
+
+var.monotone[allvars %in% c('')] = 1
+var.monotone[allvars %in% c('')] = -1
+
+max_it = 1000 
+#0.01517, 0.001
+set.seed(1234)
+model.gbm = gbm(formula.all, 
+                data = df_s[, all.vars(formula.all),with = F], 
+                distribution = 'gaussian',
+                n.trees = max_it,
+                shrinkage = 0.01, #0.001
+                bag.fraction = 0.9,
+                interaction.depth = 3, #6
+                cv.folds = 0,
+                train.fraction = 0.7,
+                var.monotone = var.monotone,
+                n.cores = 2,
+                verbose = FALSE)
+#show best iteration
+plot_gbmiterations(model.gbm)
+best_it = gbm.perf(model.gbm, plot.it = F)
+print(best_it)
+pred.gbm = predict(model.gbm, n.trees = best_it, newdata = df_s)
+
+#show importance
+vars.importance = summary(model.gbm, n.trees = best_it, plotit=FALSE) # influence
+plot_gbminfluence(vars.importance)
+print(vars.importance)
+#write.clipboard(vars.importance, sep = '\t')
+
+#plot partials, income >70k, empl >= 1 
+plots = plot_gbmpartial(model.gbm, best_it, as.character(vars.importance$var)[vars.importance$rel.inf>.1], output_type = 'link')
+marrangeGrob(plots, nrow=3, ncol=3)
+
+plot_profile(pred.gbm, df_s[[obj_var]], df_s[['addr_state']], bucket_count = 25, min_obs = 3, error_band ='normal')
+plot_profile(pred.gbm, df_s[[obj_var]], factor(df_s[['vintage']]), bucket_count = 25, min_obs = 3, error_band ='normal')
+plot_profile(pred.gbm, df_s[[obj_var]], df_s[['annual_inc']]/12, bucket_count = 10, min_obs = 3, error_band ='normal')
+
+plots <- llply(c('grade_full','emp_years','home_ownership','verification_status','purpose','sub_grade','initial_list_status','mths_since_last_major_derog','inq_last_6mths','mths_since_last_delinq','pub_rec','funded_amnt','dti','dti_joint') %in_set% names(df), function(vname){
+  plot_result = plot_profile(pred.gbm, df_s[[obj_var]], df_s[[vname]], bucket_count = 10, min_obs = 3, error_band ='normal') + 
+    ggtitle(vname) + theme(title =element_text(size=8), axis.title.y = element_blank())
+  return (plot_result)
+})
+marrangeGrob(plots, nrow=3, ncol=3)
+
+
+
 ```

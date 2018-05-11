@@ -32,16 +32,17 @@ source(file.path(working_folder, '/Utils/common.R'))
 ## Load Data
 
 ```{r load_data}
-
- #read files
- file_list = list.files( file.path(working_folder,'LendingClub/data/'), 
-            pattern = 'RejectStats*', full.names = T)
-
+ #all csv files are combined in rds
  rds_data_file = file.path(working_folder,'LendingClub/data/RejectStats.rds')
  
  if(file.exists(rds_data_file)){
    df = readRDS(rds_data_file)
  }else {
+   
+   #read files
+   file_list = list.files( file.path(working_folder,'LendingClub/data/'), 
+              pattern = 'RejectStats*', full.names = T)
+
    df = ldply(file_list, function(data_file){
       df = fread(data_file, skip = 0, check.names = TRUE)
       df$filename = basename(data_file)
@@ -57,7 +58,7 @@ source(file.path(working_folder, '/Utils/common.R'))
    df[, date_month := date ]
    df[, credit_score := as.numeric(Risk_Score)]
    df[, credit_score_b := cut(credit_score, breaks=c(0, 550, 650, 700, 750, 999), include.lowest = T, ordered_result = T)]
-   df[, loan_purpose:=fct_collapse(Loan.Title, 
+   df[, loan_purpose:=fct_collapse(substr(Loan.Title, 1, 30), 
                                    credit_card = "Credit card refinancing",
                                    small_business = c('small_business','Business','Business Loan'),
                                    major_purchase = 'Major purchase',
@@ -80,6 +81,7 @@ source(file.path(working_folder, '/Utils/common.R'))
    saveRDS(df, rds_data_file)
  }
  
+gc(reset = T)
  
  
  table(df[,.(loan_purpose, Loan.Title)])
@@ -88,9 +90,9 @@ source(file.path(working_folder, '/Utils/common.R'))
 ## View Data
 ```{r view_data}
 
-ggplot(df[,.(.N), by = .(date, credit_score_b)], aes(date, N, group = credit_score_b, color = credit_score_b)) + geom_line()
+ggplot(df[,.(.N ), by = .(date, credit_score_b)], aes(date, log10(N), group = credit_score_b, color = credit_score_b)) + geom_line()
 
-ggplot(df[,.(.N), by = .(date_month,credit_score_b)], aes(date_month, N, group = credit_score_b, color = credit_score_b)) + geom_line()
+ggplot(df[,.(.N), by = .(date_month,credit_score_b)], aes(date_month, log10(N), group = credit_score_b, color = credit_score_b)) + geom_line()
 
 ggplot(df[amount<50,], aes(amount, group = credit_score_b, color = credit_score_b)) + geom_density()
 ggplot(df[dti<100,], aes(dti, group = credit_score_b, color = credit_score_b)) + 

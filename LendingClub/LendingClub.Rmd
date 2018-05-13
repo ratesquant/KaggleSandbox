@@ -185,37 +185,54 @@ cox.zph(df.coxph)#p-value is less than 0.05 indicates that the hazards are not p
 
 ## Return model
 filters 
-- employment >= 1
-- dti < 20
 - annual_inc > 60k
 - inq_last_6mths <= 1
+- purpose (credit card, debt consolidation, home improv, major purchase)
+- employment >= 1
+- dti < 20
 - mths_since_last_delinq >=24
 - term = 3y
 
+worst performance is for education, small business, moving, vacation, medical
+
 ```{r return_model}
 
-df[, my_filter := (term_y == '3y' & grade %in% c('A','B','C') & emp_years>=1 & dti<=20 & inq_last_6mths<=1 & mths_since_last_delinq>=24 & annual_inc > 60000)]
+df[, my_filter := (term_y == '3y' & grade %in% c('A','B','C') & emp_years>=1 & dti<=15 & inq_last_6mths<=1 & mths_since_last_delinq>=24 & annual_inc > 60000)]
 
 ggplot(df[term_y == '3y' & grade %in% c('A','B','C'),.(.N), by = .(my_filter, vintage, grade)], aes(vintage, N, group = my_filter, color = my_filter)) + geom_line() + facet_wrap(~grade)
 
 df_s = df[term_y == '3y' & issue_d<max(last_pymnt_d, na.rm=T) %m-% months(36) & grade %in% c('A','B','C'), ]
 table(df_s$status, df_s$ind_po)
 
+ggplot(df_s, aes(annual_inc_log, group = my_filter, fill = my_filter)) + geom_histogram()
+ggplot(df_s[annual_inc<2e5,], aes(annual_inc, group = my_filter, fill = my_filter)) + geom_histogram()
+
+ggplot(df_s, aes(inq_last_6mths, group = my_filter, fill = my_filter)) + geom_bar(stat = 'count')
+ggplot(df_s, aes(total_acc, group = my_filter, fill = my_filter)) + geom_bar(stat = 'count')
+
+ggplot(df_s, aes(emp_years, group = my_filter, fill = my_filter)) + geom_bar(stat = 'count')
+ggplot(df_s, aes(mths_since_last_delinq, group = my_filter, fill = my_filter)) + geom_bar(stat = 'count')
+ggplot(df_s, aes(dti, group = my_filter, fill = my_filter)) + geom_bar(stat = 'count')
+ggplot(df_s, aes(funded_amnt, group = my_filter, fill = my_filter)) + geom_histogram()
+ggplot(df_s, aes(purpose, group = my_filter, fill = my_filter)) +  geom_bar(stat = 'count') + coord_flip()
+
+
 res = df_s[!is.na(my_filter),.(.N, co_pct = mean(ind_co), roi = sum(total_pymnt)/sum(funded_amnt) -1.0, 
               ploss = sum(total_rec_prncp)/sum(funded_amnt) -1.0, 
               upb = 1e-6*sum(funded_amnt)), by = .(vintage, grade,my_filter)]
 
-ggplot(res, aes(issue_d, roi, group = grade, color = grade)) + geom_line()
-ggplot(res, aes(issue_d, upb, group = grade, color = grade)) + geom_line()
+ggplot(res, aes(vintage, roi, group = grade, color = grade)) + geom_line()
+ggplot(res, aes(vintage, upb, group = grade, color = grade)) + geom_line()
 
 ggplot(res, aes(vintage, ploss, group = my_filter, color = my_filter)) + geom_line() + facet_wrap(~grade)
 ggplot(res, aes(vintage, roi, group = my_filter, color = my_filter)) + geom_line() + facet_wrap(~grade)
 
 df_s[,loan_dur:=0.5*as.numeric(last_pymnt_d-issue_d)/365.25]
-df_s[is.na(loan_dur),loan_dur:=1/12]
 df_s[,ret:=total_pymnt/funded_amnt -1.0]
-df_s[,roi:=log((total_pymnt+1)/funded_amnt)/loan_dur]
+df_s[,roi:=log((total_pymnt+1)/funded_amnt)]
 df_s[,ploss:=total_rec_prncp/funded_amnt -1.0]
+
+df_s = df_s[!is.na(roi) & !is.infinite(roi),]
 
 df_s[is.na(roi), .(total_pymnt, funded_amnt, loan_dur, roi,last_pymnt_d,next_pymnt_d, issue_d, id)]
 
@@ -223,8 +240,8 @@ df_s[is.na(roi), .(total_pymnt, funded_amnt, loan_dur, roi,last_pymnt_d,next_pym
 obj_var = 'roi'
 allvars = c('grade','emp_years','home_ownership',
             'verification_status','purpose','sub_grade','initial_list_status',
-            'mths_since_last_major_derog','inq_last_6mths','mths_since_last_delinq',
-            'pub_rec','pub_rec_bankruptcies','funded_amnt','dti','annual_inc')
+            'mths_since_last_major_derog','inq_last_6mths','sec_app_inq_last_6mths','mths_since_last_delinq',
+            'pub_rec','pub_rec_bankruptcies','funded_amnt','dti','annual_inc_log','total_acc')
 
 #allvars = names(df) %!in% c('SalePrice')
 formula.all = formula (paste( obj_var, ' ~', paste(allvars, collapse = '+')) )
@@ -240,12 +257,13 @@ set.seed(1234)
 model.gbm = gbm(formula.all, 
                 data = df_s[, all.vars(formula.all),with = F], 
                 distribution = 'gaussian',
+                weights = df_s[['funded_amnt']],
                 n.trees = max_it,
                 shrinkage = 0.01, #0.001
                 bag.fraction = 0.9,
                 interaction.depth = 3, #6
-                cv.folds = 0,
-                train.fraction = 0.7,
+                cv.folds = 5,
+                train.fraction = 1.0,
                 var.monotone = var.monotone,
                 n.cores = 2,
                 verbose = FALSE)
@@ -266,10 +284,14 @@ plots = plot_gbmpartial(model.gbm, best_it, as.character(vars.importance$var)[va
 marrangeGrob(plots, nrow=3, ncol=3)
 
 plot_profile(pred.gbm, df_s[[obj_var]], df_s[['addr_state']], bucket_count = 25, min_obs = 3, error_band ='normal')
+plot_profile(pred.gbm, df_s[[obj_var]], df_s[['grade']], bucket_count = 25, min_obs = 3, error_band ='normal')
 plot_profile(pred.gbm, df_s[[obj_var]], factor(df_s[['vintage']]), bucket_count = 25, min_obs = 3, error_band ='normal')
 plot_profile(pred.gbm, df_s[[obj_var]], df_s[['annual_inc']]/12, bucket_count = 10, min_obs = 3, error_band ='normal')
 
-plots <- llply(c('grade_full','emp_years','home_ownership','verification_status','purpose','sub_grade','initial_list_status','mths_since_last_major_derog','inq_last_6mths','mths_since_last_delinq','pub_rec','funded_amnt','dti','dti_joint') %in_set% names(df), function(vname){
+index = df_s[['my_filter']] == TRUE
+plot_profile(pred.gbm[index], df_s[[obj_var]][index], df_s[['grade']][index], bucket_count = 10, min_obs = 3, error_band ='normal')
+
+plots <- llply(c('grade','grade_full','emp_years','home_ownership','verification_status','purpose','sub_grade','initial_list_status','mths_since_last_major_derog','inq_last_6mths','mths_since_last_delinq','pub_rec','funded_amnt','dti','dti_joint','total_acc') %in_set% names(df), function(vname){
   plot_result = plot_profile(pred.gbm, df_s[[obj_var]], df_s[[vname]], bucket_count = 10, min_obs = 3, error_band ='normal') + 
     ggtitle(vname) + theme(title =element_text(size=8), axis.title.y = element_blank())
   return (plot_result)

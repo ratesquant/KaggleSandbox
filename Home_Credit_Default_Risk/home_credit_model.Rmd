@@ -1,0 +1,210 @@
+---
+title: "Home Credit Model"
+author: "Alex"
+date: "May 28, 2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(gbm)
+library(data.table)
+library(plyr)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(xgboost)
+library(corrplot)
+#library(caret)
+
+working_folder = 'C:/Dev/Kaggle/'
+
+source(file.path(working_folder, '/Utils/common.R'))
+```
+
+## Loan Data
+
+```{r load_data}
+
+df_train = fread(file.path(working_folder,'Home_Credit_Default_Risk/data/application_train.csv') )
+df_test  = fread(file.path(working_folder,'Home_Credit_Default_Risk/data/application_test.csv') )
+
+df_test[, TARGET:=NA]
+    
+df = rbind(df_test, df_train)
+
+char_columns = names(df)[which(lapply(df, class) == 'character')] %!in_set% c('SK_ID_CURR')
+df[, (char_columns):=lapply(.SD, factor), .SDcols = char_columns]
+ 
+int_columns = names(df)[which(lapply(df, class) == 'integer')] %!in_set% c('SK_ID_CURR')
+df[, (int_columns):=lapply(.SD, as.numeric), .SDcols = int_columns]
+  
+test_index = is.na(df$TARGET)
+train_index = !is.na(df$TARGET)
+
+df[, age:=floor(-DAYS_BIRTH/365.25)]
+df[DAYS_EMPLOYED<0, employed:=floor(-DAYS_EMPLOYED/365.25)]
+df[, is_employed:=as.numeric(DAYS_EMPLOYED>0)]
+df[, AMT_GOODS_PRICE_LOG:=log10(1+AMT_GOODS_PRICE)]
+df[, AMT_CREDIT_LOG:=log10(1+AMT_CREDIT)]
+df[, AMT_INCOME_TOTAL_LOG:=log10(1+AMT_INCOME_TOTAL)]
+df[, credit_price_ratio:=AMT_CREDIT/AMT_GOODS_PRICE]
+df[, credit_income_ratio:=AMT_CREDIT/AMT_INCOME_TOTAL]
+
+#bureau
+bureau = fread(file.path(working_folder,'Home_Credit_Default_Risk/data/bureau.csv') )
+bureau_summary = bureau[,.(.N, active_count=sum(CREDIT_ACTIVE=='Active'), years_since_last_credit = min(-DAYS_CREDIT/365.25), years_since_first_credit = max(-DAYS_CREDIT/365.25), past_due_count = sum(CREDIT_DAY_OVERDUE>0), max_past_due=max(CREDIT_DAY_OVERDUE), 
+                           credit_sum=sum(AMT_CREDIT_SUM), total_past_due = sum(AMT_CREDIT_SUM_OVERDUE)),by =.(SK_ID_CURR)]
+bureau_summary[SK_ID_CURR == '305809',]
+
+
+bureau_index=match(df$SK_ID_CURR, bureau_summary$SK_ID_CURR)
+df[, credit_active_count:=bureau_summary$active_count[bureau_index]]
+df[, credit_total_count:=bureau_summary$N[bureau_index]]
+
+df[, years_since_last_credit:=bureau_summary$years_since_last_credit[bureau_index]]
+df[, years_since_first_credit:=bureau_summary$years_since_first_credit[bureau_index]]
+df[, past_due_count:=bureau_summary$past_due_count[bureau_index]]
+df[, max_past_due:=bureau_summary$max_past_due[bureau_index]]
+df[, total_past_due:=bureau_summary$total_past_due[bureau_index]]
+df[, credit_sum:=bureau_summary$credit_sum[bureau_index]]
+df[, credit_sum_income:=credit_sum/AMT_INCOME_TOTAL]
+
+
+```
+
+## GBM Model: All vars
+0.800
+EXT_SOURCE_3                                 EXT_SOURCE_3 30.064723609
+EXT_SOURCE_2                                 EXT_SOURCE_2 28.196022272
+EXT_SOURCE_1                                 EXT_SOURCE_1  8.452771264
+ORGANIZATION_TYPE                       ORGANIZATION_TYPE  8.323684288
+DAYS_BIRTH                                     DAYS_BIRTH  2.743282403
+AMT_GOODS_PRICE                           AMT_GOODS_PRICE  2.674957571
+```{r gbm_model1}
+
+actual = as.numeric(df$TARGET)
+
+#only keep several car_11 levels
+
+all_vars = names(df) %!in_set% c('TARGET','SK_ID_CURR')
+all_vars = c('EXT_SOURCE_3', 'EXT_SOURCE_2','EXT_SOURCE_1','age','employed', 'AMT_CREDIT_LOG', 'credit_price_ratio',
+             'CODE_GENDER','FLAG_OWN_CAR','OWN_CAR_AGE','FLAG_WORK_PHONE',
+             'APARTMENTS_AVG','NAME_EDUCATION_TYPE','NAME_CONTRACT_TYPE','NAME_INCOME_TYPE','NAME_FAMILY_STATUS', 'DEF_30_CNT_SOCIAL_CIRCLE',
+             'FLAG_DOCUMENT_18','FLAG_DOCUMENT_16','FLAG_DOCUMENT_13',
+             'years_since_last_credit','credit_active_count','past_due_count')
+exclude_vars = c()
+
+set.seed(1012356)
+
+formula.gbm = formula(stri_join( 'TARGET ~ ', stri_join(all_vars %!in_set% exclude_vars,collapse = ' + ')))
+
+model_vars = all.vars(formula.gbm) %!in_set% c('TARGET')
+var.monotone = rep(0, length(model_vars))
+
+mon_inc_vars = c('credit_price_ratio')
+mon_dec_vars = c('EXT_SOURCE_3','EXT_SOURCE_2','EXT_SOURCE_1','employed','APARTMENTS_AVG')
+
+var.monotone[model_vars %in% mon_inc_vars]  =  1
+var.monotone[model_vars %in% mon_dec_vars]  = -1
+
+cv_folds = 0
+max_it = 8000
+
+model.gbm  = gbm(formula.gbm,
+                 distribution = "bernoulli",
+                 n.trees = max_it,
+                 cv.folds = cv_folds,
+                 shrinkage = 0.01,
+                 interaction.depth=4,
+                 train.fraction = 0.7,
+                 bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
+                 n.cores = 2,
+                 var.monotone = var.monotone,
+                 data = df[train_index, all.vars(formula.gbm), with = F],
+                 verbose = TRUE)
+
+#saveRDS(model.gbm, file.path(working_folder,'Home_Credit_Default_Risk/model.rds'))
+#model.gbm = readRDS(file.path(working_folder,'Home_Credit_Default_Risk/model.rds'))
+
+plot_gbmiterations(model.gbm)
+
+best_it.gbm = ifelse(cv_folds==0, max_it, gbm.perf(model.gbm, plot.it = F))
+
+pred.gbm  = predict(model.gbm, n.trees = best_it.gbm, type = 'response', newdata = df)
+gbm.roc.area(actual[train_index], pred.gbm[train_index])
+
+#influence
+var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
+plot_gbminfluence(var_inf)
+print(var_inf)
+
+#interactions
+var_interaction = gbm_interactions(model.gbm, df[train_index,], iter = best_it.gbm, min_influence = 1, degree = 2) 
+plot_gbminteractions(subset(var_interaction, interaction_score>0.05))
+print(var_interaction)
+
+plots = plot_gbmpartial_2d(model.gbm, best_it.gbm, as.character(subset(var_interaction,interaction_score>0.1)$vars), output_type = 'response')
+marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
+
+plot_binmodel_predictions(actual[train_index], pred.gbm[train_index])
+
+plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var[var_inf$rel.inf>0.2]), output_type = 'response')
+marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+
+plots = llply(all.vars(formula.gbm), function(var_name) {
+  p = plot_profile(pred.gbm[train_index], actual[train_index],df[[var_name]][train_index], error_band = 'binom') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+
+plots = llply(names(df) %!in_set% all.vars(formula.gbm), function(var_name) {
+  p = plot_profile(pred.gbm[train_index], actual[train_index],df[[var_name]][train_index], error_band = 'binom') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+
+#factor
+factor_columns = names(df)[which(lapply(df, class) == 'factor')] %!in_set% c('SK_ID_CURR')
+plots = llply(factor_columns, function(var_name) {
+  p = plot_profile(pred.gbm[train_index], actual[train_index],df[[var_name]][train_index], error_band = 'binom') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
+
+plot_profile(pred.gbm[train_index], actual[train_index],df[['OCCUPATION_TYPE']][train_index], error_band = 'binom') 
+
+plot_profile(pred.gbm[train_index], actual[train_index],df[['NAME_EDUCATION_TYPE']][train_index], error_band = 'binom') 
+plot_profile(pred.gbm[train_index], actual[train_index],df[['NAME_INCOME_TYPE']][train_index], error_band = 'binom') 
+plot_profile(pred.gbm[train_index], actual[train_index],df[['credit_sum_income']][train_index], error_band = 'binom')
+
+```
+
+## Output File
+1: 0.726
+2: 0.737 (0.7565265)
+3: (0.7597784)
+```{r output}
+
+submit <- data.table(SK_ID_CURR = df$SK_ID_CURR[test_index], TARGET = pred.gbm[test_index])
+  
+submit = submit[order(submit$SK_ID_CURR),]
+  
+file = file.path(working_folder, "Home_Credit_Default_Risk/solution.csv")
+  
+fwrite(submit, file = file, row.names = FALSE)
+  
+  #utils::zip(paste(file, '.zip', sep = ''), file, flags = "-r9X")
+zip(paste(file, '.zip', sep = ''), file)
+  
+print(file)
+```

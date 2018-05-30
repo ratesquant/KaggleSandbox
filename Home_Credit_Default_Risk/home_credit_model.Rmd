@@ -21,6 +21,7 @@ library(gridExtra)
 library(zip)
 library(xgboost)
 library(corrplot)
+library(forcats)
 #library(caret)
 
 working_folder = 'C:/Dev/Kaggle/'
@@ -57,26 +58,80 @@ df[, AMT_INCOME_TOTAL_LOG:=log10(1+AMT_INCOME_TOTAL)]
 df[, credit_price_ratio:=AMT_CREDIT/AMT_GOODS_PRICE]
 df[, credit_income_ratio:=AMT_CREDIT/AMT_INCOME_TOTAL]
 
-#bureau
+#bureau file
 bureau = fread(file.path(working_folder,'Home_Credit_Default_Risk/data/bureau.csv') )
-bureau_summary = bureau[,.(.N, active_count=sum(CREDIT_ACTIVE=='Active'), years_since_last_credit = min(-DAYS_CREDIT/365.25), years_since_first_credit = max(-DAYS_CREDIT/365.25), past_due_count = sum(CREDIT_DAY_OVERDUE>0), max_past_due=max(CREDIT_DAY_OVERDUE), 
-                           credit_sum=sum(AMT_CREDIT_SUM), total_past_due = sum(AMT_CREDIT_SUM_OVERDUE)),by =.(SK_ID_CURR)]
-bureau_summary[SK_ID_CURR == '305809',]
+bureau_summary = bureau[,.(.N, active_count=sum(CREDIT_ACTIVE=='Active'), 
+                           years_since_last_credit = min(-DAYS_CREDIT/365.25), 
+                           years_since_first_credit = max(-DAYS_CREDIT/365.25), 
+                           past_due_count = sum(CREDIT_DAY_OVERDUE>0), 
+                           max_past_due=max(CREDIT_DAY_OVERDUE), 
+                           credit_sum=sum(AMT_CREDIT_SUM), 
+                           total_past_due = sum(AMT_CREDIT_SUM_OVERDUE)),by =.(SK_ID_CURR)]
+#bureau_summary[SK_ID_CURR == '305809',]
 
 
 bureau_index=match(df$SK_ID_CURR, bureau_summary$SK_ID_CURR)
-df[, credit_active_count:=bureau_summary$active_count[bureau_index]]
-df[, credit_total_count:=bureau_summary$N[bureau_index]]
+df[, bureau_credit_active_count:=bureau_summary$active_count[bureau_index]]
+df[, bureau_credit_total_count:=bureau_summary$N[bureau_index]]
 
-df[, years_since_last_credit:=bureau_summary$years_since_last_credit[bureau_index]]
-df[, years_since_first_credit:=bureau_summary$years_since_first_credit[bureau_index]]
-df[, past_due_count:=bureau_summary$past_due_count[bureau_index]]
-df[, max_past_due:=bureau_summary$max_past_due[bureau_index]]
-df[, total_past_due:=bureau_summary$total_past_due[bureau_index]]
-df[, credit_sum:=bureau_summary$credit_sum[bureau_index]]
-df[, credit_sum_income:=credit_sum/AMT_INCOME_TOTAL]
+df[, bureau_years_since_last_credit:=bureau_summary$years_since_last_credit[bureau_index]]
+df[, bureau_new_credit_last_6m:=as.numeric(bureau_years_since_last_credit<=0.5)]
+df[, bureau_new_credit_last_2y:=as.numeric(bureau_years_since_last_credit<=2.0)]
 
+df[, bureau_years_since_first_credit:=bureau_summary$years_since_first_credit[bureau_index]]
+df[, bureau_past_due_count:=bureau_summary$past_due_count[bureau_index]]
+df[, bureau_max_past_due:=bureau_summary$max_past_due[bureau_index]]
+df[, bureau_total_past_due:=bureau_summary$total_past_due[bureau_index]]
+df[, bureau_credit_sum:=bureau_summary$credit_sum[bureau_index]]
+df[, bureau_credit_sum_income:=bureau_credit_sum/AMT_INCOME_TOTAL]
 
+#bureau_balance.csv file
+bureau_balance = fread(file.path(working_folder,'Home_Credit_Default_Risk/data/bureau_balance.csv') )
+bureau_balance[, delq := as.numeric(STATUS %!in% c('C', '0'))]
+bureau_balance[, delq_level :=  as.numeric(STATUS)]
+bureau_balance[STATUS=='C', delq_level := -1]
+bureau_balance[STATUS=='X', delq_level :=  6]
+
+bureau_balance_summary = bureau_balance[order(-MONTHS_BALANCE),.(.N, 
+                         delq_count = sum(delq),
+                         delq_count_6m = sum(head(delq, 6)),
+                         delq_count_1y = sum(head(delq,12)),
+                         delq_count_2y = sum(head(delq,24)),
+                         delq_count_5y = sum(head(delq,60)),
+                         delq_max_6m = max(head(delq_level, 6)),
+                         delq_max_1y = max(head(delq_level,12)),
+                         delq_max_2y = max(head(delq_level,24)),
+                         delq_max_5y = max(head(delq_level,60))),by =.(SK_ID_BUREAU)]
+
+bureau_balance_index=match(bureau_balance_summary$SK_ID_BUREAU, bureau$SK_ID_BUREAU)
+bureau_balance_summary[, SK_ID_CURR:=bureau$SK_ID_CURR[bureau_balance_index]]
+
+bureau_balance_sum = bureau_balance_summary[,.(n_acc=.N, obs_count=sum(N), 
+                         delq_count = sum(delq_count),
+                         delq_count_6m = sum(delq_count_6m),
+                         delq_count_1y = sum(delq_count_1y),
+                         delq_count_2y = sum(delq_count_2y),
+                         delq_count_5y = sum(delq_count_5y),
+                         delq_max_6m = max(delq_max_6m),
+                         delq_max_1y = max(delq_max_1y),
+                         delq_max_2y = max(delq_max_2y),
+                         delq_max_5y = max(delq_max_5y)),by =.(SK_ID_CURR)]
+
+bureau_balance_index=match(bureau_balance_sum$SK_ID_CURR, df$SK_ID_CURR)
+
+df[, bureau_hist_count:=bureau_balance_sum$N[bureau_balance_index]]
+df[, bureau_hist_obs_count:=bureau_balance_sum$obs_count[bureau_balance_index]]
+df[, bureau_hist_delq_count:=bureau_balance_sum$delq_count[bureau_balance_index]]
+df[, bureau_hist_delq_count_6m:=bureau_balance_sum$delq_count_6m[bureau_balance_index]]
+df[, bureau_hist_delq_count_1y:=bureau_balance_sum$delq_count_1y[bureau_balance_index]]
+df[, bureau_hist_delq_count_2y:=bureau_balance_sum$delq_count_2y[bureau_balance_index]]
+df[, bureau_hist_delq_count_5y:=bureau_balance_sum$delq_count_5y[bureau_balance_index]]
+df[, bureau_hist_delq_max_6m:=bureau_balance_sum$delq_max_6m[bureau_balance_index]]
+df[, bureau_hist_delq_max_1y:=bureau_balance_sum$delq_max_1y[bureau_balance_index]]
+df[, bureau_hist_delq_max_2y:=bureau_balance_sum$delq_max_2y[bureau_balance_index]]
+df[, bureau_hist_delq_max_5y:=bureau_balance_sum$delq_max_5y[bureau_balance_index]]
+
+table(bureau_balance[,.(STATUS, delq_level)])
 ```
 
 ## GBM Model: All vars
@@ -97,8 +152,9 @@ all_vars = names(df) %!in_set% c('TARGET','SK_ID_CURR')
 all_vars = c('EXT_SOURCE_3', 'EXT_SOURCE_2','EXT_SOURCE_1','age','employed', 'AMT_CREDIT_LOG', 'credit_price_ratio',
              'CODE_GENDER','FLAG_OWN_CAR','OWN_CAR_AGE','FLAG_WORK_PHONE',
              'APARTMENTS_AVG','NAME_EDUCATION_TYPE','NAME_CONTRACT_TYPE','NAME_INCOME_TYPE','NAME_FAMILY_STATUS', 'DEF_30_CNT_SOCIAL_CIRCLE',
-             'FLAG_DOCUMENT_18','FLAG_DOCUMENT_16','FLAG_DOCUMENT_13',
-             'years_since_last_credit','credit_active_count','past_due_count')
+             'FLAG_DOCUMENT_18','FLAG_DOCUMENT_16','FLAG_DOCUMENT_13','FLAG_PHONE','FLAG_OWN_REALTY',
+             'bureau_new_credit_last_6m','bureau_credit_active_count','bureau_past_due_count',
+             'bureau_credit_total_count','REGION_RATING_CLIENT')
 exclude_vars = c()
 
 set.seed(1012356)
@@ -108,14 +164,14 @@ formula.gbm = formula(stri_join( 'TARGET ~ ', stri_join(all_vars %!in_set% exclu
 model_vars = all.vars(formula.gbm) %!in_set% c('TARGET')
 var.monotone = rep(0, length(model_vars))
 
-mon_inc_vars = c('credit_price_ratio')
+mon_inc_vars = c('credit_price_ratio','bureau_past_due_count','DEF_30_CNT_SOCIAL_CIRCLE','bureau_credit_active_count','AMT_CREDIT_LOG')
 mon_dec_vars = c('EXT_SOURCE_3','EXT_SOURCE_2','EXT_SOURCE_1','employed','APARTMENTS_AVG')
 
 var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
 cv_folds = 0
-max_it = 8000
+max_it = 4000
 
 model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
@@ -146,12 +202,12 @@ plot_gbminfluence(var_inf)
 print(var_inf)
 
 #interactions
-var_interaction = gbm_interactions(model.gbm, df[train_index,], iter = best_it.gbm, min_influence = 1, degree = 2) 
-plot_gbminteractions(subset(var_interaction, interaction_score>0.05))
-print(var_interaction)
+#var_interaction = gbm_interactions(model.gbm, df[train_index,], iter = best_it.gbm, min_influence = 1, degree = 2) 
+#plot_gbminteractions(subset(var_interaction, interaction_score>0.05))
+#print(var_interaction)
 
-plots = plot_gbmpartial_2d(model.gbm, best_it.gbm, as.character(subset(var_interaction,interaction_score>0.1)$vars), output_type = 'response')
-marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
+#plots = plot_gbmpartial_2d(model.gbm, best_it.gbm, as.character(subset(var_interaction,interaction_score>0.1)$vars), output_type = 'response')
+#marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
 
 plot_binmodel_predictions(actual[train_index], pred.gbm[train_index])
 
@@ -192,7 +248,7 @@ plot_profile(pred.gbm[train_index], actual[train_index],df[['credit_sum_income']
 ## Output File
 1: 0.726
 2: 0.737 (0.7565265)
-3: (0.7597784)
+3: 0.740 (0.7597784)
 ```{r output}
 
 submit <- data.table(SK_ID_CURR = df$SK_ID_CURR[test_index], TARGET = pred.gbm[test_index])

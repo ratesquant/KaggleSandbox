@@ -49,30 +49,44 @@ df[, (int_columns):=lapply(.SD, as.numeric), .SDcols = int_columns]
 test_index = is.na(df$TARGET)
 train_index = !is.na(df$TARGET)
 
+df[, phone_age:=floor(-DAYS_LAST_PHONE_CHANGE/365.25)]
 df[, age:=floor(-DAYS_BIRTH/365.25)]
 df[DAYS_EMPLOYED<0, employed:=floor(-DAYS_EMPLOYED/365.25)]
 df[, is_employed:=as.numeric(DAYS_EMPLOYED>0)]
 df[, AMT_GOODS_PRICE_LOG:=log10(1+AMT_GOODS_PRICE)]
 df[, AMT_CREDIT_LOG:=log10(1+AMT_CREDIT)]
 df[, AMT_INCOME_TOTAL_LOG:=log10(1+AMT_INCOME_TOTAL)]
-df[, credit_price_ratio:=AMT_CREDIT/AMT_GOODS_PRICE]
+df[, credit_price_ratio:=pmin(2,AMT_CREDIT/AMT_GOODS_PRICE)]
 df[, credit_income_ratio:=AMT_CREDIT/AMT_INCOME_TOTAL]
+df[, annuity_income_ratio:=pmin(1,AMT_ANNUITY/AMT_INCOME_TOTAL)]
+df[, mon_id_publish:=floor(-12*DAYS_ID_PUBLISH/365.25)]
+df[, year_id_publish:=floor(-DAYS_ID_PUBLISH/365.25)]
+df[, own_car_age_36max:=pmin(36, OWN_CAR_AGE)]
+
 
 #bureau file
 bureau = fread(file.path(working_folder,'Home_Credit_Default_Risk/data/bureau.csv') )
-bureau_summary = bureau[,.(.N, active_count=sum(CREDIT_ACTIVE=='Active'), 
-                           years_since_last_credit = min(-DAYS_CREDIT/365.25), 
-                           years_since_first_credit = max(-DAYS_CREDIT/365.25), 
-                           past_due_count = sum(CREDIT_DAY_OVERDUE>0), 
-                           max_past_due=max(CREDIT_DAY_OVERDUE), 
-                           credit_sum=sum(AMT_CREDIT_SUM), 
-                           total_past_due = sum(AMT_CREDIT_SUM_OVERDUE)),by =.(SK_ID_CURR)]
+bureau_summary = bureau[,.(.N, active_count=sum(CREDIT_ACTIVE=='Active', na.rm=T), 
+                           years_since_last_credit = min(-DAYS_CREDIT/365.25, na.rm=T), 
+                           years_since_first_credit = max(-DAYS_CREDIT/365.25, na.rm=T), 
+                           past_due_count = sum(CREDIT_DAY_OVERDUE>0,na.rm=T), 
+                           max_past_due=max(CREDIT_DAY_OVERDUE,na.rm=T), 
+                           credit_sum=sum(AMT_CREDIT_SUM,na.rm=T), 
+                           credit_sum_dept=sum(AMT_CREDIT_SUM_DEBT,na.rm=T), 
+                           credit_sum_lim=sum(AMT_CREDIT_SUM_LIMIT,na.rm=T),
+                           total_past_due = sum(AMT_CREDIT_SUM_OVERDUE, na.rm=T),
+                           credit_max_overdue = sum(AMT_CREDIT_MAX_OVERDUE, na.rm=T),
+                           loan_type_count = length(unique(CREDIT_TYPE)),
+                           prolong_count = sum(CNT_CREDIT_PROLONG, na.rm=T) ),by =.(SK_ID_CURR)]
 #bureau_summary[SK_ID_CURR == '305809',]
+#bureau[SK_ID_CURR == '305809',]
 
 
 bureau_index=match(df$SK_ID_CURR, bureau_summary$SK_ID_CURR)
 df[, bureau_credit_active_count:=bureau_summary$active_count[bureau_index]]
 df[, bureau_credit_total_count:=bureau_summary$N[bureau_index]]
+df[, bureau_credit_active_pct:=bureau_credit_active_count/bureau_credit_total_count]
+df[, bureau_loan_type_count:=bureau_summary$loan_type_count[bureau_index]]
 
 df[, bureau_years_since_last_credit:=bureau_summary$years_since_last_credit[bureau_index]]
 df[, bureau_new_credit_last_6m:=as.numeric(bureau_years_since_last_credit<=0.5)]
@@ -83,7 +97,16 @@ df[, bureau_past_due_count:=bureau_summary$past_due_count[bureau_index]]
 df[, bureau_max_past_due:=bureau_summary$max_past_due[bureau_index]]
 df[, bureau_total_past_due:=bureau_summary$total_past_due[bureau_index]]
 df[, bureau_credit_sum:=bureau_summary$credit_sum[bureau_index]]
+df[, bureau_credit_sum_lim:=bureau_summary$credit_sum_lim[bureau_index]]
+df[, bureau_credit_sum_dept:=bureau_summary$credit_sum_dept[bureau_index]]
+df[, bureau_loan_type_count:=bureau_summary$loan_type_count[bureau_index]]
 df[, bureau_credit_sum_income:=bureau_credit_sum/AMT_INCOME_TOTAL]
+df[, bureau_total_past_due_pct:=bureau_total_past_due/bureau_credit_sum_income]
+df[, bureau_credit_sum_log:=log(bureau_credit_sum+1)]
+df[, bureau_credit_sum_dept_log:=log(bureau_credit_sum_dept+1)]
+df[, bureau_credit_sum_dept_income:=pmax(100, bureau_credit_sum_dept/AMT_INCOME_TOTAL)]
+
+
 
 #bureau_balance.csv file
 bureau_balance = fread(file.path(working_folder,'Home_Credit_Default_Risk/data/bureau_balance.csv') )
@@ -103,8 +126,7 @@ bureau_balance_summary = bureau_balance[order(-MONTHS_BALANCE),.(.N,
                          delq_max_2y = max(head(delq_level,24)),
                          delq_max_5y = max(head(delq_level,60))),by =.(SK_ID_BUREAU)]
 
-bureau_balance_index=match(bureau_balance_summary$SK_ID_BUREAU, bureau$SK_ID_BUREAU)
-bureau_balance_summary[, SK_ID_CURR:=bureau$SK_ID_CURR[bureau_balance_index]]
+bureau_balance_summary[, SK_ID_CURR:=bureau$SK_ID_CURR[match(bureau_balance_summary$SK_ID_BUREAU, bureau$SK_ID_BUREAU)]]
 
 bureau_balance_sum = bureau_balance_summary[,.(n_acc=.N, obs_count=sum(N), 
                          delq_count = sum(delq_count),
@@ -132,16 +154,62 @@ df[, bureau_hist_delq_max_2y:=bureau_balance_sum$delq_max_2y[bureau_balance_inde
 df[, bureau_hist_delq_max_5y:=bureau_balance_sum$delq_max_5y[bureau_balance_index]]
 
 table(bureau_balance[,.(STATUS, delq_level)])
+
+#credit_card_balance.csv
+credit_card_balance = fread(file.path(working_folder,'Home_Credit_Default_Risk/data/credit_card_balance.csv') )
+credit_card_balance[,AMT_BALANCE_RATIO:=AMT_BALANCE/AMT_CREDIT_LIMIT_ACTUAL]
+credit_card_balance[,AMT_DRAWINGS_ATM_CURRENT_RATIO:=AMT_DRAWINGS_ATM_CURRENT/AMT_CREDIT_LIMIT_ACTUAL]
+
+cc_bal_6m = credit_card_balance[MONTHS_BALANCE>-6,.(max_util=max(AMT_BALANCE_RATIO),
+                                             amt_cash=sum(AMT_DRAWINGS_ATM_CURRENT),
+                                             amt_draw=sum(AMT_DRAWINGS_CURRENT)), by =.(SK_ID_CURR)]
+cc_bal_index=match(cc_bal_6m$SK_ID_CURR, df$SK_ID_CURR)
+
+df[, cc_bal_util_6m:=cc_bal_6m$max_util[cc_bal_index]]
+
+#plot_profile(pred.gbm[train_index], actual[train_index],df[['bureau_credit_sum_income']][train_index], error_band = 'binom')
+#ggplot(df, aes(bureau_credit_sum_dept_income, bureau_credit_sum)) + geom_point(alpha =0.1)
 ```
 
 ## GBM Model: All vars
 0.800
-EXT_SOURCE_3                                 EXT_SOURCE_3 30.064723609
-EXT_SOURCE_2                                 EXT_SOURCE_2 28.196022272
-EXT_SOURCE_1                                 EXT_SOURCE_1  8.452771264
-ORGANIZATION_TYPE                       ORGANIZATION_TYPE  8.323684288
-DAYS_BIRTH                                     DAYS_BIRTH  2.743282403
-AMT_GOODS_PRICE                           AMT_GOODS_PRICE  2.674957571
+                                                 var     rel.inf
+EXT_SOURCE_3                             EXT_SOURCE_3 28.97906367
+EXT_SOURCE_2                             EXT_SOURCE_2 27.42091072
+EXT_SOURCE_1                             EXT_SOURCE_1  9.22955180
+credit_price_ratio                 credit_price_ratio  5.17099545
+employed                                     employed  5.07370325
+credit_income_ratio               credit_income_ratio  2.46653801
+bureau_credit_active_count bureau_credit_active_count  2.41014043
+CODE_GENDER                               CODE_GENDER  1.98962441
+annuity_income_ratio             annuity_income_ratio  1.86347526
+NAME_EDUCATION_TYPE               NAME_EDUCATION_TYPE  1.84144801
+own_car_age_36max                   own_car_age_36max  1.71321360
+age                                               age  1.65459418
+AMT_CREDIT_LOG                         AMT_CREDIT_LOG  1.28942038
+NAME_FAMILY_STATUS                 NAME_FAMILY_STATUS  1.00122872
+bureau_credit_total_count   bureau_credit_total_count  0.96521255
+APARTMENTS_AVG                         APARTMENTS_AVG  0.88773738
+AMT_INCOME_TOTAL_LOG             AMT_INCOME_TOTAL_LOG  0.85824197
+DEF_30_CNT_SOCIAL_CIRCLE     DEF_30_CNT_SOCIAL_CIRCLE  0.80572579
+NAME_INCOME_TYPE                     NAME_INCOME_TYPE  0.73521037
+year_id_publish                       year_id_publish  0.71691814
+FLAG_DOCUMENT_3                       FLAG_DOCUMENT_3  0.53818309
+REGION_RATING_CLIENT             REGION_RATING_CLIENT  0.51393692
+bureau_past_due_count           bureau_past_due_count  0.48152638
+FLAG_WORK_PHONE                       FLAG_WORK_PHONE  0.38171215
+bureau_new_credit_last_6m   bureau_new_credit_last_6m  0.33058087
+FLAG_DOCUMENT_18                     FLAG_DOCUMENT_18  0.16119693
+NAME_CONTRACT_TYPE                 NAME_CONTRACT_TYPE  0.13742859
+FLAG_DOCUMENT_16                     FLAG_DOCUMENT_16  0.11760090
+FLAG_OWN_REALTY                       FLAG_OWN_REALTY  0.06237629
+FLAG_PHONE                                 FLAG_PHONE  0.06072748
+FLAG_DOCUMENT_13                     FLAG_DOCUMENT_13  0.03482700
+FLAG_DOCUMENT_11                     FLAG_DOCUMENT_11  0.02761865
+FLAG_DOCUMENT_8                       FLAG_DOCUMENT_8  0.02346138
+FLAG_DOCUMENT_15                     FLAG_DOCUMENT_15  0.02276251
+FLAG_DOCUMENT_14                     FLAG_DOCUMENT_14  0.01921954
+FLAG_OWN_CAR                             FLAG_OWN_CAR  0.01388721
 ```{r gbm_model1}
 
 actual = as.numeric(df$TARGET)
@@ -149,12 +217,13 @@ actual = as.numeric(df$TARGET)
 #only keep several car_11 levels
 
 all_vars = names(df) %!in_set% c('TARGET','SK_ID_CURR')
-all_vars = c('EXT_SOURCE_3', 'EXT_SOURCE_2','EXT_SOURCE_1','age','employed', 'AMT_CREDIT_LOG', 'credit_price_ratio',
-             'CODE_GENDER','FLAG_OWN_CAR','OWN_CAR_AGE','FLAG_WORK_PHONE',
+all_vars = unique(c('EXT_SOURCE_3', 'EXT_SOURCE_2','EXT_SOURCE_1','age','employed', 'AMT_CREDIT_LOG', 'credit_price_ratio',
+             'CODE_GENDER','FLAG_OWN_CAR','own_car_age_36max','FLAG_WORK_PHONE',
              'APARTMENTS_AVG','NAME_EDUCATION_TYPE','NAME_CONTRACT_TYPE','NAME_INCOME_TYPE','NAME_FAMILY_STATUS', 'DEF_30_CNT_SOCIAL_CIRCLE',
-             'FLAG_DOCUMENT_18','FLAG_DOCUMENT_16','FLAG_DOCUMENT_13','FLAG_PHONE','FLAG_OWN_REALTY',
+             'FLAG_DOCUMENT_3','FLAG_DOCUMENT_8','FLAG_DOCUMENT_18','FLAG_DOCUMENT_18','FLAG_DOCUMENT_16',
+             'FLAG_DOCUMENT_13','FLAG_DOCUMENT_14','FLAG_DOCUMENT_15','FLAG_DOCUMENT_11','FLAG_PHONE','FLAG_OWN_REALTY',
              'bureau_new_credit_last_6m','bureau_credit_active_count','bureau_past_due_count',
-             'bureau_credit_total_count','REGION_RATING_CLIENT')
+             'bureau_credit_total_count','REGION_RATING_CLIENT','year_id_publish','annuity_income_ratio','credit_income_ratio','AMT_INCOME_TOTAL_LOG','REG_CITY_NOT_LIVE_CITY','bureau_credit_sum_log','bureau_credit_sum_dept_income'))
 exclude_vars = c()
 
 set.seed(1012356)
@@ -164,15 +233,15 @@ formula.gbm = formula(stri_join( 'TARGET ~ ', stri_join(all_vars %!in_set% exclu
 model_vars = all.vars(formula.gbm) %!in_set% c('TARGET')
 var.monotone = rep(0, length(model_vars))
 
-mon_inc_vars = c('credit_price_ratio','bureau_past_due_count','DEF_30_CNT_SOCIAL_CIRCLE','bureau_credit_active_count','AMT_CREDIT_LOG')
-mon_dec_vars = c('EXT_SOURCE_3','EXT_SOURCE_2','EXT_SOURCE_1','employed','APARTMENTS_AVG')
+mon_inc_vars = c('credit_price_ratio','bureau_past_due_count','DEF_30_CNT_SOCIAL_CIRCLE','bureau_credit_active_count','AMT_CREDIT_LOG','own_car_age_36max','annuity_income_ratio')
+mon_dec_vars = c('EXT_SOURCE_3','EXT_SOURCE_2','EXT_SOURCE_1','employed','APARTMENTS_AVG','year_id_publish','bureau_credit_total_count','LIVE_CITY_NOT_WORK_CITY','credit_income_ratio','AMT_INCOME_TOTAL_LOG','bureau_credit_sum_log')
 
 var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
 cv_folds = 0
-max_it = 4000
-
+max_it = 6000
+#0.49
 model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
                  n.trees = max_it,
@@ -209,6 +278,8 @@ print(var_inf)
 #plots = plot_gbmpartial_2d(model.gbm, best_it.gbm, as.character(subset(var_interaction,interaction_score>0.1)$vars), output_type = 'response')
 #marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
 
+#cor(df[,.(EXT_SOURCE_3, EXT_SOURCE_2, EXT_SOURCE_1)], use = 'pairwise.complete.obs')
+
 plot_binmodel_predictions(actual[train_index], pred.gbm[train_index])
 
 plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var[var_inf$rel.inf>0.2]), output_type = 'response')
@@ -241,7 +312,7 @@ plot_profile(pred.gbm[train_index], actual[train_index],df[['OCCUPATION_TYPE']][
 
 plot_profile(pred.gbm[train_index], actual[train_index],df[['NAME_EDUCATION_TYPE']][train_index], error_band = 'binom') 
 plot_profile(pred.gbm[train_index], actual[train_index],df[['NAME_INCOME_TYPE']][train_index], error_band = 'binom') 
-plot_profile(pred.gbm[train_index], actual[train_index],df[['credit_sum_income']][train_index], error_band = 'binom')
+plot_profile(pred.gbm[train_index], actual[train_index],df[['bureau_hist_delq_count_2y']][train_index], error_band = 'binom')
 
 ```
 
@@ -249,6 +320,7 @@ plot_profile(pred.gbm[train_index], actual[train_index],df[['credit_sum_income']
 1: 0.726
 2: 0.737 (0.7565265)
 3: 0.740 (0.7597784)
+4: 0.746
 ```{r output}
 
 submit <- data.table(SK_ID_CURR = df$SK_ID_CURR[test_index], TARGET = pred.gbm[test_index])

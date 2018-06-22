@@ -22,6 +22,7 @@ library(zip)
 library(xgboost)
 library(corrplot)
 library(forcats)
+library(pdp)
 #library(caret)
 
 working_folder = 'C:/Dev/Kaggle/'
@@ -62,7 +63,15 @@ df[, annuity_income_ratio:=pmin(1,AMT_ANNUITY/AMT_INCOME_TOTAL)]
 df[, mon_id_publish:=floor(-12*DAYS_ID_PUBLISH/365.25)]
 df[, year_id_publish:=floor(-DAYS_ID_PUBLISH/365.25)]
 df[, own_car_age_36max:=pmin(36, OWN_CAR_AGE)]
+df[, own_car_age_3max:=pmin(3, OWN_CAR_AGE)]
+df[, own_car_age_5max:=pmin(5, OWN_CAR_AGE)]
+df[, NAME_INCOME_TYPE_SUBSET:=fct_other(NAME_INCOME_TYPE, keep=c('State servant'))]
+df[, NAME_HOUSING_TYPE_SUBSET:=fct_other(NAME_HOUSING_TYPE, keep=c('Office apartment','Municipal apartment'))]
+df[, OCCUPATION_TYPE_SUBSET:=fct_other(OCCUPATION_TYPE,  keep = c("Accountants",'Core staff','Drivers','High skill tech staff','Medicine staff','Realtor','Low-skill Laborers'))]
+df[, ORGANIZATION_TYPE_SUBSET:=fct_other(ORGANIZATION_TYPE,  keep = c("Bank",'Construction','Police','School','Military','Security Ministries','Realtor','Hotel'))]
 
+table(df[,.(OCCUPATION_TYPE  , OCCUPATION_TYPE_SUBSET)])
+table(df[,.(ORGANIZATION_TYPE, ORGANIZATION_TYPE_SUBSET)])
 
 #bureau file
 bureau = fread(file.path(working_folder,'Home_Credit_Default_Risk/data/bureau.csv') )
@@ -91,6 +100,8 @@ df[, bureau_loan_type_count:=bureau_summary$loan_type_count[bureau_index]]
 df[, bureau_years_since_last_credit:=bureau_summary$years_since_last_credit[bureau_index]]
 df[, bureau_new_credit_last_6m:=as.numeric(bureau_years_since_last_credit<=0.5)]
 df[, bureau_new_credit_last_2y:=as.numeric(bureau_years_since_last_credit<=2.0)]
+df[, bureau_years_since_last_credit_1ycap:=pmin(1.0,bureau_years_since_last_credit)]
+
 
 df[, bureau_years_since_first_credit:=bureau_summary$years_since_first_credit[bureau_index]]
 df[, bureau_past_due_count:=bureau_summary$past_due_count[bureau_index]]
@@ -98,6 +109,7 @@ df[, bureau_max_past_due:=bureau_summary$max_past_due[bureau_index]]
 df[, bureau_total_past_due:=bureau_summary$total_past_due[bureau_index]]
 df[, bureau_credit_sum:=bureau_summary$credit_sum[bureau_index]]
 df[, bureau_credit_sum_lim:=bureau_summary$credit_sum_lim[bureau_index]]
+df[, bureau_credit_sum_lim_log:=log10(bureau_credit_sum_lim+1)]
 df[, bureau_credit_sum_dept:=bureau_summary$credit_sum_dept[bureau_index]]
 df[, bureau_loan_type_count:=bureau_summary$loan_type_count[bureau_index]]
 df[, bureau_credit_sum_income:=bureau_credit_sum/AMT_INCOME_TOTAL]
@@ -167,49 +179,124 @@ cc_bal_index=match(cc_bal_6m$SK_ID_CURR, df$SK_ID_CURR)
 
 df[, cc_bal_util_6m:=cc_bal_6m$max_util[cc_bal_index]]
 
-#plot_profile(pred.gbm[train_index], actual[train_index],df[['bureau_credit_sum_income']][train_index], error_band = 'binom')
+#POS_CASH_balance.csv
+pos_cash_balance = fread(file.path(working_folder,'Home_Credit_Default_Risk/data/POS_CASH_balance.csv') )
+pos_cash_balance_summary = pos_cash_balance[order(-MONTHS_BALANCE),.(n_prev=length(unique(SK_ID_PREV)), 
+                                          dpd_avg=mean(SK_DPD), 
+                                          dpd_def_avg=mean(SK_DPD_DEF),
+                                          dpd_avg_2y=mean(head(SK_DPD, 12)),
+                                          dpd_def_2y_avg=mean(head(SK_DPD_DEF,12)),
+                                          rec_age=-min(MONTHS_BALANCE)),
+                                            by =.(SK_ID_CURR)]
+pos_cash_balance[SK_ID_CURR=='182943',]
+pos_cash_balance_summary[SK_ID_CURR=='182943',]
+
+index=match(pos_cash_balance_summary$SK_ID_CURR, df$SK_ID_CURR)
+
+df[, pos_cash_balance_prev:=pos_cash_balance_summary$n_prev[index]]
+df[, pos_cash_balance_dpd_avg   :=pos_cash_balance_summary$dpd_avg[index]]
+df[, pos_cash_balance_dpd_2y_avg:=pos_cash_balance_summary$dpd_2y_avg[index]]
+df[, pos_cash_balance_dpd_def_avg   :=pos_cash_balance_summary$dpd_def_avg[index]]
+df[, pos_cash_balance_dpd_def_2y_avg:=pos_cash_balance_summary$dpd_def_2y_avg[index]]
+df[, pos_cash_balance_rec_age:=pos_cash_balance_summary$rec_age[index]]
+
+#previous_application.csv
+prev_application = fread(file.path(working_folder,'Home_Credit_Default_Risk/data/previous_application.csv') )
+
+prev_application_summary = 
+  prev_application[,.(n_prev=length(unique(SK_ID_PREV)),                                           app_count=sum(as.numeric(NAME_CONTRACT_STATUS=='Approved')), 
+                     app_age_min=min(-DAYS_DECISION),
+                     app_age_max=max(-DAYS_DECISION)),
+                                            by =.(SK_ID_CURR)]
+
+prev_application[SK_ID_CURR=='271877',]
+prev_application_summary[SK_ID_CURR=='182943',]
+  
+index=match(prev_application_summary$SK_ID_CURR, df$SK_ID_CURR)
+df[, prev_application_count:=prev_application_summary$n_prev[index]]
+df[, prev_application_count_good:=prev_application_summary$app_count[index]]
+df[, prev_application_app_age_min:=prev_application_summary$app_age_min[index]]
+df[, prev_application_app_age_max:=prev_application_summary$app_age_max[index]]
+  
+#installments_payments.csv
+installments_payments = fread(file.path(working_folder,'Home_Credit_Default_Risk/data/installments_payments.csv') )
+
+installments_payments_summary = 
+  installments_payments[,.(n_prev=length(unique(SK_ID_PREV)), n_count = .N,                                          avg_inst=mean(AMT_INSTALMENT), 
+                 avg_pay=mean(AMT_PAYMENT)),
+                                            by =.(SK_ID_CURR)]
+
+installments_payments[SK_ID_CURR=='271877',]
+installments_payments_summary[SK_ID_CURR=='271877',]
+
+index=match(installments_payments_summary$SK_ID_CURR, df$SK_ID_CURR)
+df[, installments_payments_prev:=installments_payments_summary$n_prev[index]]
+df[, installments_payments_count:=installments_payments_summary$n_count[index]]
+df[, installments_payments_avg_inst:=installments_payments_summary$avg_inst[index]]
+df[, installments_payments_avg_pay:=installments_payments_summary$avg_pay[index]]
+df[, installments_payments_avg_diff:=installments_payments_avg_inst-installments_payments_avg_pay]
+
+plot_profile(pred.gbm[train_index],actual[train_index],
+             df[['bureau_years_since_last_credit_1ycap']][train_index], error_band = 'binom')
+
 #ggplot(df, aes(bureau_credit_sum_dept_income, bureau_credit_sum)) + geom_point(alpha =0.1)
 ```
 
 ## GBM Model: All vars
 0.800
                                                  var     rel.inf
-EXT_SOURCE_3                             EXT_SOURCE_3 28.97906367
-EXT_SOURCE_2                             EXT_SOURCE_2 27.42091072
-EXT_SOURCE_1                             EXT_SOURCE_1  9.22955180
-credit_price_ratio                 credit_price_ratio  5.17099545
-employed                                     employed  5.07370325
-credit_income_ratio               credit_income_ratio  2.46653801
-bureau_credit_active_count bureau_credit_active_count  2.41014043
-CODE_GENDER                               CODE_GENDER  1.98962441
-annuity_income_ratio             annuity_income_ratio  1.86347526
-NAME_EDUCATION_TYPE               NAME_EDUCATION_TYPE  1.84144801
-own_car_age_36max                   own_car_age_36max  1.71321360
-age                                               age  1.65459418
-AMT_CREDIT_LOG                         AMT_CREDIT_LOG  1.28942038
-NAME_FAMILY_STATUS                 NAME_FAMILY_STATUS  1.00122872
-bureau_credit_total_count   bureau_credit_total_count  0.96521255
-APARTMENTS_AVG                         APARTMENTS_AVG  0.88773738
-AMT_INCOME_TOTAL_LOG             AMT_INCOME_TOTAL_LOG  0.85824197
-DEF_30_CNT_SOCIAL_CIRCLE     DEF_30_CNT_SOCIAL_CIRCLE  0.80572579
-NAME_INCOME_TYPE                     NAME_INCOME_TYPE  0.73521037
-year_id_publish                       year_id_publish  0.71691814
-FLAG_DOCUMENT_3                       FLAG_DOCUMENT_3  0.53818309
-REGION_RATING_CLIENT             REGION_RATING_CLIENT  0.51393692
-bureau_past_due_count           bureau_past_due_count  0.48152638
-FLAG_WORK_PHONE                       FLAG_WORK_PHONE  0.38171215
-bureau_new_credit_last_6m   bureau_new_credit_last_6m  0.33058087
-FLAG_DOCUMENT_18                     FLAG_DOCUMENT_18  0.16119693
-NAME_CONTRACT_TYPE                 NAME_CONTRACT_TYPE  0.13742859
-FLAG_DOCUMENT_16                     FLAG_DOCUMENT_16  0.11760090
-FLAG_OWN_REALTY                       FLAG_OWN_REALTY  0.06237629
-FLAG_PHONE                                 FLAG_PHONE  0.06072748
-FLAG_DOCUMENT_13                     FLAG_DOCUMENT_13  0.03482700
-FLAG_DOCUMENT_11                     FLAG_DOCUMENT_11  0.02761865
-FLAG_DOCUMENT_8                       FLAG_DOCUMENT_8  0.02346138
-FLAG_DOCUMENT_15                     FLAG_DOCUMENT_15  0.02276251
-FLAG_DOCUMENT_14                     FLAG_DOCUMENT_14  0.01921954
-FLAG_OWN_CAR                             FLAG_OWN_CAR  0.01388721
+                                                       var      rel.inf
+EXT_SOURCE_3                                   EXT_SOURCE_3 21.294206417
+bureau_credit_sum_lim_log         bureau_credit_sum_lim_log 21.047113917
+EXT_SOURCE_2                                   EXT_SOURCE_2 20.367776701
+annuity_income_ratio                   annuity_income_ratio  6.234711449
+EXT_SOURCE_1                                   EXT_SOURCE_1  6.177668642
+credit_price_ratio                       credit_price_ratio  3.882965965
+employed                                           employed  3.327501140
+bureau_credit_active_count       bureau_credit_active_count  2.189766216
+NAME_EDUCATION_TYPE                     NAME_EDUCATION_TYPE  1.606860060
+bureau_credit_active_pct           bureau_credit_active_pct  1.460562824
+CODE_GENDER                                     CODE_GENDER  1.385071762
+bureau_credit_sum_dept_log       bureau_credit_sum_dept_log  1.211701684
+bureau_credit_sum_log                 bureau_credit_sum_log  1.096257874
+own_car_age_36max                         own_car_age_36max  1.072101525
+AMT_CREDIT_LOG                               AMT_CREDIT_LOG  0.960547530
+age                                                     age  0.913176198
+APARTMENTS_AVG                               APARTMENTS_AVG  0.653429080
+bureau_past_due_count                 bureau_past_due_count  0.527692016
+DEF_30_CNT_SOCIAL_CIRCLE           DEF_30_CNT_SOCIAL_CIRCLE  0.467793200
+NAME_FAMILY_STATUS                       NAME_FAMILY_STATUS  0.417396264
+NAME_INCOME_TYPE                           NAME_INCOME_TYPE  0.409000378
+FLAG_DOCUMENT_3                             FLAG_DOCUMENT_3  0.379758477
+OCCUPATION_TYPE_SUBSET               OCCUPATION_TYPE_SUBSET  0.366882987
+credit_income_ratio                     credit_income_ratio  0.336986252
+ORGANIZATION_TYPE_SUBSET           ORGANIZATION_TYPE_SUBSET  0.330170372
+year_id_publish                             year_id_publish  0.306780725
+REGION_RATING_CLIENT                   REGION_RATING_CLIENT  0.275729193
+REG_CITY_NOT_LIVE_CITY               REG_CITY_NOT_LIVE_CITY  0.229581416
+NAME_CONTRACT_TYPE                       NAME_CONTRACT_TYPE  0.226204022
+FLAG_WORK_PHONE                             FLAG_WORK_PHONE  0.224410742
+phone_age                                         phone_age  0.186669397
+FLAG_DOCUMENT_18                           FLAG_DOCUMENT_18  0.088515274
+YEARS_BUILD_AVG                             YEARS_BUILD_AVG  0.065903518
+bureau_new_credit_last_6m         bureau_new_credit_last_6m  0.064905576
+FLAG_DOCUMENT_16                           FLAG_DOCUMENT_16  0.051999666
+bureau_credit_total_count         bureau_credit_total_count  0.047134775
+FLOORSMIN_MEDI                               FLOORSMIN_MEDI  0.036879209
+HOUSETYPE_MODE                               HOUSETYPE_MODE  0.031484484
+bureau_credit_sum_dept_income bureau_credit_sum_dept_income  0.019364883
+NAME_INCOME_TYPE_SUBSET             NAME_INCOME_TYPE_SUBSET  0.010245195
+AMT_INCOME_TOTAL_LOG                   AMT_INCOME_TOTAL_LOG  0.007583079
+FLAG_OWN_REALTY                             FLAG_OWN_REALTY  0.004240330
+NAME_HOUSING_TYPE_SUBSET           NAME_HOUSING_TYPE_SUBSET  0.002142751
+FLAG_PHONE                                       FLAG_PHONE  0.001635316
+FLAG_DOCUMENT_13                           FLAG_DOCUMENT_13  0.001491522
+FLAG_DOCUMENT_8                             FLAG_DOCUMENT_8  0.000000000
+FLAG_DOCUMENT_14                           FLAG_DOCUMENT_14  0.000000000
+FLAG_DOCUMENT_15                           FLAG_DOCUMENT_15  0.000000000
+FLAG_DOCUMENT_11                           FLAG_DOCUMENT_11  0.000000000
+REG_REGION_NOT_WORK_REGION       REG_REGION_NOT_WORK_REGION  0.000000000
+LIVE_REGION_NOT_WORK_REGION     LIVE_REGION_NOT_WORK_REGION  0.000000000
 ```{r gbm_model1}
 
 actual = as.numeric(df$TARGET)
@@ -218,12 +305,11 @@ actual = as.numeric(df$TARGET)
 
 all_vars = names(df) %!in_set% c('TARGET','SK_ID_CURR')
 all_vars = unique(c('EXT_SOURCE_3', 'EXT_SOURCE_2','EXT_SOURCE_1','age','employed', 'AMT_CREDIT_LOG', 'credit_price_ratio',
-             'CODE_GENDER','FLAG_OWN_CAR','own_car_age_36max','FLAG_WORK_PHONE',
+             'CODE_GENDER','own_car_age_36max','FLAG_WORK_PHONE',
              'APARTMENTS_AVG','NAME_EDUCATION_TYPE','NAME_CONTRACT_TYPE','NAME_INCOME_TYPE','NAME_FAMILY_STATUS', 'DEF_30_CNT_SOCIAL_CIRCLE',
-             'FLAG_DOCUMENT_3','FLAG_DOCUMENT_8','FLAG_DOCUMENT_18','FLAG_DOCUMENT_18','FLAG_DOCUMENT_16',
-             'FLAG_DOCUMENT_13','FLAG_DOCUMENT_14','FLAG_DOCUMENT_15','FLAG_DOCUMENT_11','FLAG_PHONE','FLAG_OWN_REALTY',
+             'FLAG_DOCUMENT_3','FLAG_DOCUMENT_18','FLAG_DOCUMENT_18','FLAG_DOCUMENT_16',
              'bureau_new_credit_last_6m','bureau_credit_active_count','bureau_past_due_count',
-             'bureau_credit_total_count','REGION_RATING_CLIENT','year_id_publish','annuity_income_ratio','credit_income_ratio','AMT_INCOME_TOTAL_LOG','REG_CITY_NOT_LIVE_CITY','bureau_credit_sum_log','bureau_credit_sum_dept_income'))
+             'bureau_credit_total_count','REGION_RATING_CLIENT','year_id_publish','annuity_income_ratio','credit_income_ratio','REG_CITY_NOT_LIVE_CITY','bureau_credit_sum_log','bureau_credit_sum_dept_income','NAME_HOUSING_TYPE_SUBSET','OCCUPATION_TYPE_SUBSET','ORGANIZATION_TYPE_SUBSET','bureau_credit_sum_dept_log','phone_age','NAME_INCOME_TYPE_SUBSET','bureau_credit_sum_lim_log','FLOORSMIN_MEDI','bureau_credit_active_pct','YEARS_BUILD_AVG','DEF_60_CNT_SOCIAL_CIRCLE','ELEVATORS_AVG','FLAG_OWN_CAR','bureau_years_since_first_credit','bureau_years_since_last_credit_1ycap','own_car_age_5max'))
 exclude_vars = c()
 
 set.seed(1012356)
@@ -233,22 +319,22 @@ formula.gbm = formula(stri_join( 'TARGET ~ ', stri_join(all_vars %!in_set% exclu
 model_vars = all.vars(formula.gbm) %!in_set% c('TARGET')
 var.monotone = rep(0, length(model_vars))
 
-mon_inc_vars = c('credit_price_ratio','bureau_past_due_count','DEF_30_CNT_SOCIAL_CIRCLE','bureau_credit_active_count','AMT_CREDIT_LOG','own_car_age_36max','annuity_income_ratio')
-mon_dec_vars = c('EXT_SOURCE_3','EXT_SOURCE_2','EXT_SOURCE_1','employed','APARTMENTS_AVG','year_id_publish','bureau_credit_total_count','LIVE_CITY_NOT_WORK_CITY','credit_income_ratio','AMT_INCOME_TOTAL_LOG','bureau_credit_sum_log')
+mon_inc_vars = c('credit_price_ratio','bureau_past_due_count','DEF_30_CNT_SOCIAL_CIRCLE','bureau_credit_active_count','AMT_CREDIT_LOG','own_car_age_36max','annuity_income_ratio','bureau_credit_sum_dept_log','age','bureau_credit_active_pct','bureau_credit_sum_dept_log')
+mon_dec_vars = c('EXT_SOURCE_3','EXT_SOURCE_2','EXT_SOURCE_1','employed','APARTMENTS_AVG','year_id_publish','bureau_credit_total_count','LIVE_CITY_NOT_WORK_CITY','credit_income_ratio','AMT_INCOME_TOTAL_LOG','phone_age','bureau_credit_sum_lim_log','ELEVATORS_AVG','bureau_years_since_first_credit','bureau_years_since_last_credit_1ycap')
 
 var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
-cv_folds = 0
-max_it = 6000
+cv_folds = 4
+max_it = 5000
 #0.49
 model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
                  n.trees = max_it,
                  cv.folds = cv_folds,
                  shrinkage = 0.01,
-                 interaction.depth=4,
-                 train.fraction = 0.7,
+                 interaction.depth=5,
+                 train.fraction = 1.0,
                  bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
                  n.cores = 2,
                  var.monotone = var.monotone,
@@ -280,10 +366,22 @@ print(var_inf)
 
 #cor(df[,.(EXT_SOURCE_3, EXT_SOURCE_2, EXT_SOURCE_1)], use = 'pairwise.complete.obs')
 
-plot_binmodel_predictions(actual[train_index], pred.gbm[train_index])
+#plot_binmodel_predictions(actual[train_index], pred.gbm[train_index])
+plot_binmodel_percentiles(actual[train_index], pred.gbm[train_index], 20)
 
 plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var[var_inf$rel.inf>0.2]), output_type = 'response')
 marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+
+#partial using pd package
+pd = partial(model.gbm, pred.var = "own_car_age_36max", plot = FALSE, rug = TRUE, n.trees=best_it.gbm, prob = TRUE)
+autoplot(pd, contour = TRUE, main = "own_car_age_36max",legend.title = "Partial\ndependence")
+
+# Use partial to obtain ICE curves
+pred.ice <- function(object, newdata) predict(object, newdata, n.trees=best_it.gbm)
+rm.ice <- partial(model.gbm, pred.var = "TARGET", pred.fun = pred.ice, recursive = F)
+plotPartial(rm.ice, rug = TRUE, train = df[train_index, all.vars(formula.gbm), with = F], alpha = 0.3)
+
+plot_gbmpartial(model.gbm, best_it.gbm,'own_car_age_36max', output_type = 'response')
 
 plots = llply(all.vars(formula.gbm), function(var_name) {
   p = plot_profile(pred.gbm[train_index], actual[train_index],df[[var_name]][train_index], error_band = 'binom') +
@@ -293,7 +391,7 @@ plots = llply(all.vars(formula.gbm), function(var_name) {
 marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 
 plots = llply(names(df) %!in_set% all.vars(formula.gbm), function(var_name) {
-  p = plot_profile(pred.gbm[train_index], actual[train_index],df[[var_name]][train_index], error_band = 'binom') +
+  p = plot_profile(pred.gbm[train_index], actual[train_index],df[[var_name]][train_index], error_band = 'binom',  bucket_count = 20) +
     ggtitle(var_name) +  theme(title =element_text(size=6))
   return( p )
 })
@@ -303,16 +401,16 @@ marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 factor_columns = names(df)[which(lapply(df, class) == 'factor')] %!in_set% c('SK_ID_CURR')
 plots = llply(factor_columns, function(var_name) {
   p = plot_profile(pred.gbm[train_index], actual[train_index],df[[var_name]][train_index], error_band = 'binom') +
-    ggtitle(var_name) +  theme(title =element_text(size=6))
+    ggtitle(sprintf('%s [%s]',var_name, var_name %in% all.vars(formula.gbm))) +  theme(title =element_text(size=6))
   return( p )
 })
 marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
 
 plot_profile(pred.gbm[train_index], actual[train_index],df[['OCCUPATION_TYPE']][train_index], error_band = 'binom') 
 
-plot_profile(pred.gbm[train_index], actual[train_index],df[['NAME_EDUCATION_TYPE']][train_index], error_band = 'binom') 
+plot_profile(pred.gbm[train_index], actual[train_index],df[['ORGANIZATION_TYPE']][train_index], error_band = 'binom') 
 plot_profile(pred.gbm[train_index], actual[train_index],df[['NAME_INCOME_TYPE']][train_index], error_band = 'binom') 
-plot_profile(pred.gbm[train_index], actual[train_index],df[['bureau_hist_delq_count_2y']][train_index], error_band = 'binom')
+plot_profile(pred.gbm[train_index], actual[train_index],df[['own_car_age_5max']][train_index], error_band = 'binom', bucket_count = 20)
 
 ```
 
@@ -321,6 +419,7 @@ plot_profile(pred.gbm[train_index], actual[train_index],df[['bureau_hist_delq_co
 2: 0.737 (0.7565265)
 3: 0.740 (0.7597784)
 4: 0.746
+5: 0.747
 ```{r output}
 
 submit <- data.table(SK_ID_CURR = df$SK_ID_CURR[test_index], TARGET = pred.gbm[test_index])

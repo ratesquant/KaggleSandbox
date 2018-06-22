@@ -1,0 +1,149 @@
+---
+title: "santander_value"
+author: "Alex"
+date: "June 21, 2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(gbm)
+library(data.table)
+library(plyr)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(xgboost)
+library(corrplot)
+library(forcats)
+library(pdp)
+#library(caret)
+
+working_folder = 'C:/Dev/Kaggle/'
+
+source(file.path(working_folder, '/Utils/common.R'))
+```
+
+## Loan Data
+
+```{r load_data}
+
+df_train = fread(file.path(working_folder,'/Santander/data/train.csv'), check.names=T )
+df_test  = fread(file.path(working_folder,'/Santander/data/test.csv'),check.names=T )
+
+df_test[, target:=NA]
+
+num_vars = names(df_train) %!in_set% c('ID')
+df_train[, (num_vars):=lapply(.SD, as.numeric), .SDcols = num_vars]
+df_test[ , (num_vars):=lapply(.SD, as.numeric), .SDcols = num_vars]
+    
+df = rbind(df_test, df_train)
+
+test_index = is.na(df$target)
+train_index = !test_index
+
+df[, target_log:=log(target+1)]
+
+```
+
+#GBM model
+```{r gbm_model1}
+
+actual = df$target_log
+
+#only keep several car_11 levels
+
+all_vars = names(df) %!in_set% c('target_log','target','ID')
+
+exclude_vars = c()
+
+set.seed(1012356)
+
+formula.gbm = formula(stri_join( 'target_log ~ ', stri_join(all_vars %!in_set% exclude_vars,collapse = ' + ')))
+
+model_vars = all.vars(formula.gbm) %!in_set% c('target_log')
+var.monotone = rep(0, length(model_vars))
+
+mon_inc_vars = c()
+mon_dec_vars = c()
+
+var.monotone[model_vars %in% mon_inc_vars]  =  1
+var.monotone[model_vars %in% mon_dec_vars]  = -1
+
+cv_folds = 0
+max_it = 1000
+#0.49
+model.gbm  = gbm(formula.gbm,
+                 distribution = "gaussian",
+                 n.trees = max_it,
+                 cv.folds = cv_folds,
+                 shrinkage = 0.01,
+                 interaction.depth=7,
+                 train.fraction = 1.0,
+                 bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
+                 n.cores = 2,
+                 var.monotone = var.monotone,
+                 data = df[train_index, all.vars(formula.gbm), with = F],
+                 verbose = TRUE)
+
+#saveRDS(model.gbm, file.path(working_folder,'Santander/model.rds'))
+#model.gbm = readRDS(file.path(working_folder,'Santander/model.rds'))
+
+plot_gbmiterations(model.gbm)
+
+best_it.gbm = ifelse(cv_folds==0, max_it, gbm.perf(model.gbm, plot.it = F))
+
+pred.gbm  = predict(model.gbm, n.trees = best_it.gbm, newdata = df)
+
+#influence
+var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
+var_inf = subset(var_inf, rel.inf>1e-2)
+plot_gbminfluence(var_inf)
+print(var_inf)
+
+#interactions
+#var_interaction = gbm_interactions(model.gbm, df[train_index,], iter = best_it.gbm, min_influence = 1, degree = 2) 
+#plot_gbminteractions(subset(var_interaction, interaction_score>0.05))
+#print(var_interaction)
+
+#plots = plot_gbmpartial_2d(model.gbm, best_it.gbm, as.character(subset(var_interaction,interaction_score>0.1)$vars), output_type = 'response')
+#marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
+
+#cor(df[,.(EXT_SOURCE_3, EXT_SOURCE_2, EXT_SOURCE_1)], use = 'pairwise.complete.obs')
+
+imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.1])
+
+plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars, output_type = 'link')
+marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+
+plots = llply(imp_vars, function(var_name) {
+  p = plot_profile(pred.gbm[train_index], actual[train_index],df[[var_name]][train_index], error_band = 'normal') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+
+```
+
+## Output File
+
+```{r output}
+
+submit <- data.table(ID = df$ID[test_index], target = exp(pred.gbm[test_index]) - 1) 
+  
+submit = submit[order(submit$ID),]
+  
+file = file.path(working_folder, "Santander/solution.csv")
+  
+fwrite(submit, file = file, row.names = FALSE)
+
+zip(paste(file, '.zip', sep = ''), file)
+  
+print(file)
+```

@@ -275,7 +275,7 @@ var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
 #var.monotone[allvars %in% c('taxdelinquency_age')] =   1
 #var.monotone[allvars %in% c('taxamount_pct')] =  -1
 
-max_it = 40*max_it_mult #64k is for s=0.001, 
+max_it = 30*max_it_mult #64k is for s=0.001, 
 
 model.gbm_all = gbm(formula.all, 
                 data = df[, all.vars(formula.all)], 

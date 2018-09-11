@@ -13,7 +13,7 @@ my_bench <- function(n){
 
 stime = Sys.time()
 
-res = ldply(seq(200), function(i) {
+res = ldply(seq(1000), function(i) {
   ctime = Sys.time()
   bench = system.time ( my_bench(n) )
   r = data.frame(i, ctime, wall_clock = as.numeric(difftime(Sys.time(), ctime), units = "secs"), user=bench[1], system=bench[2], elapsed = bench[3])
@@ -23,6 +23,6 @@ res = ldply(seq(200), function(i) {
 
 
 ggplot(res, aes(i, user)) + geom_point() + geom_smooth()
-ggplot(res, aes(i, elapsed)) + geom_point() + geom_smooth()
+ggplot(res, aes(i, elapsed)) + geom_point() + geom_smooth(span = 0.2, method = 'loess', color = 'red', se = F)
 ggplot(res, aes(i, system)) + geom_point() + geom_smooth()
 

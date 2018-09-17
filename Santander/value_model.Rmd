@@ -23,6 +23,7 @@ library(xgboost)
 library(corrplot)
 library(forcats)
 library(pdp)
+library(e1071)
 #library(caret)
 
 working_folder = 'C:/Dev/Kaggle/'
@@ -33,6 +34,17 @@ source(file.path(working_folder, '/Utils/common.R'))
 ## Loan Data
 
 ```{r load_data}
+
+is_log_vars <- function(x){
+  if(!is.numeric(x))
+    return (FALSE)
+  skew = skewness(x, na.rm = T, type = 2)
+  return( skew >1.0 & all(x>=0, na.rm = T))
+}
+
+to_log <- function(x){
+  return(log(x+1))
+}
 
 df_train = fread(file.path(working_folder,'/Santander/data/train.csv'), check.names=T )
 df_test  = fread(file.path(working_folder,'/Santander/data/test.csv'),check.names=T )
@@ -50,6 +62,11 @@ train_index = !test_index
 
 df[, target_log:=log(target+1)]
 
+#convert columns to logs - keep the names
+log_columns = names(df)[which(lapply(df, is_log_vars)==T)] %!in_set% c('ID','target_log','target')
+df[ , (log_columns):=lapply(.SD, to_log), .SDcols = log_columns]
+ 
+gc(reset = T)
 ```
 
 #GBM model
@@ -61,6 +78,10 @@ actual = df$target_log
 
 all_vars = names(df) %!in_set% c('target_log','target','ID')
 
+#read from file
+var_inf = fread(file = file.path(working_folder, "Santander/variables1.csv"))
+all_vars = var_inf$var %!in_set% c('target_log','target','ID')
+
 exclude_vars = c()
 
 set.seed(1012356)
@@ -70,14 +91,14 @@ formula.gbm = formula(stri_join( 'target_log ~ ', stri_join(all_vars %!in_set% e
 model_vars = all.vars(formula.gbm) %!in_set% c('target_log')
 var.monotone = rep(0, length(model_vars))
 
-mon_inc_vars = c()
+mon_inc_vars = c('f190486d6','X58e2e02e6','eeb9cd3aa','X2288333b4')
 mon_dec_vars = c()
 
 var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
 cv_folds = 0
-max_it = 1000
+max_it = 4000
 #0.49
 model.gbm  = gbm(formula.gbm,
                  distribution = "gaussian",
@@ -86,13 +107,13 @@ model.gbm  = gbm(formula.gbm,
                  shrinkage = 0.01,
                  interaction.depth=7,
                  train.fraction = 1.0,
-                 bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
+                 bag.fraction = 0.8,# 0.5 for small samples, 0.7 for large
                  n.cores = 2,
                  var.monotone = var.monotone,
                  data = df[train_index, all.vars(formula.gbm), with = F],
-                 verbose = TRUE)
+                 verbose = FALSE)
 
-#saveRDS(model.gbm, file.path(working_folder,'Santander/model.rds'))
+saveRDS(model.gbm, file.path(working_folder,'Santander/model.rds'))
 #model.gbm = readRDS(file.path(working_folder,'Santander/model.rds'))
 
 plot_gbmiterations(model.gbm)
@@ -103,7 +124,8 @@ pred.gbm  = predict(model.gbm, n.trees = best_it.gbm, newdata = df)
 
 #influence
 var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
-var_inf = subset(var_inf, rel.inf>1e-2)
+var_inf = subset(var_inf, rel.inf>0.1)
+fwrite(var_inf, file = file.path(working_folder, "Santander/variables.csv"), row.names = FALSE)
 plot_gbminfluence(var_inf)
 print(var_inf)
 
@@ -117,7 +139,7 @@ print(var_inf)
 
 #cor(df[,.(EXT_SOURCE_3, EXT_SOURCE_2, EXT_SOURCE_1)], use = 'pairwise.complete.obs')
 
-imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.1])
+imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.5])
 
 plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars, output_type = 'link')
 marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
@@ -132,8 +154,10 @@ marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 ```
 
 ## Output File
-
+1.52
 ```{r output}
+
+#pred.gbm[train_index] - df$target_log[train_index]
 
 submit <- data.table(ID = df$ID[test_index], target = exp(pred.gbm[test_index]) - 1) 
   

@@ -125,6 +125,27 @@ gc(reset=T)
  
 ```
 
+## View Current Portfolio
+
+```{r view_portfolio}
+
+port = fread('C:/Users/chirokov/Downloads/notes_ext.csv')
+
+ggplot(port, aes(pmin(20,1e-3*annual_inc/12)))+geom_density(adjust = 0.5)
+
+ggplot(port, aes(dti)) +geom_density(adjust = 0.5)
+
+ggplot(port, aes(last_fico_range_low)) +geom_density(adjust = 0.5)
+
+length(unique(port$LoanId)) - nrow(port)
+
+ggplot(port, aes(purpose))+geom_bar(stat = 'count') + coord_flip()
+ggplot(port, aes(mths_since_last_delinq))+geom_bar(stat = 'count') 
+ggplot(port, aes(inq_last_6mths))+geom_bar(stat = 'count') 
+
+ggplot(port, aes(last_fico_range_low, dti, color = Grade))+geom_point() 
+
+```
 ## View Data
 
 ```{r view_data}
@@ -163,6 +184,25 @@ ggplot(df[grade %in% c('A', 'B', 'C', 'D'), .(charged_off = mean(ind_co)), by =.
 
 ggplot(df[grade %in% c('A', 'B', 'C', 'D') & ind_ac==0, .(charged_off = mean(ind_co)), by =.(issue_d, term, grade)], aes(issue_d, charged_off, color = grade, group = grade)) + 
   geom_line() + facet_wrap(~term)
+
+```
+
+## My filter 
+
+```{r myfilter_model}
+#& grade %in% c('A','B','C') & emp_years>=1 & dti<=15 & inq_last_6mths<=1 & #mths_since_last_delinq>=24 & annual_inc > 60000
+prime_purpose = c('credit_card','car','debt_consolidation','home_improvement','major_purchase')
+
+df[, my_filter := (term_y == '3y' & grade %in% c('A','B','C') & emp_years>=2 & dti<=15 & mths_since_last_delinq>=24 & annual_inc > 6e4 & inq_last_6mths<=1 & purpose %in% prime_purpose)]
+
+ggplot(df[term_y == '3y' & grade %in% c('A','B','C'),], aes(purpose)) + geom_bar(stat='count') + coord_flip()
+
+ggplot(df[term_y == '3y' & grade %in% c('A','B','C'),.(.N), by =.(issue_d, grade, purpose)], aes(issue_d, N, group = purpose, color = purpose)) + geom_line() + facet_wrap(~grade)
+
+ggplot(df[term_y == '3y' & grade %in% c('A','B','C'),.(.N), by =.(issue_d, grade)], aes(issue_d, N, group = grade, color = grade)) + geom_line() + facet_wrap(~grade)
+
+
+ggplot(df[my_filter==T,.(.N), by =.(issue_d, grade)], aes(issue_d, N, group = grade, color = grade)) + geom_line()+ facet_wrap(~grade)
 
 ```
 
@@ -240,8 +280,8 @@ df_s[is.na(roi), .(total_pymnt, funded_amnt, loan_dur, roi,last_pymnt_d,next_pym
 obj_var = 'roi'
 allvars = c('grade','emp_years','home_ownership',
             'verification_status','purpose','sub_grade','initial_list_status',
-            'mths_since_last_major_derog','inq_last_6mths','sec_app_inq_last_6mths','mths_since_last_delinq',
-            'pub_rec','pub_rec_bankruptcies','funded_amnt','dti','annual_inc_log','total_acc')
+            'mths_since_last_major_derog','inq_last_6mths','mths_since_last_delinq',
+            'pub_rec','pub_rec_bankruptcies','funded_amnt','dti','annual_inc_log','total_acc','revol_util_pct','open_acc')
 
 #allvars = names(df) %!in% c('SalePrice')
 formula.all = formula (paste( obj_var, ' ~', paste(allvars, collapse = '+')) )
@@ -251,17 +291,16 @@ var.monotone = rep(0, length(allvars)) #1-increasing, -1 - decreasing, 0: any
 var.monotone[allvars %in% c('')] = 1
 var.monotone[allvars %in% c('')] = -1
 
-max_it = 1000 
+max_it = 2000 
 #0.01517, 0.001
 set.seed(1234)
 model.gbm = gbm(formula.all, 
                 data = df_s[, all.vars(formula.all),with = F], 
                 distribution = 'gaussian',
-                weights = df_s[['funded_amnt']],
                 n.trees = max_it,
                 shrinkage = 0.01, #0.001
                 bag.fraction = 0.9,
-                interaction.depth = 3, #6
+                interaction.depth = 4, #6
                 cv.folds = 5,
                 train.fraction = 1.0,
                 var.monotone = var.monotone,
@@ -283,15 +322,23 @@ print(vars.importance)
 plots = plot_gbmpartial(model.gbm, best_it, as.character(vars.importance$var)[vars.importance$rel.inf>.1], output_type = 'link')
 marrangeGrob(plots, nrow=3, ncol=3)
 
+plots = plot_gbmpartial(model.gbm, best_it, as.character(vars.importance$var)[vars.importance$rel.inf>10.0], output_type = 'link')
+marrangeGrob(plots, nrow=1, ncol=1)
+
 plot_profile(pred.gbm, df_s[[obj_var]], df_s[['addr_state']], bucket_count = 25, min_obs = 3, error_band ='normal')
 plot_profile(pred.gbm, df_s[[obj_var]], df_s[['grade']], bucket_count = 25, min_obs = 3, error_band ='normal')
 plot_profile(pred.gbm, df_s[[obj_var]], factor(df_s[['vintage']]), bucket_count = 25, min_obs = 3, error_band ='normal')
-plot_profile(pred.gbm, df_s[[obj_var]], df_s[['annual_inc']]/12, bucket_count = 10, min_obs = 3, error_band ='normal')
+plot_profile(pred.gbm, df_s[[obj_var]], df_s[['annual_inc']]/12, bucket_count = 10, min_obs = 3, error_band ='normal') #5k
+plot_profile(pred.gbm, df_s[[obj_var]], factor(df_s[['emp_years']]), bucket_count = 10, min_obs = 3, error_band ='normal') #3>=
+plot_profile(pred.gbm, df_s[[obj_var]], df_s[['mths_since_last_delinq']], bucket_count = 10, min_obs = 3, error_band ='normal') #24>=
+plot_profile(pred.gbm, df_s[[obj_var]], factor(df_s[['purpose']]), bucket_count = 10, min_obs = 3, error_band ='normal') #3>=
+plot_profile(pred.gbm, df_s[[obj_var]], df_s[['revol_bal']], bucket_count = 10, min_obs = 3, error_band ='normal')
+plot_profile(pred.gbm, df_s[[obj_var]], df_s[['open_acc']], bucket_count = 10, min_obs = 3, error_band ='normal')
 
 index = df_s[['my_filter']] == TRUE
 plot_profile(pred.gbm[index], df_s[[obj_var]][index], df_s[['grade']][index], bucket_count = 10, min_obs = 3, error_band ='normal')
 
-plots <- llply(c('grade','grade_full','emp_years','home_ownership','verification_status','purpose','sub_grade','initial_list_status','mths_since_last_major_derog','inq_last_6mths','mths_since_last_delinq','pub_rec','funded_amnt','dti','dti_joint','total_acc') %in_set% names(df), function(vname){
+plots <- llply(c('grade','grade_full','emp_years','home_ownership','verification_status','purpose','sub_grade','initial_list_status','mths_since_last_major_derog','inq_last_6mths','mths_since_last_delinq','pub_rec','funded_amnt','dti','dti_joint','total_acc','open_acc') %in_set% names(df), function(vname){
   plot_result = plot_profile(pred.gbm, df_s[[obj_var]], df_s[[vname]], bucket_count = 10, min_obs = 3, error_band ='normal') + 
     ggtitle(vname) + theme(title =element_text(size=8), axis.title.y = element_blank())
   return (plot_result)

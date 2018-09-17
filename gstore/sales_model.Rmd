@@ -38,51 +38,95 @@ source(file.path(working_folder, '/Utils/common.R'))
 
 ```{r load_data}
 
-df_train = fread(file.path(working_folder,'/gstore/data/train.csv'), check.names=T, nrows = 100)
-df_test  = fread(file.path(working_folder,'/gstore/data/test.csv'),  check.names=T, nrows = 100)
+df_filename = file.path(working_folder,'/gstore/data/all.rds')
 
-df_train[,is_train:=T ]
-df_test[, is_train:=F ]
-
-df = rbind(df_train, df_test)
-train_index = df$is_train
-
-#unparse jsons: 
-# device: browser, operatingSystem, isMobile, deviceCategory
-# geoNetwork: continent, subContinent, country, region, metro, networkDomain
-# totals, 
-# trafficSource
-
-# TODO: try to think of a better way to do this
-parse_json <- function(json_str, fields){
-  values = fromJSON(stri_replace_all_fixed(json_str, '\"\"','\"') )[fields]
-  return(values)
-}
-#parse_geo_v <- Vectorize(parse_geo, SIMPLIFY = TRUE)
-
-geo_fields = c('continent', 'subContinent', 'country', 'region')
-device_fields = c('browser', 'operatingSystem', 'isMobile', 'deviceCategory')
-
-df[, (stri_join('geo_', geo_fields)):=parse_json(geoNetwork, geo_fields),  by = seq_len(nrow(df))]
-df[, (stri_join('device_', device_fields)):=parse_json(device, device_fields),  by = seq_len(nrow(df))]
-
-#a = df[, .(geoNetwork, geo_continent)]
-#a = df[, .(device, device_isMobile)]
-
-
-lapply(df$geoNetwork_json[1:10], parse_geo)
-
-df[, (stri_join('geo_', geo_fields)):=parse_geo_v(stri_replace_all_fixed(geoNetwork, '\"\"','\"'))]
-
-df[, device_browser := fromJSON(geoNetwork_json)$browser,  by = seq_len(nrow(df))]
-df[, device_os := fromJSON(device_json)$operatingSystem,  by = seq_len(nrow(df))]
-df[, device_ismobile := fromJSON(device_json)$isMobile,  by = seq_len(nrow(df))]
-df[, device_category := fromJSON(device_json)$deviceCategory,  by = seq_len(nrow(df))]
-
+if(file.exists(df_filename)) {
+  df = readRDS(df_filename)
+}else {
   
-table(df_train$channelGrouping)
+  df_train = fread(file.path(working_folder,'/gstore/data/train.csv'), check.names=T)#, nrows = 100)
+  df_test  = fread(file.path(working_folder,'/gstore/data/test.csv'),  check.names=T)#, nrows = 100)
+  
+  df_train[,is_train:=T ]
+  df_test[, is_train:=F ]
+  
+  df = rbind(df_train, df_test)
+  train_index = df$is_train
+  
+  #json column:fields 
+  # device: browser, operatingSystem, isMobile, deviceCategory
+  # geoNetwork: continent, subContinent, country, region, metro, networkDomain
+  # totals:  visits, hits, pageviews, bounces, newVisits
+  # trafficSource
+  
+  # TODO: try to think of a better way to do this
+  parse_json <- function(json_str, fields){
+    values = fromJSON(stri_replace_all_fixed(json_str, '\"\"','\"') )[fields]
+    names(values) <-fields
+    values[sapply(values , is.null)] = 'NA'
+    #print(sapply(values , class))
+    return(values)
+  }
+  parse_json_all <- function(json_str){
+    values = fromJSON(stri_replace_all_fixed(json_str, '\"\"','\"') )
+    return(values)
+  }
+  #parse_geo_v <- Vectorize(parse_geo, SIMPLIFY = TRUE)
+  
+  geo_fields = c('continent', 'subContinent', 'country', 'region', 'metro', 'city', 'networkDomain')
+  device_fields = c('browser', 'operatingSystem', 'isMobile', 'deviceCategory')
+  trafficSource_fields = c('campaign', 'source', 'medium', 'keyword')
+  totals_fields = c('visits', 'hits', 'pageviews','bounces', 'newVisits')
+  
+  df[, (stri_join('geo_', geo_fields)):=parse_json(geoNetwork, geo_fields),  by = seq_len(nrow(df))]
+  df[, (stri_join('device_', device_fields)):=parse_json(device, device_fields),  by = seq_len(nrow(df))]
+  df[, (stri_join('trafficSource_', trafficSource_fields)):= parse_json(trafficSource, trafficSource_fields),  by = seq_len(nrow(df))]
+  df[, (stri_join('totals_', totals_fields)):= parse_json(totals, totals_fields),  by = seq_len(nrow(df))]
+  
+  
+  #parse_json_all(df$trafficSource[5]) #isTrueDirect
+  #a = parse_json(df$trafficSource[17], trafficSource_fields)
+  #data.frame(matrix(unlist(a), nrow=1, byrow=T))
+  
+  temp = ldply(seq_len(nrow(df)), function(i) {
+     res = data.table(t(unlist(parse_json_all(df$trafficSource[i]))))  
+     return (res)
+  } )
+  
+  temp = ldply(seq_len(nrow(df)), function(i) {
+     res = data.table(t(unlist(parse_json(df$trafficSource[i], trafficSource_fields))))  
+     return (res)
+  } )
+  
+  
+  #check all possible values
+  temp = ldply(seq_len(nrow(df)), function(i) {
+     res = data.table(t(unlist(parse_json_all(df$device[i]))))  
+     return (res)
+  } )
+  
+  
+  #a = df[, .(geoNetwork, geo_continent)]
+  #a = df[, .(device, device_isMobile)]
+  #a = df[, .(trafficSource, trafficSource_isTrueDirect)]
+  #df[, .(trafficSource, trafficSource_isTrueDirect)]
+  
+  
+  lapply(df$geoNetwork_json[1:10], parse_geo)
+  
+  df[, (stri_join('geo_', geo_fields)):=parse_geo_v(stri_replace_all_fixed(geoNetwork, '\"\"','\"'))]
+  
+  df[, device_browser := fromJSON(geoNetwork_json)$browser,  by = seq_len(nrow(df))]
+  df[, device_os := fromJSON(device_json)$operatingSystem,  by = seq_len(nrow(df))]
+  df[, device_ismobile := fromJSON(device_json)$isMobile,  by = seq_len(nrow(df))]
+  df[, device_category := fromJSON(device_json)$deviceCategory,  by = seq_len(nrow(df))]
+  
+    
+  table(df_train$channelGrouping)
+  
+  saveRDS(df, df_filename)
+}
 
-df_test[, target:=NA]
 
 
 ```

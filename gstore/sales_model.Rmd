@@ -20,11 +20,10 @@ library(zip)
 library(xgboost)
 library(corrplot)
 library(forcats)
-library(pdp)
+#library(pdp)
 library(e1071)
 library(jsonlite)
 #library(rjson)
-library(tidyjson)
 #library(caret)
 
 #working_folder = 'C:/Dev/Kaggle/'
@@ -38,14 +37,14 @@ source(file.path(working_folder, '/Utils/common.R'))
 
 ```{r load_data}
 
-df_filename = file.path(working_folder,'/gstore/data/all.rds')
+df_filename = file.path(working_folder,'gstore/data/all.rds')
 
 if(file.exists(df_filename)) {
   df = readRDS(df_filename)
 }else {
   
-  df_train = fread(file.path(working_folder,'/gstore/data/train.csv'), check.names=T)#, nrows = 100)
-  df_test  = fread(file.path(working_folder,'/gstore/data/test.csv'),  check.names=T)#, nrows = 100)
+  df_train = fread(file.path(working_folder,'gstore/data/train.csv'), check.names=T)#, nrows = 10000)
+  df_test  = fread(file.path(working_folder,'gstore/data/test.csv'),  check.names=T)#, nrows = 10000)
   
   df_train[,is_train:=T ]
   df_test[, is_train:=F ]
@@ -63,7 +62,8 @@ if(file.exists(df_filename)) {
   parse_json <- function(json_str, fields){
     values = fromJSON(stri_replace_all_fixed(json_str, '\"\"','\"') )[fields]
     names(values) <-fields
-    values[sapply(values , is.null)] = 'NA'
+    #values[sapply(values , is.null)] = 'NA'
+    values = lapply(values, as.character)
     #print(sapply(values , class))
     return(values)
   }
@@ -75,35 +75,50 @@ if(file.exists(df_filename)) {
   
   geo_fields = c('continent', 'subContinent', 'country', 'region', 'metro', 'city', 'networkDomain')
   device_fields = c('browser', 'operatingSystem', 'isMobile', 'deviceCategory')
-  trafficSource_fields = c('campaign', 'source', 'medium', 'keyword')
-  totals_fields = c('visits', 'hits', 'pageviews','bounces', 'newVisits')
+  trafficSource_fields = c('campaign', 'source', 'medium', 'keyword',
+                           'isTrueDirect','adContent',
+                           'adwordsClickInfo.page','adwordsClickInfo.slot','adwordsClickInfo.gclId','adwordsClickInfo.adNetworkType','adwordsClickInfo.isVideoAd','referralPath')
+  totals_fields = c('visits', 'hits', 'pageviews','bounces', 'newVisits', 'transactionRevenue')
   
-  df[, (stri_join('geo_', geo_fields)):=parse_json(geoNetwork, geo_fields),  by = seq_len(nrow(df))]
-  df[, (stri_join('device_', device_fields)):=parse_json(device, device_fields),  by = seq_len(nrow(df))]
-  df[, (stri_join('trafficSource_', trafficSource_fields)):= parse_json(trafficSource, trafficSource_fields),  by = seq_len(nrow(df))]
-  df[, (stri_join('totals_', totals_fields)):= parse_json(totals, totals_fields),  by = seq_len(nrow(df))]
+  geo_columns           = stri_join('geo_', geo_fields)
+  device_columns        = stri_join('device_', device_fields)
+  trafficSource_columns = stri_join('trafficSource_', trafficSource_fields)
+  totals_columns        = stri_join('totals_', totals_fields)
   
+  all_rows = seq_len(nrow(df))
   
-  #parse_json_all(df$trafficSource[5]) #isTrueDirect
-  #a = parse_json(df$trafficSource[17], trafficSource_fields)
-  #data.frame(matrix(unlist(a), nrow=1, byrow=T))
+  df[, (geo_columns)          := parse_json(geoNetwork, geo_fields),               by = all_rows]
+  df[, (device_columns)       := parse_json(device, device_fields),                by = all_rows]
+  df[, (trafficSource_columns):= parse_json(trafficSource, trafficSource_fields),  by = all_rows]
+  df[, (totals_columns)       := parse_json(totals, totals_fields),                by = all_rows]
   
-  temp = ldply(seq_len(nrow(df)), function(i) {
+  df[,geoNetwork:=NULL]
+  df[,device:=NULL]
+  df[,trafficSource:=NULL]
+  df[,totals:=NULL]
+  
+  bool_columns = c('device_isMobile','trafficSource_isTrueDirect')
+  df[, (bool_columns):=lapply(.SD, as.logical), .SDcols = bool_columns]
+  
+  num_columns = c('totals_hits','totals_pageviews', 'totals_bounces', 'totals_newVisits','totals_transactionRevenue','totals_visits')
+  df[, (num_columns):=lapply(.SD, as.numeric), .SDcols = num_columns]
+
+  
+  #parse_json(df$device[4],device_fields)
+  #parse_json(df$trafficSource[4],trafficSource_fields)
+  #parse_json(df$trafficSource[5],trafficSource_fields)
+  #df[,geo_columns, with = F]
+  #df[,device_columns, with = F]
+  #df[,trafficSource_columns, with = F]
+  #df[,totals_columns, with = F]
+  
+  #check forpossible values
+  temp = ldply(sample.int(nrow(df), 10000), function(i) {
      res = data.table(t(unlist(parse_json_all(df$trafficSource[i]))))  
      return (res)
   } )
-  
-  temp = ldply(seq_len(nrow(df)), function(i) {
-     res = data.table(t(unlist(parse_json(df$trafficSource[i], trafficSource_fields))))  
-     return (res)
-  } )
-  
-  
-  #check all possible values
-  temp = ldply(seq_len(nrow(df)), function(i) {
-     res = data.table(t(unlist(parse_json_all(df$device[i]))))  
-     return (res)
-  } )
+  str(temp)
+  sapply(temp, function(x) length(unique(x)))
   
   
   #a = df[, .(geoNetwork, geo_continent)]
@@ -111,23 +126,171 @@ if(file.exists(df_filename)) {
   #a = df[, .(trafficSource, trafficSource_isTrueDirect)]
   #df[, .(trafficSource, trafficSource_isTrueDirect)]
   
-  
-  lapply(df$geoNetwork_json[1:10], parse_geo)
-  
-  df[, (stri_join('geo_', geo_fields)):=parse_geo_v(stri_replace_all_fixed(geoNetwork, '\"\"','\"'))]
-  
-  df[, device_browser := fromJSON(geoNetwork_json)$browser,  by = seq_len(nrow(df))]
-  df[, device_os := fromJSON(device_json)$operatingSystem,  by = seq_len(nrow(df))]
-  df[, device_ismobile := fromJSON(device_json)$isMobile,  by = seq_len(nrow(df))]
-  df[, device_category := fromJSON(device_json)$deviceCategory,  by = seq_len(nrow(df))]
-  
-    
-  table(df_train$channelGrouping)
-  
   saveRDS(df, df_filename)
 }
+df[, iso_date := as.Date(as.character(date), format = '%Y%m%d')]
+df[, date_month := month(iso_date)]
+df[, date_year := year(iso_date)]
+df[, date_day := day(iso_date)]
+df[, date_wday := weekdays(iso_date)]
+
+df$totals_transactionRevenue
+
+#table(df[,.(is_train, date_year)])
+#table(df[,.(is_train, visitNumber)])
+
+#aggregate by visitor
+#agg_visitors <- function(x) {
+#    return(list(n = nrow(x), first_date = min(x$iso_date), last_date = max(x$iso_date), revenue = sum(x$totals_transactionRevenue, na.rm = T)))
+#  }
+#system.time(df[1:10000, agg_visitors(.SD), by = .(fullVisitorId, is_train)])
+#system.time(df[1:10000, .(.N, first_date = min(iso_date), last_date = max(iso_date),revenue = sum(totals_transactionRevenue, na.rm = T)), by = .(fullVisitorId, is_train)])
+
+nth_most_freq <- function(x, nth = 1) {names(sort(table(x), decreasing=TRUE))[nth]}
+count_unique <- function(x) {length(unique(x))}
+
+df_agg = df[, .(.N, first_date = min(iso_date), last_date = max(iso_date),
+                channelGrouping = nth_most_freq(channelGrouping),
+                channelGrouping_count = count_unique(channelGrouping),
+                
+                socialEngagementType = nth_most_freq(socialEngagementType),
+                
+                geo_continent  = nth_most_freq(geo_continent),
+                geo_continent_n  = count_unique(geo_continent),
+                
+                geo_subContinent  = nth_most_freq(geo_subContinent), 
+                geo_subContinent_n  = count_unique(geo_subContinent),
+                
+                geo_country  = nth_most_freq(geo_country), 
+                geo_country_n  = count_unique(geo_country),
+                
+                geo_region  = nth_most_freq(geo_region), 
+                geo_region_n  = count_unique(geo_region),
+                
+                device_operatingSystem  = nth_most_freq(device_operatingSystem),
+                device_operatingSystem_n  = count_unique(device_operatingSystem),
+                
+                device_deviceCategory  = nth_most_freq(device_deviceCategory),
+                desktop_n  = sum(device_deviceCategory == 'desktop'),
+                mobile_n  = sum(device_deviceCategory == 'mobile'),
+                tablet_n  = sum(device_deviceCategory == 'tablet'),
+                
+                device_browser  = nth_most_freq(device_browser),
+                device_browser_n  = count_unique(device_browser),
+                
+                totals_hits = sum(totals_hits, na.rm = T),
+                totals_pageviews = sum(totals_pageviews, na.rm = T),
+                totals_bounces = sum(totals_bounces, na.rm = T),
+                totals_newVisits = sum(totals_newVisits, na.rm = T),
+                
+                revenue = log(1  + sum(totals_transactionRevenue, na.rm = T))),
+            , by = .(fullVisitorId, is_train)]
+
+tindex = df_agg$is_train
+
+factor_columns = c('channelGrouping','socialEngagementType','geo_continent')
+df_agg[, (factor_columns):=lapply(.SD, as.factor), .SDcols = factor_columns]
+
+#df[fullVisitorId =='1131660440785968503',log(1+sum(totals_transactionRevenue, na.rm = T)), by =  .(fullVisitorId, is_train) ]
+```
 
 
+## View Data
+
+```{r view_data}
+
+ggplot(df_agg, aes(revenue, group = is_train)) + geom_density()
 
 ```
 
+## Model
+
+```{r model}
+
+actual = df_agg$revenue
+
+#only keep several car_11 levels
+
+all_vars = names(df_agg) %!in_set% c('fullVisitorId','is_train','first_date','last_date','revenue')
+
+exclude_vars = c()
+
+set.seed(1012356)
+
+formula.gbm = formula(stri_join( 'revenue ~ ', stri_join(all_vars %!in_set% exclude_vars,collapse = ' + ')))
+
+model_vars = all.vars(formula.gbm) %!in_set% c('revenue')
+var.monotone = rep(0, length(model_vars))
+
+mon_inc_vars = c()
+mon_dec_vars = c()
+
+var.monotone[model_vars %in% mon_inc_vars]  =  1
+var.monotone[model_vars %in% mon_dec_vars]  = -1
+
+cv_folds = 0
+max_it = 1000
+#0.49
+model.gbm  = gbm(formula.gbm,
+                 distribution = "gaussian",
+                 n.trees = max_it,
+                 cv.folds = cv_folds,
+                 shrinkage = 0.01,
+                 interaction.depth=2,
+                 train.fraction = 0.7,
+                 bag.fraction = 0.8,# 0.5 for small samples, 0.7 for large
+                 n.cores = 4,
+                 var.monotone = var.monotone,
+                 data = df_agg[tindex , all.vars(formula.gbm), with = F],
+                 verbose = FALSE)
+
+#saveRDS(model.gbm, file.path(working_folder,'gstore/model.rds'))
+#model.gbm = readRDS(file.path(working_folder,'gstore/model.rds'))
+
+plot_gbmiterations(model.gbm)
+
+best_it.gbm = ifelse(cv_folds==0, max_it, gbm.perf(model.gbm, plot.it = F))
+
+pred.gbm  = predict(model.gbm, n.trees = best_it.gbm, newdata = df_agg)
+
+#influence
+var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
+var_inf = subset(var_inf, rel.inf>0.1)
+#fwrite(var_inf, file = file.path(working_folder, "gstore/variables.csv"), row.names = FALSE)
+plot_gbminfluence(var_inf)
+print(var_inf)
+
+imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.5])
+
+plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars, output_type = 'link')
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+
+plots = llply(imp_vars, function(var_name) {
+  p = plot_profile(pred.gbm[tindex], actual[tindex],df_agg[[var_name]][tindex], error_band = 'normal') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+```
+
+## Save Results
+
+```{r save_results}
+
+df_agg[, PredictedLogRevenue:=pmax(0, pred.gbm)]
+
+summary(lm(revenue ~ PredictedLogRevenue, data = df_agg[is_train == TRUE,]))
+
+submit = df_agg[is_train == FALSE, .(fullVisitorId, PredictedLogRevenue) ]
+  
+file = file.path(working_folder, "gstore/solution.csv")
+  
+fwrite(submit, file = file, row.names = FALSE)
+
+zip(paste(file, '.zip', sep = ''), file)
+  
+print(file)
+
+#fullVisitorId,PredictedLogRevenue
+
+```

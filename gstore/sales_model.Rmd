@@ -23,6 +23,7 @@ library(forcats)
 #library(pdp)
 library(e1071)
 library(jsonlite)
+library(lubridate)
 #library(rjson)
 #library(caret)
 
@@ -38,6 +39,8 @@ source(file.path(working_folder, '/Utils/common.R'))
 ```{r load_data}
 
 df_filename = file.path(working_folder,'gstore/data/all.rds')
+df_agg_filename = file.path(working_folder,'gstore/data/all_agg.rds')
+
 
 if(file.exists(df_filename)) {
   df = readRDS(df_filename)
@@ -134,7 +137,7 @@ df[, date_year := year(iso_date)]
 df[, date_day := day(iso_date)]
 df[, date_wday := weekdays(iso_date)]
 
-df$totals_transactionRevenue
+#df$totals_transactionRevenue
 
 #table(df[,.(is_train, date_year)])
 #table(df[,.(is_train, visitNumber)])
@@ -145,51 +148,93 @@ df$totals_transactionRevenue
 #  }
 #system.time(df[1:10000, agg_visitors(.SD), by = .(fullVisitorId, is_train)])
 #system.time(df[1:10000, .(.N, first_date = min(iso_date), last_date = max(iso_date),revenue = sum(totals_transactionRevenue, na.rm = T)), by = .(fullVisitorId, is_train)])
-
-nth_most_freq <- function(x, nth = 1) {names(sort(table(x), decreasing=TRUE))[nth]}
-count_unique <- function(x) {length(unique(x))}
-
-df_agg = df[, .(.N, first_date = min(iso_date), last_date = max(iso_date),
-                channelGrouping = nth_most_freq(channelGrouping),
-                channelGrouping_count = count_unique(channelGrouping),
-                
-                socialEngagementType = nth_most_freq(socialEngagementType),
-                
-                geo_continent  = nth_most_freq(geo_continent),
-                geo_continent_n  = count_unique(geo_continent),
-                
-                geo_subContinent  = nth_most_freq(geo_subContinent), 
-                geo_subContinent_n  = count_unique(geo_subContinent),
-                
-                geo_country  = nth_most_freq(geo_country), 
-                geo_country_n  = count_unique(geo_country),
-                
-                geo_region  = nth_most_freq(geo_region), 
-                geo_region_n  = count_unique(geo_region),
-                
-                device_operatingSystem  = nth_most_freq(device_operatingSystem),
-                device_operatingSystem_n  = count_unique(device_operatingSystem),
-                
-                device_deviceCategory  = nth_most_freq(device_deviceCategory),
-                desktop_n  = sum(device_deviceCategory == 'desktop'),
-                mobile_n  = sum(device_deviceCategory == 'mobile'),
-                tablet_n  = sum(device_deviceCategory == 'tablet'),
-                
-                device_browser  = nth_most_freq(device_browser),
-                device_browser_n  = count_unique(device_browser),
-                
-                totals_hits = sum(totals_hits, na.rm = T),
-                totals_pageviews = sum(totals_pageviews, na.rm = T),
-                totals_bounces = sum(totals_bounces, na.rm = T),
-                totals_newVisits = sum(totals_newVisits, na.rm = T),
-                
-                revenue = log(1  + sum(totals_transactionRevenue, na.rm = T))),
-            , by = .(fullVisitorId, is_train)]
-
+if(file.exists(df_agg_filename)) {
+  df_agg = readRDS(df_agg_filename)
+}else {
+    
+  nth_most_freq <- function(x, nth = 1) {names(sort(table(x, useNA = "ifany"), decreasing=TRUE))[nth]}
+  count_unique <- function(x) {length(unique(x))}
+  
+  df_agg = df[, .(.N, first_date = min(iso_date), last_date = max(iso_date),
+                  channelGrouping = nth_most_freq(channelGrouping),
+                  channelGrouping_count = count_unique(channelGrouping),
+                  
+                  socialEngagementType = nth_most_freq(socialEngagementType),
+                  socialEngagementType_n  = count_unique(socialEngagementType),
+                  
+                  geo_continent  = nth_most_freq(geo_continent),
+                  geo_continent_n  = count_unique(geo_continent),
+                  
+                  geo_subContinent  = nth_most_freq(geo_subContinent), 
+                  geo_subContinent_n  = count_unique(geo_subContinent),
+                  
+                  geo_country  = nth_most_freq(geo_country), 
+                  geo_country_n  = count_unique(geo_country),
+                  
+                  geo_region  = nth_most_freq(geo_region), 
+                  geo_region_n  = count_unique(geo_region),
+                  
+                  geo_city  = nth_most_freq(geo_city), 
+                  geo_city_n  = count_unique(geo_city),
+                  
+                  date_wday1 = nth_most_freq(date_wday, 1),
+                  date_wday2 = nth_most_freq(date_wday, 2),
+                  date_wday3 = nth_most_freq(date_wday, 3),
+                  date_wday4 = nth_most_freq(date_wday, 4), 
+                  
+                  device_operatingSystem  = nth_most_freq(device_operatingSystem),
+                  device_operatingSystem_n  = count_unique(device_operatingSystem),
+                  
+                  device_deviceCategory  = nth_most_freq(device_deviceCategory),
+                  desktop_n  = sum(device_deviceCategory == 'desktop', na.rm = T),
+                  mobile_n  = sum(device_deviceCategory == 'mobile', na.rm = T),
+                  tablet_n  = sum(device_deviceCategory == 'tablet', na.rm = T),
+                  
+                  device_browser  = nth_most_freq(device_browser),
+                  device_browser_n  = count_unique(device_browser),
+                  
+                  totals_hits = sum(totals_hits, na.rm = T),
+                  totals_visits    = sum(totals_visits, na.rm = T),
+                  totals_pageviews = sum(totals_pageviews, na.rm = T),
+                  totals_bounces = sum(totals_bounces, na.rm = T),
+                  totals_newVisits = sum(totals_newVisits, na.rm = T),
+                  
+                  revenue = log(1  + sum(totals_transactionRevenue, na.rm = T))),
+              , by = .(fullVisitorId, is_train)]
+  
+  char_columns = names(df_agg)[which(lapply(df_agg, is.character) ==T)] %!in_set% c('fullVisitorId')
+  df_agg[, (char_columns):=lapply(.SD, as.factor), .SDcols = char_columns]
+  
+  saveRDS(df_agg, df_agg_filename)
+}
 tindex = df_agg$is_train
 
-factor_columns = c('channelGrouping','socialEngagementType','geo_continent')
-df_agg[, (factor_columns):=lapply(.SD, as.factor), .SDcols = factor_columns]
+df_agg[, total_days:= as.numeric(difftime(last_date, first_date, units = 'days'))]
+df_agg[, last_iso_date:= as.Date(ISOdate(year(last_date), month(last_date), 1)) ]
+df_agg[, first_iso_date:= as.Date(ISOdate(year(first_date), month(first_date), 1)) ]
+df_agg[, last_month:=  month(last_date) ]
+df_agg[, first_month:= month(first_date) ]
+df_agg[, first_week_date := weekdays(first_date) ]
+
+
+df_agg[, total_weeks:= as.numeric(difftime(df_agg$last_date, df_agg$first_date, units = 'weeks'))]
+df_agg[, totals_pageviews_log:= log(totals_pageviews + 1)]
+df_agg[, totals_hits_log:= log(totals_hits + 1)]
+
+combine_levels <- function(x, n = 3000){
+  counts = table(x)
+  keep_levels = names(counts)[which(counts > n)]
+  return( fct_other(x,keep = keep_levels) )
+}
+
+df_agg[, geo_city_major:=combine_levels(geo_city)]
+df_agg[, geo_country_major:=combine_levels(geo_country)]
+df_agg[, geo_region_major:=combine_levels(geo_region)]
+
+
+table(df_agg[,.(geo_city_major)])
+table(df_agg[,.(geo_country_major)])
+table(df_agg[,.(geo_region_major)])
 
 #df[fullVisitorId =='1131660440785968503',log(1+sum(totals_transactionRevenue, na.rm = T)), by =  .(fullVisitorId, is_train) ]
 ```
@@ -211,7 +256,7 @@ actual = df_agg$revenue
 
 #only keep several car_11 levels
 
-all_vars = names(df_agg) %!in_set% c('fullVisitorId','is_train','first_date','last_date','revenue')
+all_vars = names(df_agg) %!in_set% c('fullVisitorId','is_train','first_date','last_date','revenue', 'totals_pageviews','totals_hits', 'geo_city','geo_country','geo_region', 'total_days','last_iso_date','first_iso_date', 'last_month', 'first_month')
 
 exclude_vars = c()
 
@@ -236,7 +281,7 @@ model.gbm  = gbm(formula.gbm,
                  n.trees = max_it,
                  cv.folds = cv_folds,
                  shrinkage = 0.01,
-                 interaction.depth=2,
+                 interaction.depth=4,
                  train.fraction = 0.7,
                  bag.fraction = 0.8,# 0.5 for small samples, 0.7 for large
                  n.cores = 4,
@@ -249,9 +294,11 @@ model.gbm  = gbm(formula.gbm,
 
 plot_gbmiterations(model.gbm)
 
-best_it.gbm = ifelse(cv_folds==0, max_it, gbm.perf(model.gbm, plot.it = F))
+best_it.gbm = gbm.perf(model.gbm, plot.it = F) #ifelse(cv_folds==0, max_it, gbm.perf(model.gbm, plot.it = F))
 
 pred.gbm  = predict(model.gbm, n.trees = best_it.gbm, newdata = df_agg)
+
+summary(lm('actual ~ model ', data.frame(actual = actual[tindex], model = pred.gbm[tindex]))) #0.3951
 
 #influence
 var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
@@ -270,10 +317,32 @@ plots = llply(imp_vars, function(var_name) {
     ggtitle(var_name) +  theme(title =element_text(size=6))
   return( p )
 })
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+
+#all vars
+plots = llply(all.vars(formula.gbm), function(var_name) {
+  p = plot_profile(pred.gbm[tindex], actual[tindex],df_agg[[var_name]][tindex], error_band = 'normal') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
 marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+
+plot_profile(pred.gbm[tindex], actual[tindex],weekdays(df_agg$last_date[tindex]), error_band = 'normal')
+plot_profile(pred.gbm[tindex], actual[tindex],weekdays(df_agg$first_date[tindex]), error_band = 'normal')
+
+plot_profile(pred.gbm[tindex], actual[tindex],df_agg$last_iso_date[tindex], error_band = 'normal')
+plot_profile(pred.gbm[tindex], actual[tindex],df_agg$first_iso_date[tindex], error_band = 'normal')
+
+plot_profile(pred.gbm[tindex], actual[tindex],factor(month(df_agg$first_date)[tindex]), error_band = 'normal')
+plot_profile(pred.gbm[tindex], actual[tindex],factor(month(df_agg$last_date)[tindex]), error_band = 'normal')
+plot_profile(pred.gbm[tindex], actual[tindex],month(df_agg$last_date)[tindex], error_band = 'normal')
+
+plot_profile(pred.gbm[tindex], actual[tindex],df_agg$total_weeks[tindex], error_band = 'normal')
+
 ```
 
 ## Save Results
+1.4663
 
 ```{r save_results}
 

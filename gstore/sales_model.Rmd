@@ -155,12 +155,16 @@ if(file.exists(df_agg_filename)) {
   nth_most_freq <- function(x, nth = 1) {names(sort(table(x, useNA = "ifany"), decreasing=TRUE))[nth]}
   count_unique <- function(x) {length(unique(x))}
   
-  df_agg = df[, .(.N, first_date = min(iso_date), last_date = max(iso_date),
+  df_agg = df[fullVisitorId=='6849604863010168468', .(.N, 
+                  
+                  first_date = min(iso_date), last_date = max(iso_date), 
+                  day_diff_avg = mean(as.numeric(diff(sort(iso_date) )), na.rm = T), #this can be easily computed 
+                  day_diff_max = max(as.numeric(diff(sort(iso_date) )), na.rm = T),
+                  day_diff_min = min(as.numeric(diff(sort(iso_date) )), na.rm = T),
+                  day_diff_sd  = sd(as.numeric(diff(sort(iso_date) )), na.rm = T),
+                  
                   channelGrouping = nth_most_freq(channelGrouping),
                   channelGrouping_count = count_unique(channelGrouping),
-                  
-                  socialEngagementType = nth_most_freq(socialEngagementType),
-                  socialEngagementType_n  = count_unique(socialEngagementType),
                   
                   geo_continent  = nth_most_freq(geo_continent),
                   geo_continent_n  = count_unique(geo_continent),
@@ -180,24 +184,44 @@ if(file.exists(df_agg_filename)) {
                   date_wday1 = nth_most_freq(date_wday, 1),
                   date_wday2 = nth_most_freq(date_wday, 2),
                   date_wday3 = nth_most_freq(date_wday, 3),
-                  date_wday4 = nth_most_freq(date_wday, 4), 
+                  
+                  date_mon_pct = sum(date_wday == 'Monday', na.rm = T)/.N,
+                  date_tue_pct = sum(date_wday == 'Tuesday', na.rm = T)/.N,
+                  #date_wed_pct = sum(date_wday == 'Wednesday', na.rm = T)/.N, #exclude wed, since it is redundant 
+                  date_thu_pct = sum(date_wday == 'Thursday', na.rm = T)/.N,
+                  date_fri_pct = sum(date_wday == 'Friday', na.rm = T)/.N,
+                  date_sat_pct = sum(date_wday == 'Saturday', na.rm = T)/.N,
+                  date_sun_pct = sum(date_wday == 'Sunday', na.rm = T)/.N,
                   
                   device_operatingSystem  = nth_most_freq(device_operatingSystem),
                   device_operatingSystem_n  = count_unique(device_operatingSystem),
                   
+                  trafficSource_source  = nth_most_freq(trafficSource_source),
+                  trafficSource_source_n  = count_unique(trafficSource_source),
+                  
+                  geo_networkDomain  = nth_most_freq(geo_networkDomain),
+                  geo_networkDomain_n  = count_unique(geo_networkDomain),
+                  
+                  trafficSource_medium  = nth_most_freq(trafficSource_medium),
+                  trafficSource_medium_n  = count_unique(trafficSource_medium),
+                  
                   device_deviceCategory  = nth_most_freq(device_deviceCategory),
-                  desktop_n  = sum(device_deviceCategory == 'desktop', na.rm = T),
-                  mobile_n  = sum(device_deviceCategory == 'mobile', na.rm = T),
-                  tablet_n  = sum(device_deviceCategory == 'tablet', na.rm = T),
+                  desktop_n  = sum(device_deviceCategory == 'desktop', na.rm = T)/.N,
+                  mobile_n  = sum(device_deviceCategory == 'mobile', na.rm = T)/.N,
+                  tablet_n  = sum(device_deviceCategory == 'tablet', na.rm = T)/.N,
                   
                   device_browser  = nth_most_freq(device_browser),
                   device_browser_n  = count_unique(device_browser),
                   
-                  totals_hits = sum(totals_hits, na.rm = T),
-                  totals_visits    = sum(totals_visits, na.rm = T),
-                  totals_pageviews = sum(totals_pageviews, na.rm = T),
-                  totals_bounces = sum(totals_bounces, na.rm = T),
-                  totals_newVisits = sum(totals_newVisits, na.rm = T),
+                  totals_hits      = sum(totals_hits, na.rm = T)/.N,
+                  totals_pageviews = sum(totals_pageviews, na.rm = T)/.N,
+                  totals_bounces   = sum(totals_bounces, na.rm = T)/.N,
+                  
+                  totals_hits_sd      = sd(totals_hits, na.rm = T),
+                  totals_pageviews_sd = sd(totals_pageviews, na.rm = T),
+                  
+                  totals_hits_max      = max(totals_hits, na.rm = T),
+                  totals_pageviews_max = max(totals_pageviews, na.rm = T),
                   
                   revenue = log(1  + sum(totals_transactionRevenue, na.rm = T))),
               , by = .(fullVisitorId, is_train)]
@@ -214,7 +238,7 @@ df_agg[, last_iso_date:= as.Date(ISOdate(year(last_date), month(last_date), 1)) 
 df_agg[, first_iso_date:= as.Date(ISOdate(year(first_date), month(first_date), 1)) ]
 df_agg[, last_month:=  month(last_date) ]
 df_agg[, first_month:= month(first_date) ]
-df_agg[, first_week_date := weekdays(first_date) ]
+df_agg[, first_week_date := factor(weekdays(first_date)) ]
 
 
 df_agg[, total_weeks:= as.numeric(difftime(df_agg$last_date, df_agg$first_date, units = 'weeks'))]
@@ -342,15 +366,13 @@ plot_profile(pred.gbm[tindex], actual[tindex],df_agg$total_weeks[tindex], error_
 ```
 
 ## Save Results
-1.4663
+1.4649
 
 ```{r save_results}
 
-df_agg[, PredictedLogRevenue:=pmax(0, pred.gbm)]
+test_index = df_agg$is_train == FALSE
 
-summary(lm(revenue ~ PredictedLogRevenue, data = df_agg[is_train == TRUE,]))
-
-submit = df_agg[is_train == FALSE, .(fullVisitorId, PredictedLogRevenue) ]
+submit = data.table(fullVisitorId = df_agg$fullVisitorId[test_index], PredictedLogRevenue = pmax(0, pred.gbm[test_index]))
   
 file = file.path(working_folder, "gstore/solution.csv")
   

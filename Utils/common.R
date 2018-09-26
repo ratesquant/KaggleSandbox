@@ -295,13 +295,10 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
   }else{
     breaks = quantile(profile, seq(0, bucket_count, 1)/bucket_count, na.rm = TRUE)
     breaks = unique(breaks)
-    if(length(breaks)>2) {
-      buckets = cut(profile, breaks, ordered_result = TRUE, include.lowest = TRUE)
-    }else
-    {
-      buckets = factor(profile)
-      factor_plot = TRUE
+    if(length(breaks)<=2) {
+      breaks = seq(min(profile), max(profile), length.out = bucket_count)
     }
+    buckets = cut(profile, breaks, ordered_result = TRUE, include.lowest = TRUE)
   }
   
   index = complete.cases(act, mod)
@@ -416,14 +413,22 @@ write.xclip <- function(x, selection=c("primary", "secondary", "clipboard"), ...
   write.table(x, con, ...)
 }
 
+is_linux<-function(){
+  return(.Platform$OS.type == "unix")
+}
+
 write.clipboard <- function(x, ...){
   write.xclip(x, "clipboard", ...)
 }
 
 #copy to clipboard, works on win
 cc <- function(x,...){
-  #write.table(x, "clipboard-16384", sep="\t", row.names=FALSE,...)
-  write.table(x, "clipboard-1024", sep="\t", row.names=FALSE,...)
+  if(is_linux()){
+    write.clipboard(x,...)
+  }else{
+    #write.table(x, "clipboard-16384", sep="\t", row.names=FALSE,...)
+    write.table(x, "clipboard-1024", sep="\t", row.names=FALSE,...)
+  }
 }
 
 ## Binomial plot functions ----- 

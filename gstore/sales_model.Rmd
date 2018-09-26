@@ -116,12 +116,12 @@ if(file.exists(df_filename)) {
   #df[,totals_columns, with = F]
   
   #check forpossible values
-  temp = ldply(sample.int(nrow(df), 10000), function(i) {
-     res = data.table(t(unlist(parse_json_all(df$trafficSource[i]))))  
-     return (res)
-  } )
-  str(temp)
-  sapply(temp, function(x) length(unique(x)))
+  #temp = ldply(sample.int(nrow(df), 10000), function(i) {
+  #   res = data.table(t(unlist(parse_json_all(df$trafficSource[i]))))  
+  #   return (res)
+  #} )
+  #str(temp)
+  #sapply(temp, function(x) length(unique(x)))
   
   
   #a = df[, .(geoNetwork, geo_continent)]
@@ -155,7 +155,7 @@ if(file.exists(df_agg_filename)) {
   nth_most_freq <- function(x, nth = 1) {names(sort(table(x, useNA = "ifany"), decreasing=TRUE))[nth]}
   count_unique <- function(x) {length(unique(x))}
   
-  df_agg = df[fullVisitorId=='6849604863010168468', .(.N, 
+  df_agg = df[, .(.N, 
                   
                   first_date = min(iso_date), last_date = max(iso_date), 
                   day_diff_avg = mean(as.numeric(diff(sort(iso_date) )), na.rm = T), #this can be easily computed 
@@ -229,6 +229,8 @@ if(file.exists(df_agg_filename)) {
   char_columns = names(df_agg)[which(lapply(df_agg, is.character) ==T)] %!in_set% c('fullVisitorId')
   df_agg[, (char_columns):=lapply(.SD, as.factor), .SDcols = char_columns]
   
+  #df_agg[1:10, ..char_columns]
+  
   saveRDS(df_agg, df_agg_filename)
 }
 tindex = df_agg$is_train
@@ -240,10 +242,15 @@ df_agg[, last_month:=  month(last_date) ]
 df_agg[, first_month:= month(first_date) ]
 df_agg[, first_week_date := factor(weekdays(first_date)) ]
 
+#correct missing variables
+df_agg[is.infinite(totals_pageviews_max), totals_pageviews_max:= 0]
+df_agg[is.infinite(day_diff_max),         day_diff_max:= NA]
+df_agg[is.infinite(day_diff_min),         day_diff_min:= NA]
 
-df_agg[, total_weeks:= as.numeric(difftime(df_agg$last_date, df_agg$first_date, units = 'weeks'))]
-df_agg[, totals_pageviews_log:= log(totals_pageviews + 1)]
-df_agg[, totals_hits_log:= log(totals_hits + 1)]
+
+df_agg[, total_weeks:= as.numeric(difftime(last_date, first_date, units = 'weeks'))]
+#df_agg[, totals_pageviews_log:= log(totals_pageviews + 1)]
+#df_agg[, totals_hits_log:= log(totals_hits + 1)]
 
 combine_levels <- function(x, n = 3000){
   counts = table(x)
@@ -254,11 +261,15 @@ combine_levels <- function(x, n = 3000){
 df_agg[, geo_city_major:=combine_levels(geo_city)]
 df_agg[, geo_country_major:=combine_levels(geo_country)]
 df_agg[, geo_region_major:=combine_levels(geo_region)]
+df_agg[, geo_networkDomain_major:=combine_levels(geo_networkDomain)]
+df_agg[, trafficSource_source_major:=combine_levels(trafficSource_source)]
 
 
 table(df_agg[,.(geo_city_major)])
 table(df_agg[,.(geo_country_major)])
 table(df_agg[,.(geo_region_major)])
+table(df_agg[,.(geo_networkDomain_major)])
+table(df_agg[,.(trafficSource_source_major)])
 
 #df[fullVisitorId =='1131660440785968503',log(1+sum(totals_transactionRevenue, na.rm = T)), by =  .(fullVisitorId, is_train) ]
 ```
@@ -280,7 +291,9 @@ actual = df_agg$revenue
 
 #only keep several car_11 levels
 
-all_vars = names(df_agg) %!in_set% c('fullVisitorId','is_train','first_date','last_date','revenue', 'totals_pageviews','totals_hits', 'geo_city','geo_country','geo_region', 'total_days','last_iso_date','first_iso_date', 'last_month', 'first_month')
+all_vars = names(df_agg) %!in_set% c('fullVisitorId','is_train','first_date','last_date','revenue', 
+                                     'geo_city','geo_country','geo_region', 'geo_networkDomain','trafficSource_source', #too many levels
+                                     'total_days','last_iso_date','first_iso_date', 'last_month', 'first_month')
 
 exclude_vars = c()
 
@@ -290,6 +303,9 @@ formula.gbm = formula(stri_join( 'revenue ~ ', stri_join(all_vars %!in_set% excl
 
 model_vars = all.vars(formula.gbm) %!in_set% c('revenue')
 var.monotone = rep(0, length(model_vars))
+
+#df_agg[1:10, ..model_vars]
+#str(df_agg[, ..model_vars])
 
 mon_inc_vars = c()
 mon_dec_vars = c()
@@ -306,7 +322,7 @@ model.gbm  = gbm(formula.gbm,
                  cv.folds = cv_folds,
                  shrinkage = 0.01,
                  interaction.depth=4,
-                 train.fraction = 0.7,
+                 train.fraction = 0.6,
                  bag.fraction = 0.8,# 0.5 for small samples, 0.7 for large
                  n.cores = 4,
                  var.monotone = var.monotone,
@@ -332,8 +348,9 @@ plot_gbminfluence(var_inf)
 print(var_inf)
 
 imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.5])
+#df_agg[1:100,..imp_vars]
 
-plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars, output_type = 'link')
+plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars[1], output_type = 'link')
 marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 
 plots = llply(imp_vars, function(var_name) {
@@ -366,7 +383,7 @@ plot_profile(pred.gbm[tindex], actual[tindex],df_agg$total_weeks[tindex], error_
 ```
 
 ## Save Results
-1.4649
+1.4520
 
 ```{r save_results}
 

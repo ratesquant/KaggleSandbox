@@ -421,7 +421,7 @@ actual = df_agg$is_revenue
 
 #only keep several car_11 levels
 exclude_vars = c('fullVisitorId','is_train','first_date','last_date','revenue','is_revenue', #id and outcome var
-                                     'geo_city','geo_country','geo_region','geo_region_major', 'geo_subContinent', #too many levels
+                                     'geo_city','geo_country','geo_region','geo_region_major', 'geo_subContinent','geo_region_major', #too many levels
                                      'geo_networkDomain','trafficSource_source','device_browser','device_operatingSystem', #too many levels
                                      'total_days','last_iso_date','first_iso_date', 'last_month', 'first_month',
                                      'totals_pageviews','totals_pageviews_max', 'totals_pageviews_sd', 'totals_hits', 'totals_hits_max', 'N','day_diff_sd')
@@ -471,7 +471,7 @@ model.pd  = gbm(formula.pd,
 #saveRDS(model.pd, file.path(working_folder,'gstore/model_pd.rds'))
 #model.pd = readRDS(file.path(working_folder,'gstore/model_pd.rds'))
 
-plot_gbmiterations(model.pd)
+plot_gbmiterations(model.pd) #0.03762, AUC
 
 best_it.pd = gbm.perf(model.pd, plot.it = F) #ifelse(cv_folds==0, max_it, gbm.perf(model.pd, plot.it = F))
 
@@ -581,12 +581,13 @@ imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.5])
 #df_agg[1:100,..imp_vars]
 
 plots = plot_gbmpartial(model.rgs, best_it.rgs, imp_vars, output_type = 'link')
-marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 
 pred.rgs = predict(model.rgs, n.trees = best_it.rgs, newdata = df_agg)
 pred.rev = pred.rgs * pred.pd
-summary(lm('actual ~ model ', data.frame(actual = actual[tindex], model = pred.rev[tindex]))) #0.4273
-#ggplot(data.frame(actual = actual[tindex], model = pred.rgs[tindex]), aes(model, actual)) + geom_point()
+summary(lm('actual ~ model', data.frame(actual = df_agg$revenue[tindex],     model = pred.rev[tindex]))) #0.4273
+summary(lm('actual ~ model', data.frame(actual = df_agg$revenue[tindex_rgs], model = pred.rgs[tindex_rgs]))) #0.4273
+#ggplot(data.frame(actual = df_agg$revenue[tindex_rgs], model = pred.rgs[tindex_rgs]), aes(model, actual)) + geom_point() + geom_abline(slope = 1, color = 'red')
 
 #all vars
 plots = llply(all.vars(formula.rgs), function(var_name) {
@@ -608,6 +609,7 @@ marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
 plot_profile(pred.rgs[tindex_rgs], actual[tindex_rgs],df_agg$device_browser_major[tindex_rgs], error_band = 'normal')
 plot_profile(pred.rgs[tindex_rgs], actual[tindex_rgs],df_agg$device_operatingSystem_major[tindex_rgs], error_band = 'normal')
 
+table(df_agg[is_revenue == T, .(is_train, first_month)])
 ```
 
 ## Save Results

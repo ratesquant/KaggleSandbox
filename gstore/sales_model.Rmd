@@ -420,11 +420,13 @@ first predict that transaction probability is non-zero, then predict value
 actual = df_agg$is_revenue
 
 #only keep several car_11 levels
-exclude_vars = c()
-all_vars = names(df_agg) %!in_set% c('fullVisitorId','is_train','first_date','last_date','revenue','is_revenue', #id and outcome var
-                                     'geo_city','geo_country','geo_region', 'geo_networkDomain','trafficSource_source','device_browser','device_operatingSystem', #too many levels
+exclude_vars = c('fullVisitorId','is_train','first_date','last_date','revenue','is_revenue', #id and outcome var
+                                     'geo_city','geo_country','geo_region','geo_region_major', 'geo_subContinent', #too many levels
+                                     'geo_networkDomain','trafficSource_source','device_browser','device_operatingSystem', #too many levels
                                      'total_days','last_iso_date','first_iso_date', 'last_month', 'first_month',
-                                     'totals_pageviews','totals_pageviews_max', 'totals_pageviews_sd', 'totals_hits', 'totals_hits_max', 'N','day_diff_sd') #replaced with logs
+                                     'totals_pageviews','totals_pageviews_max', 'totals_pageviews_sd', 'totals_hits', 'totals_hits_max', 'N','day_diff_sd')
+
+all_vars = names(df_agg) %!in_set% exclude_vars
 
 
 set.seed(1012356)
@@ -442,11 +444,13 @@ var.monotone = rep(0, length(model_vars))
 #corrplot(corr_matrix, method="number", number.cex = 0.5)
 #corrplot(corr_matrix, method="circle", order="hclust")
 
-mon_inc_vars = c('totals_pageviews_sd_log','totals_pageviews_log','totals_pageviews_max_log','count_log')
+mon_inc_vars = c('totals_pageviews_sd_log','totals_pageviews_log','totals_pageviews_max_log','count_log','totals_hits_sd')
 mon_dec_vars = c('totals_hits_log')
 
 var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
+
+# day_diff_sd_log is quiestionable
 
 cv_folds = 0
 max_it = 2000
@@ -464,8 +468,8 @@ model.pd  = gbm(formula.pd,
                  data = df_agg[tindex , all.vars(formula.pd), with = F],
                  verbose = FALSE)
 
-#saveRDS(model.pd, file.path(working_folder,'gstore/model_1.rds'))
-#model.pd = readRDS(file.path(working_folder,'gstore/model_1.rds'))
+#saveRDS(model.pd, file.path(working_folder,'gstore/model_pd.rds'))
+#model.pd = readRDS(file.path(working_folder,'gstore/model_pd.rds'))
 
 plot_gbmiterations(model.pd)
 
@@ -491,20 +495,20 @@ imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.5])
 plots = plot_gbmpartial(model.pd, best_it.pd, imp_vars, output_type = 'response')
 marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
 
-plots = llply(imp_vars, function(var_name) {
-  p = plot_profile(pred.pd[tindex], actual[tindex],df_agg[[var_name]][tindex], error_band = 'binom') +
-    ggtitle(var_name) +  theme(title =element_text(size=6))
-  return( p )
-})
-marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
-
-#all vars
 plots = llply(all.vars(formula.pd), function(var_name) {
   p = plot_profile(pred.pd[tindex], actual[tindex],df_agg[[var_name]][tindex], error_band = 'binom') +
     ggtitle(var_name) +  theme(title =element_text(size=6))
   return( p )
 })
-marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
+
+#all vars
+plots = llply(names(df_agg) %!in_set% exclude_vars, function(var_name) {
+  p = plot_profile(pred.pd[tindex], actual[tindex],df_agg[[var_name]][tindex], error_band = 'binom') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
 
 plot_profile(pred.pd[tindex], actual[tindex],weekdays(df_agg$last_date[tindex]), error_band = 'binom')
 
@@ -593,12 +597,12 @@ plots = llply(all.vars(formula.rgs), function(var_name) {
 marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 
 #candidate vars
-plots = llply(names(df_agg) %!in_set% exclude_vars, function(var_name) {
+plots = llply(names(df_agg) %!in_set% c('fullVisitorId'), function(var_name) {
   p = plot_profile(pred.rgs[tindex_rgs], actual[tindex_rgs],df_agg[[var_name]][tindex_rgs], error_band = 'normal') +
     ggtitle(var_name) +  theme(title =element_text(size=6))
   return( p )
 })
-marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
+marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
 
 
 plot_profile(pred.rgs[tindex_rgs], actual[tindex_rgs],df_agg$device_browser_major[tindex_rgs], error_band = 'normal')
@@ -607,7 +611,7 @@ plot_profile(pred.rgs[tindex_rgs], actual[tindex_rgs],df_agg$device_operatingSys
 ```
 
 ## Save Results
-1.4520
+1.4476
 
 ```{r save_results}
 

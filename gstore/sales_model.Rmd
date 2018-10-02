@@ -257,6 +257,7 @@ df_agg[, totals_pageviews_max_log:= log(totals_pageviews_max + 1) - totals_pagev
 
 df_agg[, totals_hits_log:= log(totals_hits + 1)]
 df_agg[, totals_hits_max_log:= log(totals_hits_max + 1)-totals_hits_log]
+df_agg[, totals_hits_sd_log:= log(totals_hits_sd + 1)]
 
 df_agg[, count_log:= log(N)]
 df_agg[, day_diff_sd_log:= log(day_diff_sd + 1)]
@@ -416,22 +417,37 @@ plot_profile(pred.gbm[tindex], actual[tindex],df_agg$date_mon_pct[tindex], error
 first predict that transaction probability is non-zero, then predict value
 
 ### Logistic PD model 
+
+
+                                              var    rel.inf
+totals_pageviews_sd_log   totals_pageviews_sd_log 34.1640381
+totals_pageviews_log         totals_pageviews_log 27.7028449
+geo_country_major               geo_country_major 14.3663681
+count_log                               count_log 11.2361062
+geo_city_major                     geo_city_major  3.9702426
+totals_hits_sd_log             totals_hits_sd_log  2.9793656
+device_deviceCategory       device_deviceCategory  2.3449133
+trafficSource_medium         trafficSource_medium  2.1525235
+totals_pageviews_max_log totals_pageviews_max_log  0.8653084
+date_wday1                             date_wday1  0.1780877
 ```{r pd_predict_model}
-actual = df_agg$is_revenue
+actual.pd = df_agg$is_revenue
 
 #only keep several car_11 levels
 exclude_vars = c('fullVisitorId','is_train','first_date','last_date','revenue','is_revenue', #id and outcome var
                                      'geo_city','geo_country','geo_region','geo_region_major', 'geo_subContinent','geo_region_major', #too many levels
                                      'geo_networkDomain','trafficSource_source','device_browser','device_operatingSystem', #too many levels
                                      'total_days','last_iso_date','first_iso_date', 'last_month', 'first_month',
-                                     'totals_pageviews','totals_pageviews_max', 'totals_pageviews_sd', 'totals_hits', 'totals_hits_max', 'N','day_diff_sd')
+                                     'totals_pageviews','totals_pageviews_max', 'totals_pageviews_sd', 'totals_hits', 'totals_hits_max', 'N','day_diff_sd',
+                                     'date_wday3', 'date_wday2','date_wday1','trafficSource_medium','geo_networkDomain_major','geo_country_major','geo_city_major')
 
-all_vars = names(df_agg) %!in_set% exclude_vars
-
+#all_vars = names(df_agg) %!in_set% exclude_vars
+all_vars = c('totals_pageviews_sd_log','totals_pageviews_log','count_log','totals_pageviews_max_log','device_deviceCategory','device_browser_major','geo_country_major','geo_city_major','date_wday1','trafficSource_medium', 'totals_hits_sd_log')
 
 set.seed(1012356)
 
-formula.pd = formula(stri_join( 'is_revenue ~ ', stri_join(all_vars %!in_set% exclude_vars,collapse = ' + ')))
+#formula.pd = formula(stri_join( 'is_revenue ~ ', stri_join(all_vars %!in_set% exclude_vars,collapse = ' + ')))
+formula.pd = formula(stri_join( 'is_revenue ~ ', stri_join(all_vars, collapse = ' + ')))
 
 model_vars = all.vars(formula.pd) %!in_set% c('is_revenue')
 var.monotone = rep(0, length(model_vars))
@@ -444,15 +460,15 @@ var.monotone = rep(0, length(model_vars))
 #corrplot(corr_matrix, method="number", number.cex = 0.5)
 #corrplot(corr_matrix, method="circle", order="hclust")
 
-mon_inc_vars = c('totals_pageviews_sd_log','totals_pageviews_log','totals_pageviews_max_log','count_log','totals_hits_sd')
-mon_dec_vars = c('totals_hits_log')
+mon_inc_vars = c('totals_pageviews_log','totals_pageviews_max_log','count_log','totals_pageviews_sd_log')
+mon_dec_vars = c('totals_hits_log','totals_hits_sd_log','totals_hits_max_log')
 
 var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
 # day_diff_sd_log is quiestionable
 
-cv_folds = 0
+cv_folds = 4
 max_it = 2000
 
 model.pd  = gbm(formula.pd,
@@ -461,7 +477,7 @@ model.pd  = gbm(formula.pd,
                  cv.folds = cv_folds,
                  shrinkage = 0.01,
                  interaction.depth=4,
-                 train.fraction = 0.7,
+                 train.fraction = 1.0,
                  bag.fraction = 0.8,# 0.5 for small samples, 0.7 for large
                  n.cores = 4,
                  var.monotone = var.monotone,
@@ -471,16 +487,17 @@ model.pd  = gbm(formula.pd,
 #saveRDS(model.pd, file.path(working_folder,'gstore/model_pd.rds'))
 #model.pd = readRDS(file.path(working_folder,'gstore/model_pd.rds'))
 
-plot_gbmiterations(model.pd) #0.03762, AUC
+plot_gbmiterations(model.pd) #0.03795, AUC
 
 best_it.pd = gbm.perf(model.pd, plot.it = F) #ifelse(cv_folds==0, max_it, gbm.perf(model.pd, plot.it = F))
 
 pred.pd  = predict(model.pd, n.trees = best_it.pd, newdata = df_agg, type = 'response')
-plot_binmodel_roc(actual[tindex], pred.pd[tindex])
-plot_binmodel_cdf(actual[tindex], pred.pd[tindex])
-plot_binmodel_percentiles(actual[tindex], pred.pd[tindex], 10)
+plot_binmodel_roc(actual.pd[tindex], pred.pd[tindex])
+plot_binmodel_cdf(actual.pd[tindex], pred.pd[tindex])
+plot_binmodel_percentiles(actual.pd[tindex], pred.pd[tindex], 100)
+gbm.roc.area(actual.pd[tindex], pred.pd[tindex]) #0.9890211
 
-#summary(glm('actual ~ model ', data = data.frame(actual = actual[tindex], model = pred.gbm[tindex]), family = binomial(link = "logit"))) 
+#summary(glm('actual.pd ~ model ', data = data.frame(actual.pd = actual.pd[tindex], model = pred.gbm[tindex]), family = binomial(link = "logit"))) 
 
 #influence
 var_inf = summary(model.pd, n.trees = best_it.pd, plotit = F)
@@ -496,31 +513,44 @@ plots = plot_gbmpartial(model.pd, best_it.pd, imp_vars, output_type = 'response'
 marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
 
 plots = llply(all.vars(formula.pd), function(var_name) {
-  p = plot_profile(pred.pd[tindex], actual[tindex],df_agg[[var_name]][tindex], error_band = 'binom') +
+  p = plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg[[var_name]][tindex], error_band = 'binom') +
     ggtitle(var_name) +  theme(title =element_text(size=6))
   return( p )
 })
 marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
 
 #all vars
-plots = llply(names(df_agg) %!in_set% exclude_vars, function(var_name) {
-  p = plot_profile(pred.pd[tindex], actual[tindex],df_agg[[var_name]][tindex], error_band = 'binom') +
+plots = llply(names(df_agg) %!in_set% c('fullVisitorId', all.vars(formula.pd)), function(var_name) {
+  p = plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg[[var_name]][tindex], error_band = 'binom') +
     ggtitle(var_name) +  theme(title =element_text(size=6))
   return( p )
 })
-marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
+marrangeGrob(plots, nrow = 6, ncol = 6, top = NULL)
 
-plot_profile(pred.pd[tindex], actual[tindex],weekdays(df_agg$last_date[tindex]), error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],weekdays(df_agg$last_date[tindex]), error_band = 'binom')
 
-plot_profile(pred.pd[tindex], actual[tindex],df_agg$date_wday1[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_country_major[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_city_major[tindex], error_band = 'binom')
+
 
 ```
 
 
 ### Revenue Model,  rgs - revenue given sale 
+
+                                                     var   rel.inf
+count_log                                       count_log 27.147888
+totals_hits_sd                             totals_hits_sd 23.960792
+totals_hits_log                           totals_hits_log 19.412295
+device_operatingSystem_major device_operatingSystem_major 12.279053
+channelGrouping                           channelGrouping  8.425028
+date_wnd_pct                                 date_wnd_pct  4.426837
+device_browser_major                 device_browser_major  3.221777
+device_deviceCategory               device_deviceCategory  1.126329
+
 ```{r revenue_predict_model, eval = FALSE}
 
-actual = df_agg$revenue
+actual.rgs = df_agg$revenue
 
 tindex_rgs = tindex & df_agg$is_revenue
 
@@ -548,7 +578,7 @@ var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
 cv_folds = 10
-max_it = 2000
+max_it = 3000
 #0.49
 model.rgs  = gbm(formula.rgs,
                  distribution = "gaussian",
@@ -591,7 +621,7 @@ summary(lm('actual ~ model', data.frame(actual = df_agg$revenue[tindex_rgs], mod
 
 #all vars
 plots = llply(all.vars(formula.rgs), function(var_name) {
-  p = plot_profile(pred.rgs[tindex_rgs], actual[tindex_rgs], df_agg[[var_name]][tindex_rgs], error_band = 'normal') +
+  p = plot_profile(pred.rgs[tindex_rgs], actual.rgs [tindex_rgs], df_agg[[var_name]][tindex_rgs], error_band = 'normal') +
     ggtitle(var_name) +  theme(title =element_text(size=6))
   return( p )
 })
@@ -599,21 +629,25 @@ marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 
 #candidate vars
 plots = llply(names(df_agg) %!in_set% c('fullVisitorId'), function(var_name) {
-  p = plot_profile(pred.rgs[tindex_rgs], actual[tindex_rgs],df_agg[[var_name]][tindex_rgs], error_band = 'normal') +
+  p = plot_profile(pred.rgs[tindex_rgs], actual.rgs [tindex_rgs],df_agg[[var_name]][tindex_rgs], error_band = 'normal') +
     ggtitle(var_name) +  theme(title =element_text(size=6))
   return( p )
 })
 marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
 
 
-plot_profile(pred.rgs[tindex_rgs], actual[tindex_rgs],df_agg$device_browser_major[tindex_rgs], error_band = 'normal')
-plot_profile(pred.rgs[tindex_rgs], actual[tindex_rgs],df_agg$device_operatingSystem_major[tindex_rgs], error_band = 'normal')
+plot_profile(pred.rgs[tindex_rgs], actual.rgs [tindex_rgs],df_agg$device_browser_major[tindex_rgs], error_band = 'normal')
+plot_profile(pred.rgs[tindex_rgs], actual.rgs [tindex_rgs],df_agg$device_operatingSystem_major[tindex_rgs], error_band = 'normal')
+
+#revenue
+plot_profile(pred.rev[tindex], df_agg$revenue[tindex],df_agg$device_operatingSystem_major[tindex], error_band = 'normal')
 
 table(df_agg[is_revenue == T, .(is_train, first_month)])
 ```
 
 ## Save Results
-1.4476
+1.4476 - best
+1.4709 - latest
 
 ```{r save_results}
 

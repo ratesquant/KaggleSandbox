@@ -477,7 +477,7 @@ exclude_vars = c('fullVisitorId','is_train','first_date','last_date','revenue','
                                      'date_wday3', 'date_wday2','date_wday1','trafficSource_medium','geo_networkDomain_major','geo_country_major','geo_city_major')
 
 #all_vars = names(df_agg) %!in_set% exclude_vars
-all_vars = c('totals_pageviews_sd_log','totals_pageviews_log','count_log','totals_pageviews_max_log','device_deviceCategory','device_browser_major','geo_country_major','geo_city_major','date_wday1','trafficSource_medium', 'totals_hits_sd_log','day_diff_sd_log','geo_city_set1','geo_networkDomain_is_edu', 'device_operatingSystem_n','first_month')
+all_vars = c('totals_pageviews_sd_log','totals_pageviews_log','count_log','totals_pageviews_max_log','device_deviceCategory','device_browser_major','geo_country_major','geo_city_major','date_wday1','trafficSource_medium', 'totals_hits_sd_log','day_diff_sd_log','geo_city_set1','geo_networkDomain_level2_major', 'device_operatingSystem_n','first_month','mobile_n')
 
 set.seed(1012356)
 
@@ -573,6 +573,8 @@ plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_networkDomain_major[t
 plot_profile(pred.pd[tindex], actual.pd[tindex],factor(df_agg$geo_networkDomain_levels[tindex]), error_band = 'binom')
 plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_networkDomain_level2_major[tindex], error_band = 'binom')
 plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_networkDomain_level3_major[tindex], error_band = 'binom')
+
+plot_profile(pred.pd[tindex], actual.pd[tindex],factor(df_agg$mobile_n[tindex]), error_band = 'binom')
 
 
 #temp = df_agg[tindex, .(geo_networkDomain)]
@@ -704,7 +706,7 @@ table(df_agg[is_revenue == T, .(is_train, first_month)])
 
 ## Save Results
 1.4476 - best
-1.4709 - latest
+1.4739 - latest
 
 ```{r save_results}
 

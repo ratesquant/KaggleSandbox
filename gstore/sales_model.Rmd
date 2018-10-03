@@ -14,6 +14,7 @@ library(gbm)
 library(data.table)
 library(plyr)
 library(stringi)
+library(stringr)
 library(ggplot2)
 library(gridExtra)
 library(zip)
@@ -24,6 +25,7 @@ library(forcats)
 library(e1071)
 library(jsonlite)
 library(lubridate)
+
 #library(rjson)
 #library(caret)
 
@@ -194,6 +196,19 @@ if(file.exists(df_agg_filename)) {
                   date_sat_pct = sum(date_wday == 'Saturday', na.rm = T)/.N,
                   date_sun_pct = sum(date_wday == 'Sunday', na.rm = T)/.N,
                   
+                  date_m1_pct = sum(date_month == 1, na.rm = T)/.N,
+                  date_m2_pct = sum(date_month == 2, na.rm = T)/.N,
+                  date_m3_pct = sum(date_month == 3, na.rm = T)/.N,
+                  date_m4_pct = sum(date_month == 4, na.rm = T)/.N,
+                  date_m5_pct = sum(date_month == 5, na.rm = T)/.N,
+                  date_m6_pct = sum(date_month == 6, na.rm = T)/.N,
+                  date_m7_pct = sum(date_month == 7, na.rm = T)/.N,
+                  date_m8_pct = sum(date_month == 8, na.rm = T)/.N,
+                  date_m9_pct = sum(date_month == 9, na.rm = T)/.N,
+                  date_m10_pct = sum(date_month == 10, na.rm = T)/.N,
+                  date_m11_pct = sum(date_month == 11, na.rm = T)/.N,
+                  date_m12_pct = sum(date_month == 12, na.rm = T)/.N,
+                  
                   device_operatingSystem  = nth_most_freq(device_operatingSystem),
                   device_operatingSystem_n  = count_unique(device_operatingSystem),
                   
@@ -273,6 +288,13 @@ combine_levels <- function(x, n = 3000){
   return( fct_other(x,keep = keep_levels) )
 }
 
+lo_pd_names = c('Lake Oswego', 'Salem','Fremont','Quebec City','Milpitas')
+hi_pd_names = c('Maracaibo','Ann Arbor','San Bruno','Kirkland','Boulder','Irvine','Cambridge','Portland','Nashville')
+
+df_agg[, geo_city_set1:=fct_collapse(geo_city,  lo_pd = lo_pd_names, 
+                                                hi_pd = hi_pd_names,
+                                                other = levels(geo_city) %!in_set% c(lo_pd_names, hi_pd_names) )]
+
 df_agg[, geo_city_major:=combine_levels(geo_city)]
 df_agg[, geo_country_major:=combine_levels(geo_country)]
 df_agg[, geo_region_major:=combine_levels(geo_region)]
@@ -280,6 +302,14 @@ df_agg[, geo_networkDomain_major:=combine_levels(geo_networkDomain)]
 df_agg[, trafficSource_source_major:=combine_levels(trafficSource_source)]
 df_agg[, device_browser_major:=combine_levels(device_browser)]
 df_agg[, device_operatingSystem_major:=combine_levels(device_operatingSystem)]
+
+df_agg[, c("geo_networkDomain_level1", "geo_networkDomain_level2", "geo_networkDomain_level3") := tstrsplit(as.character(geo_networkDomain), ".", fixed=TRUE)]
+
+df_agg[, geo_networkDomain_levels:= str_count(as.character(geo_networkDomain), fixed("."))]
+df_agg[, geo_networkDomain_level1_major:=combine_levels(geo_networkDomain_level1)]
+df_agg[, geo_networkDomain_level2_major:=combine_levels(geo_networkDomain_level2)]
+df_agg[, geo_networkDomain_level3_major:=combine_levels(geo_networkDomain_level3)]
+df_agg[, geo_networkDomain_is_edu:=as.numeric(geo_networkDomain_level2 == 'edu')]
 
 
 table(df_agg[,.(geo_city_major)])
@@ -419,17 +449,22 @@ first predict that transaction probability is non-zero, then predict value
 ### Logistic PD model 
 
 
-                                              var    rel.inf
-totals_pageviews_sd_log   totals_pageviews_sd_log 34.1640381
-totals_pageviews_log         totals_pageviews_log 27.7028449
-geo_country_major               geo_country_major 14.3663681
-count_log                               count_log 11.2361062
-geo_city_major                     geo_city_major  3.9702426
-totals_hits_sd_log             totals_hits_sd_log  2.9793656
-device_deviceCategory       device_deviceCategory  2.3449133
-trafficSource_medium         trafficSource_medium  2.1525235
-totals_pageviews_max_log totals_pageviews_max_log  0.8653084
-date_wday1                             date_wday1  0.1780877
+
+                                                          var     rel.inf
+totals_pageviews_sd_log               totals_pageviews_sd_log 33.55155899
+totals_pageviews_log                     totals_pageviews_log 27.16983868
+geo_country_major                           geo_country_major 13.79550794
+day_diff_sd_log                               day_diff_sd_log  6.47699450
+count_log                                           count_log  4.54625106
+geo_city_major                                 geo_city_major  4.44316311
+totals_hits_sd_log                         totals_hits_sd_log  3.34331848
+device_deviceCategory                   device_deviceCategory  2.23236681
+trafficSource_medium                     trafficSource_medium  1.90490694
+totals_pageviews_max_log             totals_pageviews_max_log  0.95216231
+geo_city_set1                                   geo_city_set1  0.63299029
+geo_networkDomain_level2_major geo_networkDomain_level2_major  0.60214298
+date_wday1                                         date_wday1  0.30179808
+device_browser_major                     device_browser_major  0.04699984
 ```{r pd_predict_model}
 actual.pd = df_agg$is_revenue
 
@@ -442,12 +477,12 @@ exclude_vars = c('fullVisitorId','is_train','first_date','last_date','revenue','
                                      'date_wday3', 'date_wday2','date_wday1','trafficSource_medium','geo_networkDomain_major','geo_country_major','geo_city_major')
 
 #all_vars = names(df_agg) %!in_set% exclude_vars
-all_vars = c('totals_pageviews_sd_log','totals_pageviews_log','count_log','totals_pageviews_max_log','device_deviceCategory','device_browser_major','geo_country_major','geo_city_major','date_wday1','trafficSource_medium', 'totals_hits_sd_log')
+all_vars = c('totals_pageviews_sd_log','totals_pageviews_log','count_log','totals_pageviews_max_log','device_deviceCategory','device_browser_major','geo_country_major','geo_city_major','date_wday1','trafficSource_medium', 'totals_hits_sd_log','day_diff_sd_log','geo_city_set1','geo_networkDomain_is_edu', 'device_operatingSystem_n','first_month')
 
 set.seed(1012356)
 
 #formula.pd = formula(stri_join( 'is_revenue ~ ', stri_join(all_vars %!in_set% exclude_vars,collapse = ' + ')))
-formula.pd = formula(stri_join( 'is_revenue ~ ', stri_join(all_vars, collapse = ' + ')))
+formula.pd = formula(stri_join( 'is_revenue ~ ', stri_join(unique(all_vars), collapse = ' + ')))
 
 model_vars = all.vars(formula.pd) %!in_set% c('is_revenue')
 var.monotone = rep(0, length(model_vars))
@@ -460,7 +495,7 @@ var.monotone = rep(0, length(model_vars))
 #corrplot(corr_matrix, method="number", number.cex = 0.5)
 #corrplot(corr_matrix, method="circle", order="hclust")
 
-mon_inc_vars = c('totals_pageviews_log','totals_pageviews_max_log','count_log','totals_pageviews_sd_log')
+mon_inc_vars = c('totals_pageviews_log','totals_pageviews_max_log','count_log','totals_pageviews_sd_log','day_diff_sd_log')
 mon_dec_vars = c('totals_hits_log','totals_hits_sd_log','totals_hits_max_log')
 
 var.monotone[model_vars %in% mon_inc_vars]  =  1
@@ -495,7 +530,7 @@ pred.pd  = predict(model.pd, n.trees = best_it.pd, newdata = df_agg, type = 'res
 plot_binmodel_roc(actual.pd[tindex], pred.pd[tindex])
 plot_binmodel_cdf(actual.pd[tindex], pred.pd[tindex])
 plot_binmodel_percentiles(actual.pd[tindex], pred.pd[tindex], 100)
-gbm.roc.area(actual.pd[tindex], pred.pd[tindex]) #0.9890211
+gbm.roc.area(actual.pd[tindex], pred.pd[tindex]) #0.9893948
 
 #summary(glm('actual.pd ~ model ', data = data.frame(actual.pd = actual.pd[tindex], model = pred.gbm[tindex]), family = binomial(link = "logit"))) 
 
@@ -506,7 +541,7 @@ var_inf = subset(var_inf, rel.inf>0.1)
 plot_gbminfluence(var_inf)
 print(var_inf)
 
-imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.5])
+imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.1])
 #df_agg[1:100,..imp_vars]
 
 plots = plot_gbmpartial(model.pd, best_it.pd, imp_vars, output_type = 'response')
@@ -527,11 +562,33 @@ plots = llply(names(df_agg) %!in_set% c('fullVisitorId', all.vars(formula.pd)), 
 })
 marrangeGrob(plots, nrow = 6, ncol = 6, top = NULL)
 
-plot_profile(pred.pd[tindex], actual.pd[tindex],weekdays(df_agg$last_date[tindex]), error_band = 'binom')
-
 plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_country_major[tindex], error_band = 'binom')
 plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_city_major[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_city[tindex], error_band = 'binom')
 
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$first_month[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$last_month[tindex], error_band = 'binom')
+
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_networkDomain_major[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],factor(df_agg$geo_networkDomain_levels[tindex]), error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_networkDomain_level2_major[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_networkDomain_level3_major[tindex], error_band = 'binom')
+
+
+#temp = df_agg[tindex, .(geo_networkDomain)]
+#temp[, actual:=actual.pd[tindex]]
+#temp[, model:=pred.pd[tindex]]
+#temp[,.(.N, mean(actual - model)), by =.(geo_networkDomain)]
+tstrsplit(as.character(b$geo_networkDomain[1:2]), '.', fixed = T)
+b[, c("geo_networkDomain_level1", "geo_networkDomain_level2") := tstrsplit(as.character(geo_networkDomain), ".", fixed=TRUE)]
+
+plots = llply(names(df_agg)[grep('day', names(df_agg))], function(var_name) {
+  p = plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg[[var_name]][tindex], error_band = 'binom', bucket_count = 20) +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+#cor(df_agg[tindex, .(day_diff_min, day_diff_max, day_diff_avg, day_diff_sd,day_diff_sd_log)], use = 'pairwise.complete.obs')
 
 ```
 

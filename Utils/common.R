@@ -296,9 +296,14 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
     breaks = quantile(profile, seq(0, bucket_count, 1)/bucket_count, na.rm = TRUE)
     breaks = unique(breaks)
     if(length(breaks)<=2) {
-      breaks = seq(min(profile), max(profile), length.out = bucket_count)
+      breaks = unique(seq(min(profile, na.rm = T), max(profile, na.rm = T), length.out = bucket_count))
     }
-    buckets = cut(profile, breaks, ordered_result = TRUE, include.lowest = TRUE)
+    if(length(breaks)<=2) {
+      factor_plot = TRUE
+      buckets = factor(profile)
+    }else{
+      buckets = cut(profile, breaks, ordered_result = TRUE, include.lowest = TRUE)
+    }
   }
   
   index = complete.cases(act, mod)
@@ -372,14 +377,20 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
         theme(legend.position = 'none', axis.title.x = element_blank()) + 
         geom_ribbon(aes(ymax = actual_max, ymin = actual_min), fill = 'blue', alpha = 0.05) +
         geom_errorbar(aes(ymax = actual_max_break, ymin = actual_min_break), width = 0.0, color = 'blue', alpha = 0.3) +
-        coord_cartesian(ylim = c(y_min, y_max)) 
+        coord_cartesian(ylim = c(y_min, y_max))
     }
     
     res_conf_bk = subset(res,confidence_break==1)
     if(nrow(res_conf_bk)>0)
     {
-      plot_result = plot_result +      
-        geom_point(data = res_conf_bk, aes(profile, model), color = 'red')
+      if(factor_plot) {
+        plot_result = plot_result +      
+          geom_point(data = res_conf_bk, aes(buckets, model), color = 'red')
+        
+      }else{
+        plot_result = plot_result +      
+          geom_point(data = res_conf_bk, aes(profile, model), color = 'red')
+      }
     }
     
   }

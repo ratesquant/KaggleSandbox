@@ -515,16 +515,50 @@ geo_city_set1                                   geo_city_set1  0.63299029
 geo_networkDomain_level2_major geo_networkDomain_level2_major  0.60214298
 date_wday1                                         date_wday1  0.30179808
 device_browser_major                     device_browser_major  0.04699984
+
+
+totals_pageviews_max                     totals_pageviews_max 55.3357005
+geo_country_major                           geo_country_major 13.3955991
+geo_city_major                                 geo_city_major  3.7948043
+device_operatingSystem                 device_operatingSystem  3.0960613
+trafficSource_source_major         trafficSource_source_major  2.9998297
+totals_hits_sd                                 totals_hits_sd  2.3500221
+geo_subContinent                             geo_subContinent  2.1978275
+totals_pageviews                             totals_pageviews  2.1848407
+geo_region_major                             geo_region_major  1.4177066
+totals_pageviews_sd                       totals_pageviews_sd  1.3202036
+day_diff_sd                                       day_diff_sd  1.1492822
+geo_networkDomain_major               geo_networkDomain_major  0.9458780
+totals_hits                                       totals_hits  0.9354676
+totals_hits_max                               totals_hits_max  0.8736529
+count_log                                           count_log  0.7652445
+first_month                                       first_month  0.6108520
+device_operatingSystem_major     device_operatingSystem_major  0.4045553
+date_wday3                                         date_wday3  0.3818714
+geo_networkDomain_level1_major geo_networkDomain_level1_major  0.3661544
+date_wday2                                         date_wday2  0.3570869
+totals_hits_max_log                       totals_hits_max_log  0.3430342
+geo_networkDomain_level2_major geo_networkDomain_level2_major  0.3075023
+totals_bounces                                 totals_bounces  0.3027080
+date_m9_pct                                       date_m9_pct  0.3010800
+last_month                                         last_month  0.2894253
+date_m5_pct                                       date_m5_pct  0.2721678
+day_diff_avg                                     day_diff_avg  0.2273954
+totals_pageviews_max_log             totals_pageviews_max_log  0.2207763
+day_diff_min                                     day_diff_min  0.2205164
+date_wday1                                         date_wday1  0.2193923
+date_m12_pct                                     date_m12_pct  0.1697426
+date_m8_pct                                       date_m8_pct  0.1517010
+channelGrouping_sec                       channelGrouping_sec  0.1474055
+day_diff_max                                     day_diff_max  0.1423824
+
 ```{r pd_predict_model}
 actual.pd = df_agg$is_revenue
 
 #only keep several car_11 levels
-exclude_vars = c('fullVisitorId','is_train','first_date','last_date','revenue','is_revenue', #id and outcome var
-                                     'geo_city','geo_country','geo_region','geo_region_major', 'geo_subContinent','geo_region_major', #too many levels
-                                     'geo_networkDomain','trafficSource_source','device_browser','device_operatingSystem', #too many levels
-                                     'total_days','last_iso_date','first_iso_date', 'last_month', 'first_month',
-                                     'totals_pageviews','totals_pageviews_max', 'totals_pageviews_sd', 'totals_hits', 'totals_hits_max', 'N','day_diff_sd',
-                                     'date_wday3', 'date_wday2','date_wday1','trafficSource_medium','geo_networkDomain_major','geo_country_major','geo_city_major')
+exclude_vars = c('fullVisitorId','is_train','first_date','last_date','last_iso_date','first_iso_date','revenue', 'is_revenue','device_deviceCategory_sec', 'N') #id and outcome var #replaced with logs
+
+too_many_levels = names(which(sapply(df_agg, function(x) length(levels(x))) >= 100)) #technically max is 1024 
 
 #all_vars = names(df_agg) %!in_set% exclude_vars
 all_vars = c('totals_pageviews_sd_log','totals_pageviews_log','count_log','totals_pageviews_max_log','device_deviceCategory','device_browser_major','geo_country_major','geo_city_major',
@@ -532,6 +566,9 @@ all_vars = c('totals_pageviews_sd_log','totals_pageviews_log','count_log','total
              'date_m1_pct','date_m2_pct','date_m3_pct','date_m4_pct','date_m5_pct','date_m6_pct','date_m7_pct', 'date_m8_pct','date_m9_pct', 'date_m10_pct','date_m11_pct', 'date_m12_pct',
              'geo_subContinent_is_caribbean','geo_networkDomain_is_cantv', 'tablet_n','desktop_n','totals_bounces_pos','geo_country_n','geo_country_is_puertorico',
              'channelGrouping_sec','geo_continent_sec','geo_networkDomain_level3_major')
+
+all_vars = names(df_agg) %!in_set% c(exclude_vars, too_many_levels)
+
 
 set.seed(1012356)
 
@@ -557,7 +594,7 @@ mon_dec_vars = c('totals_hits_log','totals_hits_sd_log','totals_hits_max_log')
 
 # day_diff_sd_log is quiestionable
 
-cv_folds = 0
+cv_folds = 4
 max_it = 3000
 
 model.pd  = gbm(formula.pd,
@@ -565,15 +602,15 @@ model.pd  = gbm(formula.pd,
                  n.trees = max_it,
                  cv.folds = cv_folds,
                  shrinkage = 0.01,
-                 interaction.depth=5,
-                 train.fraction = 0.6,
+                 interaction.depth=6,
+                 train.fraction = 1.0,
                  bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
-                 n.cores = 4,
+                 n.cores = 2,
                  var.monotone = var.monotone,
                  data = df_agg[tindex , all.vars(formula.pd), with = F],
                  verbose = FALSE)
 
-#saveRDS(model.pd, file.path(working_folder,'gstore/model_pd.rds'))
+saveRDS(model.pd, file.path(working_folder,'gstore/model_pd.rds'))
 #model.pd = readRDS(file.path(working_folder,'gstore/model_pd.rds'))
 
 plot_gbmiterations(model.pd) #0.03795, AUC
@@ -584,7 +621,7 @@ pred.pd  = predict(model.pd, n.trees = best_it.pd, newdata = df_agg, type = 'res
 plot_binmodel_roc(actual.pd[tindex], pred.pd[tindex])
 plot_binmodel_cdf(actual.pd[tindex], pred.pd[tindex])
 plot_binmodel_percentiles(actual.pd[tindex], pred.pd[tindex], 100)
-gbm.roc.area(actual.pd[tindex], pred.pd[tindex]) #0.9898181
+gbm.roc.area(actual.pd[tindex], pred.pd[tindex]) #0.9912461
 
 #summary(glm('actual.pd ~ model ', data = data.frame(actual.pd = actual.pd[tindex], model = pred.gbm[tindex]), family = binomial(link = "logit"))) 
 
@@ -675,29 +712,36 @@ marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 cv-10: 1.10421
 
                                                                 var    rel.inf
-totals_hits_log                                     totals_hits_log 28.3940659
-count_log                                                 count_log 26.6052725
-device_operatingSystem_main             device_operatingSystem_main 10.0952575
-channelGrouping_main                           channelGrouping_main  7.8094028
-totals_hits_sd                                       totals_hits_sd  7.3980833
-geo_city_set1                                         geo_city_set1  4.7331874
-date_wnd_pct                                           date_wnd_pct  4.6577256
-device_browser_main                             device_browser_main  2.6090695
-totals_bounces                                       totals_bounces  1.8896194
-device_deviceCategory                         device_deviceCategory  1.8010015
-geo_networkDomain_is_edu                   geo_networkDomain_is_edu  1.2172306
-date_m3_pct_pos                                     date_m3_pct_pos  1.1931869
-geo_networkDomain_is_cantv               geo_networkDomain_is_cantv  0.7633374
-date_m4_pct_pos                                     date_m4_pct_pos  0.4821137
-geo_subContinent_is_SoutheastAsia geo_subContinent_is_SoutheastAsia  0.1874983
-geo_subContinent_is_EasternAsia     geo_subContinent_is_EasternAsia  0.1639476
+totals_hits_max                                     totals_hits_max 25.197897401
+N                                                                 N  8.549090452
+device_operatingSystem                       device_operatingSystem  7.244946000
+trafficSource_source_top50               trafficSource_source_top50  4.375488531
+day_diff_sd                                             day_diff_sd  3.962424938
+geo_city_major                                       geo_city_major  3.887315713
+totals_hits_sd                                       totals_hits_sd  3.760915809
+geo_city_top50                                       geo_city_top50  3.512627095
+totals_hits                                             totals_hits  2.932657660
+date_wnd_pct                                           date_wnd_pct  2.695979138
+geo_networkDomain_top50                     geo_networkDomain_top50  2.263658274
+geo_region_top50                                   geo_region_top50  1.786324721
+totals_pageviews                                   totals_pageviews  1.723654635
+date_wday2                                               date_wday2  1.637725823
+geo_country_major                                 geo_country_major  1.602141039
+totals_pageviews_max_log                   totals_pageviews_max_log  1.580600510
+device_browser_major                           device_browser_major  1.480776623
+totals_pageviews_sd                             totals_pageviews_sd  1.335286969
+day_diff_max                                           day_diff_max  1.297624869
+total_days                                               total_days  1.287413405
+channelGrouping                                     channelGrouping  1.253171645
+date_wday3                                               date_wday3  1.187169509
+geo_networkDomain_major                     geo_networkDomain_major  1.136758756
 ```{r revenue_predict_model, eval = FALSE}
 
 actual.rgs = df_agg$revenue
 
 tindex_rgs = tindex & df_agg$is_revenue
 
-exclude_vars = c('fullVisitorId','is_train','first_date','last_date','last_iso_date','first_iso_date','revenue', 'is_revenue','device_deviceCategory_sec') #id and outcome var #replaced with logs
+exclude_vars = c('fullVisitorId','is_train','first_date','last_date','last_iso_date','first_iso_date','revenue', 'is_revenue','device_deviceCategory_sec', 'N') #id and outcome var #replaced with logs
 
 too_many_levels = names(which(sapply(df_agg, function(x) length(levels(x))) >= 100)) #technically max is 1024 
 
@@ -739,7 +783,7 @@ model.rgs  = gbm(formula.rgs,
 #saveRDS(model.rgs, file.path(working_folder,'gstore/model_rgs.rds'))
 #model.rgs = readRDS(file.path(working_folder,'gstore/model_rgs.rds'))
 
-plot_gbmiterations(model.rgs) # 1.10229
+plot_gbmiterations(model.rgs) # 1.09765
 
 best_it.rgs = gbm.perf(model.rgs, plot.it = F) #ifelse(cv_folds==0, max_it, gbm.perf(model.rgs, plot.it = F))
 
@@ -811,7 +855,7 @@ table(df_agg[is_revenue == T, .(is_train, first_month)])
 
 ## Save Results
 1.4476 - best
-1.4771 - latest
+1.4483 - latest
 
 ```{r save_results}
 

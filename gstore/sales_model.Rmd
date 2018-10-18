@@ -586,16 +586,16 @@ var.monotone = rep(0, length(model_vars))
 #corrplot(corr_matrix, method="number", number.cex = 0.5)
 #corrplot(corr_matrix, method="circle", order="hclust")
 
-mon_inc_vars = c('totals_pageviews_log','count_log','totals_pageviews_sd_log','totals_pageviews_max_log','day_diff_sd_log') #totals_pageviews_max_log
-mon_dec_vars = c('totals_hits_log','totals_hits_sd_log','totals_hits_max_log')
+mon_inc_vars = c('totals_pageviews_max','totals_pageviews') #totals_pageviews_max_log
+mon_dec_vars = c()
 
 #var.monotone[model_vars %in% mon_inc_vars]  =  1
 #var.monotone[model_vars %in% mon_dec_vars]  = -1
 
 # day_diff_sd_log is quiestionable
 
-cv_folds = 4
-max_it = 3000
+cv_folds = 0
+max_it = 4000
 
 model.pd  = gbm(formula.pd,
                  distribution = "bernoulli",
@@ -603,14 +603,14 @@ model.pd  = gbm(formula.pd,
                  cv.folds = cv_folds,
                  shrinkage = 0.01,
                  interaction.depth=6,
-                 train.fraction = 1.0,
+                 train.fraction = 0.7,
                  bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
                  n.cores = 2,
                  var.monotone = var.monotone,
                  data = df_agg[tindex , all.vars(formula.pd), with = F],
                  verbose = FALSE)
 
-saveRDS(model.pd, file.path(working_folder,'gstore/model_pd.rds'))
+#saveRDS(model.pd, file.path(working_folder,'gstore/model_pd.rds'))
 #model.pd = readRDS(file.path(working_folder,'gstore/model_pd.rds'))
 
 plot_gbmiterations(model.pd) #0.03795, AUC
@@ -621,7 +621,7 @@ pred.pd  = predict(model.pd, n.trees = best_it.pd, newdata = df_agg, type = 'res
 plot_binmodel_roc(actual.pd[tindex], pred.pd[tindex])
 plot_binmodel_cdf(actual.pd[tindex], pred.pd[tindex])
 plot_binmodel_percentiles(actual.pd[tindex], pred.pd[tindex], 100)
-gbm.roc.area(actual.pd[tindex], pred.pd[tindex]) #0.9912461
+gbm.roc.area(actual.pd[tindex], pred.pd[tindex]) #0.9910346
 
 #summary(glm('actual.pd ~ model ', data = data.frame(actual.pd = actual.pd[tindex], model = pred.gbm[tindex]), family = binomial(link = "logit"))) 
 
@@ -758,11 +758,11 @@ formula.rgs = formula(stri_join( 'revenue ~ ', stri_join(unique(rgs_vars),collap
 model_vars = all.vars(formula.rgs) %!in_set% c('revenue')
 var.monotone = rep(0, length(model_vars))
 
-mon_inc_vars = c('count_log','totals_hits_log','totals_bounces')
-mon_dec_vars = c('date_wnd_pct','totals_hits_sd')
+mon_inc_vars = c('totals_hits_max','count_log','totals_hits')
+mon_dec_vars = c()
 
-#var.monotone[model_vars %in% mon_inc_vars]  =  1
-#var.monotone[model_vars %in% mon_dec_vars]  = -1
+var.monotone[model_vars %in% mon_inc_vars]  =  1
+var.monotone[model_vars %in% mon_dec_vars]  = -1
 
 cv_folds = 10
 max_it = 2000
@@ -810,8 +810,8 @@ marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 
 pred.rgs = predict(model.rgs, n.trees = best_it.rgs, newdata = df_agg)
 pred.rev = pred.rgs * pred.pd
-summary(lm('actual ~ model', data.frame(actual = df_agg$revenue[tindex],     model = pred.rev[tindex]))) #0.4343
-summary(lm('actual ~ model', data.frame(actual = df_agg$revenue[tindex_rgs], model = pred.rgs[tindex_rgs]))) #0.316
+summary(lm('actual ~ model', data.frame(actual = df_agg$revenue[tindex],     model = pred.rev[tindex]))) #0.4758
+summary(lm('actual ~ model', data.frame(actual = df_agg$revenue[tindex_rgs], model = pred.rgs[tindex_rgs]))) #0.4161
 ggplot(data.frame(actual = df_agg$revenue[tindex_rgs], model = pred.rgs[tindex_rgs]), aes(model, actual)) + geom_point() + geom_abline(slope = 1, color = 'red')
 
 #all vars
@@ -855,7 +855,7 @@ table(df_agg[is_revenue == T, .(is_train, first_month)])
 
 ## Save Results
 1.4476 - best
-1.4483 - latest
+1.4488 - latest
 
 ```{r save_results}
 

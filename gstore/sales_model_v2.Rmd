@@ -148,7 +148,7 @@ df[is.na(revenue), revenue := 0]
 df[, revenue_log := log(1+revenue)]
 df[, is_revenue := as.numeric(revenue>0)]
 
-df[,trafficSource_isTrueDirect := as.numeric(is.na(trafficSource_isTrueDirect))]
+#df[,trafficSource_isTrueDirect := as.numeric(is.na(trafficSource_isTrueDirect))]
 
 df[, c("geo_networkDomain_level1", "geo_networkDomain_level2", "geo_networkDomain_level3") := tstrsplit(as.character(geo_networkDomain), ".", fixed=TRUE)]
 df[, geo_networkDomain_levels:= str_count(as.character(geo_networkDomain), fixed("."))]
@@ -179,7 +179,7 @@ na_columns = names(which(lapply(df, function(x) length(x) == sum(is.na(x))  ) ==
 df[, (na_columns):=NULL]
 
 
-#add historical variables (probably the most important)
+#add historical variables
 
 df[order(visitStartTime),prev_iso_date:=shift(iso_date), by = .(fullVisitorId)]
 df[order(visitStartTime),prev_visitId:=shift(visitId), by = .(fullVisitorId)]
@@ -191,9 +191,16 @@ df[order(visitNumber),max_pageviews:=cummax(totals_pageviews), by = .(fullVisito
 df[order(visitNumber),cum_sales:=cumsum(is_revenue)-is_revenue, by = .(fullVisitorId)]
 df[,avg_pageviews:=cum_pageviews/visitNumber]
 
+df[,cum_pageviews_log:=log(1+cum_pageviews)]
+df[,cum_revenue_log:=log(1+cum_revenue)]
+df[,totals_pageviews_log:=log(1+totals_pageviews)]
+df[,totals_hits_log:=log(1+totals_hits)]
+
 #df[order(visitNumber),visits_since_last_sale:=cumsum_resets(1-is_revenue, is_revenue), by = .(fullVisitorId)]
 
 df[fullVisitorId == '9771437221362506189',.(iso_date, prev_iso_date, visitId, prev_visitId, visitNumber, visitStartTime, totals_hits, totals_pageviews, revenue, cum_revenue, cum_sales, avg_pageviews, days_since_last_visit)][order(visitNumber),]
+
+df[,is_train :=as.logical(is_train)]
 
 table(df$is_revenue)
 table(df$geo_country)
@@ -208,14 +215,37 @@ table(df$geo_country)
 ```
 
 ## Logistic PD model 
+                                                              var    rel.inf
+totals_pageviews_log                         totals_pageviews_log 55.6983213
+geo_country                                           geo_country 13.4292868
+cum_pageviews_log                               cum_pageviews_log  7.0716408
+geo_city_major                                     geo_city_major  5.2969176
+cum_revenue_log                                   cum_revenue_log  2.6811241
+totals_hits                                           totals_hits  2.5472390
+trafficSource_source_major             trafficSource_source_major  2.4035361
+days_since_last_visit                       days_since_last_visit  2.2459888
+device_operatingSystem                     device_operatingSystem  1.8421394
+date_month                                             date_month  1.7388381
+trafficSource_referralPath_major trafficSource_referralPath_major  1.1839111
+geo_networkDomain_level1_major     geo_networkDomain_level1_major  1.0373205
+geo_networkDomain_major                   geo_networkDomain_major  0.7162055
+max_pageviews                                       max_pageviews  0.5029983
+cum_sales                                               cum_sales  0.4422662
+visitNumber                                           visitNumber  0.3746568
+geo_metro                                               geo_metro  0.1996965
+geo_region_major                                 geo_region_major  0.1415445
+device_deviceCategory                       device_deviceCategory  0.1335105
+avg_pageviews                                       avg_pageviews  0.1174594
 ```{r pd_predict_model}
-tindex = df$is_train == 1
+tindex = df$is_train
 
 obj_var = 'is_revenue'
 actual.pd = df[[obj_var]]
 
 #only keep several car_11 levels
-exclude_vars = c(id_columns, columns_with_many_levels,'prev_visitId','visitStartTime','prev_iso_date','is_train','iso_date', 'date','totals_transactionRevenue','revenue','revenue_log','prev_visit_number', obj_var) #id and outcome var #replaced with logs
+exclude_vars = c(id_columns, columns_with_many_levels,'prev_visitId','visitStartTime','prev_iso_date','is_train','iso_date', 'date',
+                 'totals_transactionRevenue','revenue','revenue_log','prev_visit_number', obj_var,#id and outcome var 
+                 'cum_pageviews','totals_pageviews','cum_revenue','totals_hits') #replaced with logs
 
 all_vars = names(df) %!in_set% c(exclude_vars)
 
@@ -234,14 +264,14 @@ var.monotone = rep(0, length(model_vars))
 #corrplot(corr_matrix, method="number", number.cex = 0.5)
 #corrplot(corr_matrix, method="circle", order="hclust")
 
-mon_inc_vars = c() #totals_pageviews_max_log
+mon_inc_vars = c('totals_pageviews_log')
 mon_dec_vars = c()
 
 var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
 cv_folds = 0
-max_it = 100
+max_it = 3000
 
 model.pd  = gbm(formula.pd,
                  distribution = "bernoulli",
@@ -256,7 +286,7 @@ model.pd  = gbm(formula.pd,
                  data = df[tindex , all.vars(formula.pd), with = F],
                  verbose = TRUE)
 
-#saveRDS(model.pd, file.path(working_folder,'gstore/model_pd.rds'))
+#saveRDS(model.pd, file.path(working_folder,'gstore/model_pd.v2.rds'))
 #model.pd = readRDS(file.path(working_folder,'gstore/model_pd.rds'))
 
 plot_gbmiterations(model.pd) #0.03795, AUC
@@ -285,7 +315,7 @@ plots = plot_gbmpartial(model.pd, best_it.pd, imp_vars, output_type = 'response'
 marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
 
 plots = llply(all.vars(formula.pd), function(var_name) {
-  p = plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg[[var_name]][tindex], error_band = 'binom') +
+  p = plot_profile(pred.pd[tindex], actual.pd[tindex],df[[var_name]][tindex], error_band = 'binom') +
     ggtitle(var_name) +  theme(title =element_text(size=6))
   return( p )
 })
@@ -300,55 +330,12 @@ plots = llply(names(df_agg) %!in_set% c('fullVisitorId', all.vars(formula.pd)), 
 })
 marrangeGrob(plots, nrow = 6, ncol = 6, top = NULL)
 
-plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$totals_bounces[tindex], error_band = 'binom')
-plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$date_m8_pct[tindex], error_band = 'binom')
-plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$date_m4_pct_pos[tindex], error_band = 'binom')
-plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$date_m5_pct_pos[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df$totals_bounces[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df$date_m8_pct[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df$date_m4_pct_pos[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df$date_m5_pct_pos[tindex], error_band = 'binom')
 
-plot_profile(pred.pd[tindex], actual.pd[tindex],fct_reorder(df_agg$geo_country[tindex],actual.pd[tindex], sum), error_band = 'binom')
-plot_profile(pred.pd[tindex], actual.pd[tindex],fct_reorder(df_agg$geo_city_major[tindex],actual.pd[tindex], mean), error_band = 'binom')
-plot_profile(pred.pd[tindex], actual.pd[tindex],fct_reorder(df_agg$geo_city_major[tindex],actual.pd[tindex], sum), error_band = 'binom')
-
-plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_country[tindex], error_band = 'binom')
-plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_country_major[tindex], error_band = 'binom')
-plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_city_major[tindex], error_band = 'binom')
-plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_city[tindex], error_band = 'binom')
-
-plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$first_month[tindex], error_band = 'binom')
-plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$last_month[tindex], error_band = 'binom')
-
-plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_networkDomain_major[tindex], error_band = 'binom')
-plot_profile(pred.pd[tindex], actual.pd[tindex],factor(df_agg$geo_networkDomain_levels[tindex]), error_band = 'binom')
-plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_networkDomain_level1_major[tindex], error_band = 'binom')
-plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_networkDomain_level2_major[tindex], error_band = 'binom')
-plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_networkDomain_level3_major[tindex], error_band = 'binom')
-
-plot_profile(pred.pd[tindex], actual.pd[tindex],factor(df_agg$last_month[tindex]), error_band = 'binom')
-plot_profile(pred.pd[tindex], actual.pd[tindex],factor(df_agg$first_month[tindex]), error_band = 'binom')
-
-
-plots = llply(names(df_agg)[grep('date_m', names(df_agg))], function(var_name) {
-  p = plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg[[var_name]][tindex], error_band = 'binom', bucket_count = 100) +
-    ggtitle(var_name) +  theme(title =element_text(size=6))
-  return( p )
-})
-marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
-
-
-#temp = df_agg[tindex, .(geo_networkDomain)]
-#temp[, actual:=actual.pd[tindex]]
-#temp[, model:=pred.pd[tindex]]
-#temp[,.(.N, mean(actual - model)), by =.(geo_networkDomain)]
-tstrsplit(as.character(b$geo_networkDomain[1:2]), '.', fixed = T)
-b[, c("geo_networkDomain_level1", "geo_networkDomain_level2") := tstrsplit(as.character(geo_networkDomain), ".", fixed=TRUE)]
-
-plots = llply(names(df_agg)[grep('day', names(df_agg))], function(var_name) {
-  p = plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg[[var_name]][tindex], error_band = 'binom', bucket_count = 20) +
-    ggtitle(var_name) +  theme(title =element_text(size=6))
-  return( p )
-})
-marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
-#cor(df_agg[tindex, .(day_diff_min, day_diff_max, day_diff_avg, day_diff_sd,day_diff_sd_log)], use = 'pairwise.complete.obs')
+plot_profile(pred.pd[tindex], actual.pd[tindex],fct_reorder(df$geo_country[tindex],actual.pd[tindex], sum), error_band = 'binom')
 
 ```
 
@@ -356,61 +343,54 @@ marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 ### Revenue Model,  rgs - revenue given sale 
 
 cv-10: 1.10421
-
-                                                                var    rel.inf
-totals_hits_max                                     totals_hits_max 25.197897401
-N                                                                 N  8.549090452
-device_operatingSystem                       device_operatingSystem  7.244946000
-trafficSource_source_top50               trafficSource_source_top50  4.375488531
-day_diff_sd                                             day_diff_sd  3.962424938
-geo_city_major                                       geo_city_major  3.887315713
-totals_hits_sd                                       totals_hits_sd  3.760915809
-geo_city_top50                                       geo_city_top50  3.512627095
-totals_hits                                             totals_hits  2.932657660
-date_wnd_pct                                           date_wnd_pct  2.695979138
-geo_networkDomain_top50                     geo_networkDomain_top50  2.263658274
-geo_region_top50                                   geo_region_top50  1.786324721
-totals_pageviews                                   totals_pageviews  1.723654635
-date_wday2                                               date_wday2  1.637725823
-geo_country_major                                 geo_country_major  1.602141039
-totals_pageviews_max_log                   totals_pageviews_max_log  1.580600510
-device_browser_major                           device_browser_major  1.480776623
-totals_pageviews_sd                             totals_pageviews_sd  1.335286969
-day_diff_max                                           day_diff_max  1.297624869
-total_days                                               total_days  1.287413405
-channelGrouping                                     channelGrouping  1.253171645
-date_wday3                                               date_wday3  1.187169509
-geo_networkDomain_major                     geo_networkDomain_major  1.136758756
+  var    rel.inf
+cum_pageviews_log                               cum_pageviews_log 24.5383743
+cum_revenue_log                                   cum_revenue_log 13.4685020
+totals_hits                                           totals_hits 12.1477114
+geo_city_major                                     geo_city_major 11.5661763
+device_operatingSystem                     device_operatingSystem  7.2685218
+trafficSource_source_major             trafficSource_source_major  5.6850321
+max_pageviews                                       max_pageviews  4.8609675
+geo_networkDomain_level1_major     geo_networkDomain_level1_major  4.2805248
+geo_country                                           geo_country  2.4069893
+date_wday                                               date_wday  2.0517012
+days_since_last_visit                       days_since_last_visit  1.8944515
+device_browser                                     device_browser  1.7842020
+geo_networkDomain_major                   geo_networkDomain_major  1.4026849
+cum_sales                                               cum_sales  1.0302711
+avg_pageviews                                       avg_pageviews  0.9415283
+device_deviceCategory                       device_deviceCategory  0.7899413
+geo_networkDomain_level2_major     geo_networkDomain_level2_major  0.6343835
+totals_pageviews_log                         totals_pageviews_log  0.5806981
+visitNumber                                           visitNumber  0.4645488
+channelGrouping                                   channelGrouping  0.4237241
+geo_metro                                               geo_metro  0.3987167
+geo_region_major                                 geo_region_major  0.3412164
+date_month                                             date_month  0.3286039
+trafficSource_keyword_major           trafficSource_keyword_major  0.2533238
+trafficSource_referralPath_major trafficSource_referralPath_major  0.2207317
 ```{r revenue_predict_model, eval = FALSE}
 
-actual.rgs = df_agg$revenue
+actual.rgs = df$revenue
 
-tindex_rgs = tindex & df_agg$is_revenue
-
-exclude_vars = c('fullVisitorId','is_train','first_date','last_date','last_iso_date','first_iso_date','revenue', 'is_revenue','device_deviceCategory_sec', 'N') #id and outcome var #replaced with logs
-
-too_many_levels = names(which(sapply(df_agg, function(x) length(levels(x))) >= 100)) #technically max is 1024 
-
-all_vars = names(df_agg) %!in_set% c(exclude_vars, too_many_levels)
+tindex_rgs = tindex & df$is_revenue
 
 set.seed(1012356)
 
-rgs_vars = c('count_log','totals_hits_sd','totals_hits_log', 'date_wnd_pct','device_operatingSystem_main','device_deviceCategory','channelGrouping_main', 'device_browser_main', 'geo_networkDomain_is_edu','geo_networkDomain_is_cantv', 'date_m3_pct_pos', 'date_m4_pct_pos','geo_subContinent_is_SoutheastAsia','geo_subContinent_is_EasternAsia','geo_city_set1','totals_bounces')
-rgs_vars = all_vars # use all vars
+rgs_vars = names(df) %!in_set% c(exclude_vars,'totals_bounces') # use all vars
 
-#formula.rgs = formula(stri_join( 'revenue ~ ', stri_join(all_vars %!in_set% exclude_vars,collapse = ' + ')))
-formula.rgs = formula(stri_join( 'revenue ~ ', stri_join(unique(rgs_vars),collapse = ' + ')))
+formula.rgs = formula(stri_join( 'revenue_log ~ ', stri_join(unique(rgs_vars),collapse = ' + ')))
 
-model_vars = all.vars(formula.rgs) %!in_set% c('revenue')
+model_vars = all.vars(formula.rgs) %!in_set% c('revenue_log')
 var.monotone = rep(0, length(model_vars))
 
-mon_inc_vars = c('totals_hits_max','count_log','totals_hits')
+mon_inc_vars = c()
 mon_dec_vars = c()
 
 var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
-cv_folds = 10
+cv_folds = 3
 max_it = 2000
 #0.49
 model.rgs  = gbm(formula.rgs,
@@ -423,13 +403,13 @@ model.rgs  = gbm(formula.rgs,
                  bag.fraction = 0.8,# 0.5 for small samples, 0.7 for large
                  n.cores = 4,
                  var.monotone = var.monotone,
-                 data = df_agg[tindex_rgs , all.vars(formula.rgs), with = F],
+                 data = df[tindex_rgs , all.vars(formula.rgs), with = F],
                  verbose = FALSE)
 
 #saveRDS(model.rgs, file.path(working_folder,'gstore/model_rgs.rds'))
 #model.rgs = readRDS(file.path(working_folder,'gstore/model_rgs.rds'))
 
-plot_gbmiterations(model.rgs) # 1.09765
+plot_gbmiterations(model.rgs) # 1.09609
 
 best_it.rgs = gbm.perf(model.rgs, plot.it = F) #ifelse(cv_folds==0, max_it, gbm.perf(model.rgs, plot.it = F))
 
@@ -454,31 +434,15 @@ marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 #marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
 
 
-pred.rgs = predict(model.rgs, n.trees = best_it.rgs, newdata = df_agg)
+pred.rgs = predict(model.rgs, n.trees = best_it.rgs, newdata = df)
 pred.rev = pred.rgs * pred.pd
-summary(lm('actual ~ model', data.frame(actual = df_agg$revenue[tindex],     model = pred.rev[tindex]))) #0.4758
-summary(lm('actual ~ model', data.frame(actual = df_agg$revenue[tindex_rgs], model = pred.rgs[tindex_rgs]))) #0.4161
-ggplot(data.frame(actual = df_agg$revenue[tindex_rgs], model = pred.rgs[tindex_rgs]), aes(model, actual)) + geom_point() + geom_abline(slope = 1, color = 'red')
+summary(lm('actual ~ model', data.frame(actual = df$revenue_log[tindex],     model = pred.rev[tindex]))) #0.4758
+summary(lm('actual ~ model', data.frame(actual = df$revenue_log[tindex_rgs], model = pred.rgs[tindex_rgs]))) #0.4161
+ggplot(data.frame(actual = df$revenue_log[tindex_rgs], model = pred.rgs[tindex_rgs]), aes(model, actual)) + geom_point() + geom_abline(slope = 1, color = 'red')
 
 #all vars
 plots = llply(all.vars(formula.rgs), function(var_name) {
-  p = plot_profile(pred.rgs[tindex_rgs], actual.rgs [tindex_rgs], df_agg[[var_name]][tindex_rgs], error_band = 'normal') +
-    ggtitle(var_name) +  theme(title =element_text(size=6))
-  return( p )
-})
-marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
-
-#candidate vars
-plots = llply(names(df_agg) %!in_set% c('fullVisitorId'), function(var_name) {
-  p = plot_profile(pred.rgs[tindex_rgs], actual.rgs [tindex_rgs],df_agg[[var_name]][tindex_rgs], error_band = 'normal') +
-    ggtitle(var_name) +  theme(title =element_text(size=6))
-  return( p )
-})
-marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
-
-#candidate vars
-plots = llply(names(df_agg) %!in_set% c('fullVisitorId'), function(var_name) {
-  p = plot_profile(pred.rev[tindex],df_agg$revenue[tindex],df_agg[[var_name]][tindex], error_band = 'normal') +
+  p = plot_profile(pred.rgs[tindex_rgs], actual.rgs [tindex_rgs], df[[var_name]][tindex_rgs], error_band = 'normal') +
     ggtitle(var_name) +  theme(title =element_text(size=6))
   return( p )
 })
@@ -487,8 +451,6 @@ marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
 
 plot_profile(pred.rgs[tindex_rgs], actual.rgs [tindex_rgs],df_agg$geo_city[tindex_rgs], error_band = 'normal')
 plot_profile(pred.rgs[tindex_rgs], actual.rgs [tindex_rgs],df_agg$geo_networkDomain_level1[tindex_rgs], error_band = 'normal')
-plot_profile(pred.rgs[tindex_rgs], actual.rgs [tindex_rgs],df_agg$device_browser_major[tindex_rgs], error_band = 'normal')
-plot_profile(pred.rgs[tindex_rgs], actual.rgs [tindex_rgs],df_agg$device_operatingSystem_major[tindex_rgs], error_band = 'normal')
 
 plot_profile(pred.rgs[tindex_rgs], df_agg$revenue[tindex_rgs],df_agg$totals_bounces[tindex_rgs], error_band = 'normal', bucket_count = 20)
 
@@ -505,13 +467,17 @@ table(df_agg[is_revenue == T, .(is_train, first_month)])
 
 ```{r save_results}
 
-test_index = df_agg$is_train == FALSE
+df_s = df[, .(fullVisitorId, is_train, totals_transactionRevenue)]
+df_s[, expected_revenue := (exp(pred.rgs)-1.0) * pred.pd ]
+df_s[, sale_prob := pred.pd ]
 
-min(pred.rev[test_index])
+df_test = df_s[is_train==TRUE, .(PredictedLogRevenue = log(1  + sum(expected_revenue, na.rm = T)),  ActualLogRevenue=log(1  + sum(totals_transactionRevenue, na.rm = T))), by = .(fullVisitorId)]
 
-submit = data.table(fullVisitorId = df_agg$fullVisitorId[test_index], PredictedLogRevenue = pmax(0, pred.rev[test_index]))
-  
-file = file.path(working_folder, "gstore/solution.csv")
+summary(lm('ActualLogRevenue ~ PredictedLogRevenue', df_test))
+
+submit = df_s[is_train==FALSE, .(PredictedLogRevenue = log(1  + sum(expected_revenue, na.rm = T))), by = .(fullVisitorId)]
+
+file = file.path(working_folder, "gstore/solution.v2.csv")
   
 fwrite(submit, file = file, row.names = FALSE)
 

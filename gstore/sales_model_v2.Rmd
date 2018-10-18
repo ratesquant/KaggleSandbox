@@ -1,0 +1,524 @@
+---
+title: "GStore Predictor"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(gbm)
+library(data.table)
+library(plyr)
+library(stringi)
+library(stringr)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(xgboost)
+library(corrplot)
+library(forcats)
+#library(pdp)
+library(e1071)
+library(jsonlite)
+library(lubridate)
+
+#library(rjson)
+#library(caret)
+
+#working_folder = 'C:/Dev/Kaggle/'
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
+
+source(file.path(working_folder, '/Utils/common.R'))
+```
+
+## Loan Data
+
+```{r load_data}
+
+df_filename = file.path(working_folder,'gstore/data/all.rds')
+
+
+if(file.exists(df_filename)) {
+  print(sprintf('reading: %s', df_filename))
+  df = readRDS(df_filename)
+}else {
+  
+  df_train = fread(file.path(working_folder,'gstore/data/train.csv'), check.names=T)#, nrows = 10000)
+  df_test  = fread(file.path(working_folder,'gstore/data/test.csv'),  check.names=T)#, nrows = 10000)
+  
+  df_train[,is_train:=T ]
+  df_test[, is_train:=F ]
+  
+  df = rbind(df_train, df_test)
+  train_index = df$is_train
+  
+  #json column:fields 
+  # device: browser, operatingSystem, isMobile, deviceCategory
+  # geoNetwork: continent, subContinent, country, region, metro, networkDomain
+  # totals:  visits, hits, pageviews, bounces, newVisits
+  # trafficSource
+  
+  # TODO: try to think of a better way to do this
+  parse_json <- function(json_str, fields){
+    values = fromJSON(stri_replace_all_fixed(json_str, '\"\"','\"') )[fields]
+    names(values) <-fields
+    #values[sapply(values , is.null)] = 'NA'
+    values = lapply(values, as.character)
+    #print(sapply(values , class))
+    return(values)
+  }
+  parse_json_all <- function(json_str){
+    values = fromJSON(stri_replace_all_fixed(json_str, '\"\"','\"') )
+    return(values)
+  }
+  #parse_geo_v <- Vectorize(parse_geo, SIMPLIFY = TRUE)
+  
+  geo_fields = c('continent', 'subContinent', 'country', 'region', 'metro', 'city', 'networkDomain')
+  device_fields = c('browser', 'operatingSystem', 'isMobile', 'deviceCategory')
+  trafficSource_fields = c('campaign', 'source', 'medium', 'keyword',
+                           'isTrueDirect','adContent',
+                           'adwordsClickInfo.page','adwordsClickInfo.slot','adwordsClickInfo.gclId','adwordsClickInfo.adNetworkType','adwordsClickInfo.isVideoAd','referralPath')
+  totals_fields = c('visits', 'hits', 'pageviews','bounces', 'newVisits', 'transactionRevenue')
+  
+  geo_columns           = stri_join('geo_', geo_fields)
+  device_columns        = stri_join('device_', device_fields)
+  trafficSource_columns = stri_join('trafficSource_', trafficSource_fields)
+  totals_columns        = stri_join('totals_', totals_fields)
+  
+  all_rows = seq_len(nrow(df))
+  
+  df[, (geo_columns)          := parse_json(geoNetwork, geo_fields),               by = all_rows]
+  df[, (device_columns)       := parse_json(device, device_fields),                by = all_rows]
+  df[, (trafficSource_columns):= parse_json(trafficSource, trafficSource_fields),  by = all_rows]
+  df[, (totals_columns)       := parse_json(totals, totals_fields),                by = all_rows]
+  
+  df[,geoNetwork:=NULL]
+  df[,device:=NULL]
+  df[,trafficSource:=NULL]
+  df[,totals:=NULL]
+  
+  bool_columns = c('device_isMobile','trafficSource_isTrueDirect')
+  df[, (bool_columns):=lapply(.SD, as.logical), .SDcols = bool_columns]
+  
+  num_columns = c('totals_hits','totals_pageviews', 'totals_bounces', 'totals_newVisits','totals_transactionRevenue','totals_visits')
+  df[, (num_columns):=lapply(.SD, as.numeric), .SDcols = num_columns]
+
+  
+  #parse_json(df$device[4],device_fields)
+  #parse_json(df$trafficSource[4],trafficSource_fields)
+  #parse_json(df$trafficSource[5],trafficSource_fields)
+  #df[,geo_columns, with = F]
+  #df[,device_columns, with = F]
+  #df[,trafficSource_columns, with = F]
+  #df[,totals_columns, with = F]
+  
+  #check forpossible values
+  #temp = ldply(sample.int(nrow(df), 10000), function(i) {
+  #   res = data.table(t(unlist(parse_json_all(df$trafficSource[i]))))  
+  #   return (res)
+  #} )
+  #str(temp)
+  #sapply(temp, function(x) length(unique(x)))
+  
+  
+  #a = df[, .(geoNetwork, geo_continent)]
+  #a = df[, .(device, device_isMobile)]
+  #a = df[, .(trafficSource, trafficSource_isTrueDirect)]
+  #df[, .(trafficSource, trafficSource_isTrueDirect)]
+  
+  saveRDS(df, df_filename)
+}
+
+id_columns = c('fullVisitorId','sessionId','visitId')
+
+df[, iso_date := as.Date(as.character(date), format = '%Y%m%d')]
+df[, date_month := month(iso_date)]
+df[, date_year := year(iso_date)]
+df[, date_day := day(iso_date)]
+df[, date_wday := weekdays(iso_date)]
+
+df[, revenue := totals_transactionRevenue]
+df[is.na(revenue), revenue := 0]
+
+df[, revenue_log := log(1+revenue)]
+df[, is_revenue := as.numeric(revenue>0)]
+
+df[,trafficSource_isTrueDirect := as.numeric(is.na(trafficSource_isTrueDirect))]
+
+df[, c("geo_networkDomain_level1", "geo_networkDomain_level2", "geo_networkDomain_level3") := tstrsplit(as.character(geo_networkDomain), ".", fixed=TRUE)]
+df[, geo_networkDomain_levels:= str_count(as.character(geo_networkDomain), fixed("."))]
+
+#combine levels
+combine_levels <- function(x, n = 3000){
+  counts = table(x)
+  keep_levels = names(counts)[which(counts > n)]
+  return( fct_other(x,keep = keep_levels) )
+}
+cumsum_resets <-function(x, resets = is.na(x)){
+  return ( ave(x, rev(cumsum(rev(resets))), FUN = cumsum))
+}
+
+columns_with_many_levels = names(which(sapply(df, function(x) length(levels(x))) >= 256)) #technically max is 1024 
+columns_with_many_levels_major = stri_join(columns_with_many_levels, '_major')
+
+df[, (columns_with_many_levels_major):=lapply(.SD, function(x) combine_levels(x, 1000) ), .SDcols = columns_with_many_levels]
+
+#convert types
+char_columns = names(which(lapply(df, is.character) ==T)) %!in_set% id_columns
+df[, (char_columns):=lapply(.SD, as.factor), .SDcols = char_columns]
+
+bool_columns = names(which(lapply(df, is.logical) ==T)) %!in_set% id_columns
+df[, (bool_columns):=lapply(.SD, as.numeric), .SDcols = bool_columns]
+
+na_columns = names(which(lapply(df, function(x) length(x) == sum(is.na(x))  ) ==T)) %!in_set% id_columns
+df[, (na_columns):=NULL]
+
+
+#add historical variables (probably the most important)
+
+df[order(visitStartTime),prev_iso_date:=shift(iso_date), by = .(fullVisitorId)]
+df[order(visitStartTime),prev_visitId:=shift(visitId), by = .(fullVisitorId)]
+df[,days_since_last_visit:=as.numeric(iso_date - prev_iso_date)]
+
+df[order(visitNumber),cum_revenue:=cumsum(revenue)-revenue, by = .(fullVisitorId)]
+df[order(visitNumber),cum_pageviews:=cumsum(totals_pageviews), by = .(fullVisitorId)]
+df[order(visitNumber),max_pageviews:=cummax(totals_pageviews), by = .(fullVisitorId)]
+df[order(visitNumber),cum_sales:=cumsum(is_revenue)-is_revenue, by = .(fullVisitorId)]
+df[,avg_pageviews:=cum_pageviews/visitNumber]
+
+#df[order(visitNumber),visits_since_last_sale:=cumsum_resets(1-is_revenue, is_revenue), by = .(fullVisitorId)]
+
+df[fullVisitorId == '9771437221362506189',.(iso_date, prev_iso_date, visitId, prev_visitId, visitNumber, visitStartTime, totals_hits, totals_pageviews, revenue, cum_revenue, cum_sales, avg_pageviews, days_since_last_visit)][order(visitNumber),]
+
+table(df$is_revenue)
+table(df$geo_country)
+```
+
+
+## View Data
+
+```{r view_data}
+
+#cor(df_agg[,.(totals_pageviews_max_log-totals_pageviews_log, totals_pageviews_log)], use = 'pairwise.complete.obs')
+```
+
+## Logistic PD model 
+```{r pd_predict_model}
+tindex = df$is_train == 1
+
+obj_var = 'is_revenue'
+actual.pd = df[[obj_var]]
+
+#only keep several car_11 levels
+exclude_vars = c(id_columns, columns_with_many_levels,'prev_visitId','visitStartTime','prev_iso_date','is_train','iso_date', 'date','totals_transactionRevenue','revenue','revenue_log','prev_visit_number', obj_var) #id and outcome var #replaced with logs
+
+all_vars = names(df) %!in_set% c(exclude_vars)
+
+set.seed(1012356)
+
+formula.pd = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+model_vars = all.vars(formula.pd) %!in_set% c(obj_var)
+var.monotone = rep(0, length(model_vars))
+
+#df[1:10, ..model_vars]
+#str(df[, ..model_vars])
+
+#num_vars  = model_vars %in_set% names(which(sapply(df, is.numeric)))
+#corr_matrix = cor(df[, ..num_vars ], use="complete.obs")
+#corrplot(corr_matrix, method="number", number.cex = 0.5)
+#corrplot(corr_matrix, method="circle", order="hclust")
+
+mon_inc_vars = c() #totals_pageviews_max_log
+mon_dec_vars = c()
+
+var.monotone[model_vars %in% mon_inc_vars]  =  1
+var.monotone[model_vars %in% mon_dec_vars]  = -1
+
+cv_folds = 0
+max_it = 100
+
+model.pd  = gbm(formula.pd,
+                 distribution = "bernoulli",
+                 n.trees = max_it,
+                 cv.folds = cv_folds,
+                 shrinkage = 0.01,
+                 interaction.depth=6,
+                 train.fraction = 0.7,
+                 bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
+                 n.cores = 2,
+                 var.monotone = var.monotone,
+                 data = df[tindex , all.vars(formula.pd), with = F],
+                 verbose = TRUE)
+
+#saveRDS(model.pd, file.path(working_folder,'gstore/model_pd.rds'))
+#model.pd = readRDS(file.path(working_folder,'gstore/model_pd.rds'))
+
+plot_gbmiterations(model.pd) #0.03795, AUC
+
+best_it.pd = gbm.perf(model.pd, plot.it = F) #ifelse(cv_folds==0, max_it, gbm.perf(model.pd, plot.it = F))
+
+pred.pd  = predict(model.pd, n.trees = best_it.pd, newdata = df, type = 'response')
+plot_binmodel_roc(actual.pd[tindex], pred.pd[tindex])
+plot_binmodel_cdf(actual.pd[tindex], pred.pd[tindex])
+plot_binmodel_percentiles(actual.pd[tindex], pred.pd[tindex], 100)
+gbm.roc.area(actual.pd[tindex], pred.pd[tindex]) #0.9910346
+
+#summary(glm('actual.pd ~ model ', data = data.frame(actual.pd = actual.pd[tindex], model = pred.gbm[tindex]), family = binomial(link = "logit"))) 
+
+#influence
+var_inf = summary(model.pd, n.trees = best_it.pd, plotit = F)
+var_inf = subset(var_inf, rel.inf>0.1)
+#fwrite(var_inf, file = file.path(working_folder, "gstore/variables.csv"), row.names = FALSE)
+plot_gbminfluence(var_inf)
+print(var_inf)
+
+imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.1])
+#df_agg[1:100,..imp_vars]
+
+plots = plot_gbmpartial(model.pd, best_it.pd, imp_vars, output_type = 'response')
+marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+
+plots = llply(all.vars(formula.pd), function(var_name) {
+  p = plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg[[var_name]][tindex], error_band = 'binom') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
+
+#all vars
+plots = llply(names(df_agg) %!in_set% c('fullVisitorId', all.vars(formula.pd)), function(var_name) {
+  #print(var_name)
+  p = plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg[[var_name]][tindex], error_band = 'binom') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 6, ncol = 6, top = NULL)
+
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$totals_bounces[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$date_m8_pct[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$date_m4_pct_pos[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$date_m5_pct_pos[tindex], error_band = 'binom')
+
+plot_profile(pred.pd[tindex], actual.pd[tindex],fct_reorder(df_agg$geo_country[tindex],actual.pd[tindex], sum), error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],fct_reorder(df_agg$geo_city_major[tindex],actual.pd[tindex], mean), error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],fct_reorder(df_agg$geo_city_major[tindex],actual.pd[tindex], sum), error_band = 'binom')
+
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_country[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_country_major[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_city_major[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_city[tindex], error_band = 'binom')
+
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$first_month[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$last_month[tindex], error_band = 'binom')
+
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_networkDomain_major[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],factor(df_agg$geo_networkDomain_levels[tindex]), error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_networkDomain_level1_major[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_networkDomain_level2_major[tindex], error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_networkDomain_level3_major[tindex], error_band = 'binom')
+
+plot_profile(pred.pd[tindex], actual.pd[tindex],factor(df_agg$last_month[tindex]), error_band = 'binom')
+plot_profile(pred.pd[tindex], actual.pd[tindex],factor(df_agg$first_month[tindex]), error_band = 'binom')
+
+
+plots = llply(names(df_agg)[grep('date_m', names(df_agg))], function(var_name) {
+  p = plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg[[var_name]][tindex], error_band = 'binom', bucket_count = 100) +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+
+
+#temp = df_agg[tindex, .(geo_networkDomain)]
+#temp[, actual:=actual.pd[tindex]]
+#temp[, model:=pred.pd[tindex]]
+#temp[,.(.N, mean(actual - model)), by =.(geo_networkDomain)]
+tstrsplit(as.character(b$geo_networkDomain[1:2]), '.', fixed = T)
+b[, c("geo_networkDomain_level1", "geo_networkDomain_level2") := tstrsplit(as.character(geo_networkDomain), ".", fixed=TRUE)]
+
+plots = llply(names(df_agg)[grep('day', names(df_agg))], function(var_name) {
+  p = plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg[[var_name]][tindex], error_band = 'binom', bucket_count = 20) +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+#cor(df_agg[tindex, .(day_diff_min, day_diff_max, day_diff_avg, day_diff_sd,day_diff_sd_log)], use = 'pairwise.complete.obs')
+
+```
+
+
+### Revenue Model,  rgs - revenue given sale 
+
+cv-10: 1.10421
+
+                                                                var    rel.inf
+totals_hits_max                                     totals_hits_max 25.197897401
+N                                                                 N  8.549090452
+device_operatingSystem                       device_operatingSystem  7.244946000
+trafficSource_source_top50               trafficSource_source_top50  4.375488531
+day_diff_sd                                             day_diff_sd  3.962424938
+geo_city_major                                       geo_city_major  3.887315713
+totals_hits_sd                                       totals_hits_sd  3.760915809
+geo_city_top50                                       geo_city_top50  3.512627095
+totals_hits                                             totals_hits  2.932657660
+date_wnd_pct                                           date_wnd_pct  2.695979138
+geo_networkDomain_top50                     geo_networkDomain_top50  2.263658274
+geo_region_top50                                   geo_region_top50  1.786324721
+totals_pageviews                                   totals_pageviews  1.723654635
+date_wday2                                               date_wday2  1.637725823
+geo_country_major                                 geo_country_major  1.602141039
+totals_pageviews_max_log                   totals_pageviews_max_log  1.580600510
+device_browser_major                           device_browser_major  1.480776623
+totals_pageviews_sd                             totals_pageviews_sd  1.335286969
+day_diff_max                                           day_diff_max  1.297624869
+total_days                                               total_days  1.287413405
+channelGrouping                                     channelGrouping  1.253171645
+date_wday3                                               date_wday3  1.187169509
+geo_networkDomain_major                     geo_networkDomain_major  1.136758756
+```{r revenue_predict_model, eval = FALSE}
+
+actual.rgs = df_agg$revenue
+
+tindex_rgs = tindex & df_agg$is_revenue
+
+exclude_vars = c('fullVisitorId','is_train','first_date','last_date','last_iso_date','first_iso_date','revenue', 'is_revenue','device_deviceCategory_sec', 'N') #id and outcome var #replaced with logs
+
+too_many_levels = names(which(sapply(df_agg, function(x) length(levels(x))) >= 100)) #technically max is 1024 
+
+all_vars = names(df_agg) %!in_set% c(exclude_vars, too_many_levels)
+
+set.seed(1012356)
+
+rgs_vars = c('count_log','totals_hits_sd','totals_hits_log', 'date_wnd_pct','device_operatingSystem_main','device_deviceCategory','channelGrouping_main', 'device_browser_main', 'geo_networkDomain_is_edu','geo_networkDomain_is_cantv', 'date_m3_pct_pos', 'date_m4_pct_pos','geo_subContinent_is_SoutheastAsia','geo_subContinent_is_EasternAsia','geo_city_set1','totals_bounces')
+rgs_vars = all_vars # use all vars
+
+#formula.rgs = formula(stri_join( 'revenue ~ ', stri_join(all_vars %!in_set% exclude_vars,collapse = ' + ')))
+formula.rgs = formula(stri_join( 'revenue ~ ', stri_join(unique(rgs_vars),collapse = ' + ')))
+
+model_vars = all.vars(formula.rgs) %!in_set% c('revenue')
+var.monotone = rep(0, length(model_vars))
+
+mon_inc_vars = c('totals_hits_max','count_log','totals_hits')
+mon_dec_vars = c()
+
+var.monotone[model_vars %in% mon_inc_vars]  =  1
+var.monotone[model_vars %in% mon_dec_vars]  = -1
+
+cv_folds = 10
+max_it = 2000
+#0.49
+model.rgs  = gbm(formula.rgs,
+                 distribution = "gaussian",
+                 n.trees = max_it,
+                 cv.folds = cv_folds,
+                 shrinkage = 0.01,
+                 interaction.depth=7,
+                 train.fraction = 1.0,
+                 bag.fraction = 0.8,# 0.5 for small samples, 0.7 for large
+                 n.cores = 4,
+                 var.monotone = var.monotone,
+                 data = df_agg[tindex_rgs , all.vars(formula.rgs), with = F],
+                 verbose = FALSE)
+
+#saveRDS(model.rgs, file.path(working_folder,'gstore/model_rgs.rds'))
+#model.rgs = readRDS(file.path(working_folder,'gstore/model_rgs.rds'))
+
+plot_gbmiterations(model.rgs) # 1.09765
+
+best_it.rgs = gbm.perf(model.rgs, plot.it = F) #ifelse(cv_folds==0, max_it, gbm.perf(model.rgs, plot.it = F))
+
+#influence
+var_inf = summary(model.rgs, n.trees = best_it.rgs, plotit = F)
+var_inf = subset(var_inf, rel.inf>0.1)
+#fwrite(var_inf, file = file.path(working_folder, "gstore/variables.csv"), row.names = FALSE)
+plot_gbminfluence(var_inf)
+print(var_inf)
+
+imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.5])
+#df_agg[1:100,..imp_vars]
+
+plots = plot_gbmpartial(model.rgs, best_it.rgs, imp_vars, output_type = 'link')
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+
+#var_interaction = gbm_interactions(model.rgs, df_agg[tindex_rgs,], iter = best_it.rgs, min_influence = 1, degree = 2) 
+#plot_gbminteractions(subset(var_interaction, interaction_score>0.1))
+#print(var_interaction)
+
+#plots = plot_gbmpartial_2d(model.rgs, best_it.rgs, as.character(subset(var_interaction,interaction_score>0.1)$vars), output_type = 'link')
+#marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
+
+
+pred.rgs = predict(model.rgs, n.trees = best_it.rgs, newdata = df_agg)
+pred.rev = pred.rgs * pred.pd
+summary(lm('actual ~ model', data.frame(actual = df_agg$revenue[tindex],     model = pred.rev[tindex]))) #0.4758
+summary(lm('actual ~ model', data.frame(actual = df_agg$revenue[tindex_rgs], model = pred.rgs[tindex_rgs]))) #0.4161
+ggplot(data.frame(actual = df_agg$revenue[tindex_rgs], model = pred.rgs[tindex_rgs]), aes(model, actual)) + geom_point() + geom_abline(slope = 1, color = 'red')
+
+#all vars
+plots = llply(all.vars(formula.rgs), function(var_name) {
+  p = plot_profile(pred.rgs[tindex_rgs], actual.rgs [tindex_rgs], df_agg[[var_name]][tindex_rgs], error_band = 'normal') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+
+#candidate vars
+plots = llply(names(df_agg) %!in_set% c('fullVisitorId'), function(var_name) {
+  p = plot_profile(pred.rgs[tindex_rgs], actual.rgs [tindex_rgs],df_agg[[var_name]][tindex_rgs], error_band = 'normal') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
+
+#candidate vars
+plots = llply(names(df_agg) %!in_set% c('fullVisitorId'), function(var_name) {
+  p = plot_profile(pred.rev[tindex],df_agg$revenue[tindex],df_agg[[var_name]][tindex], error_band = 'normal') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
+
+
+plot_profile(pred.rgs[tindex_rgs], actual.rgs [tindex_rgs],df_agg$geo_city[tindex_rgs], error_band = 'normal')
+plot_profile(pred.rgs[tindex_rgs], actual.rgs [tindex_rgs],df_agg$geo_networkDomain_level1[tindex_rgs], error_band = 'normal')
+plot_profile(pred.rgs[tindex_rgs], actual.rgs [tindex_rgs],df_agg$device_browser_major[tindex_rgs], error_band = 'normal')
+plot_profile(pred.rgs[tindex_rgs], actual.rgs [tindex_rgs],df_agg$device_operatingSystem_major[tindex_rgs], error_band = 'normal')
+
+plot_profile(pred.rgs[tindex_rgs], df_agg$revenue[tindex_rgs],df_agg$totals_bounces[tindex_rgs], error_band = 'normal', bucket_count = 20)
+
+#revenue
+plot_profile(pred.rev[tindex], df_agg$revenue[tindex],df_agg$device_operatingSystem_major[tindex], error_band = 'normal')
+
+
+table(df_agg[is_revenue == T, .(is_train, first_month)])
+```
+
+## Save Results
+1.4476 - best
+1.4488 - latest
+
+```{r save_results}
+
+test_index = df_agg$is_train == FALSE
+
+min(pred.rev[test_index])
+
+submit = data.table(fullVisitorId = df_agg$fullVisitorId[test_index], PredictedLogRevenue = pmax(0, pred.rev[test_index]))
+  
+file = file.path(working_folder, "gstore/solution.csv")
+  
+fwrite(submit, file = file, row.names = FALSE)
+
+zip(paste(file, '.zip', sep = ''), file)
+  
+print(file)
+
+#fullVisitorId,PredictedLogRevenue
+
+```

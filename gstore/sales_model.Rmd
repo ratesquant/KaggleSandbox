@@ -179,7 +179,8 @@ if(file.exists(df_agg_filename)) {
                   geo_subContinent_n    = count_unique(geo_subContinent),
                   
                   geo_country     = nth_most_freq(geo_country),
-                  geo_country_sec = nth_most_freq(geo_country,2), 
+                  geo_country_sec = nth_most_freq(geo_country,2),
+                  geo_country_se3 = nth_most_freq(geo_country,3), 
                   geo_country_n   = count_unique(geo_country),
                   
                   geo_region     = nth_most_freq(geo_region),
@@ -196,7 +197,7 @@ if(file.exists(df_agg_filename)) {
                   
                   date_mon_pct = sum(date_wday == 'Monday', na.rm = T)/.N,
                   date_tue_pct = sum(date_wday == 'Tuesday', na.rm = T)/.N,
-                  #date_wed_pct = sum(date_wday == 'Wednesday', na.rm = T)/.N, #exclude wed, since it is redundant 
+                  date_wed_pct = sum(date_wday == 'Wednesday', na.rm = T)/.N, 
                   date_thu_pct = sum(date_wday == 'Thursday', na.rm = T)/.N,
                   date_fri_pct = sum(date_wday == 'Friday', na.rm = T)/.N,
                   date_sat_pct = sum(date_wday == 'Saturday', na.rm = T)/.N,
@@ -222,6 +223,10 @@ if(file.exists(df_agg_filename)) {
                   trafficSource_source     = nth_most_freq(trafficSource_source),
                   trafficSource_source_sec = nth_most_freq(trafficSource_source, 2),
                   trafficSource_source_n   = count_unique(trafficSource_source),
+                  
+                  trafficSource_referralPath     = nth_most_freq(trafficSource_referralPath),
+                  trafficSource_referralPath_sec = nth_most_freq(trafficSource_referralPath, 2),
+                  trafficSource_referralPath_n   = count_unique(trafficSource_referralPath),
                   
                   geo_networkDomain     = nth_most_freq(geo_networkDomain),
                   geo_networkDomain_sec = nth_most_freq(geo_networkDomain, 2),

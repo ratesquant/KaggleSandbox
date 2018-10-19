@@ -746,38 +746,38 @@ actual.rgs = df_agg$revenue
 
 tindex_rgs = tindex & df_agg$is_revenue
 
-exclude_vars = c('fullVisitorId','is_train','first_date','last_date','last_iso_date','first_iso_date','revenue', 'is_revenue','device_deviceCategory_sec', 'N') #id and outcome var #replaced with logs
+exclude_vars.rgs = c('fullVisitorId','is_train','first_date','last_date','last_iso_date','first_iso_date','revenue', 'is_revenue','device_deviceCategory_sec', 'N') #id and outcome var #replaced with logs
+
+zero_inf_vars.rgs  = c("geo_continent","geo_continent_n","geo_subContinent_n","geo_country_se3","geo_country_n","geo_city_n","device_operatingSystem_sec","device_operatingSystem_n","device_browser_sec", "device_browser_n", "date_m1_pct_pos", "date_m2_pct_pos", "date_m3_pct_pos", "date_m4_pct_pos", "date_m5_pct_pos", "date_m6_pct_pos", "date_m7_pct_pos", "date_m8_pct_pos", "date_m9_pct_pos", "date_m10_pct_pos", "date_m11_pct_pos", "date_m12_pct_pos", "totals_bounces_pos", "total_weeks", "totals_pageviews_log", "totals_pageviews_sd_log", "totals_hits_log", "totals_hits_sd_log", "day_diff_sd_log","device_operatingSystem_major", "device_operatingSystem_main", "geo_networkDomain_levels", "geo_networkDomain_level3_major",
+ "geo_subContinent_is_SoutheastAsia", "geo_subContinent_is_EasternAsia", "geo_subContinent_is_caribbean", "geo_country_is_puertorico")#not picked by GBM - removed to speed-up calc 
 
 too_many_levels = names(which(sapply(df_agg, function(x) length(levels(x))) >= 100)) #technically max is 1024 
 
-all_vars = names(df_agg) %!in_set% c(exclude_vars, too_many_levels)
+all_vars.rgs = names(df_agg) %!in_set% c(exclude_vars.rgs, too_many_levels, zero_inf_vars.rgs)
 
 set.seed(1012356)
 
-rgs_vars = c('count_log','totals_hits_sd','totals_hits_log', 'date_wnd_pct','device_operatingSystem_main','device_deviceCategory','channelGrouping_main', 'device_browser_main', 'geo_networkDomain_is_edu','geo_networkDomain_is_cantv', 'date_m3_pct_pos', 'date_m4_pct_pos','geo_subContinent_is_SoutheastAsia','geo_subContinent_is_EasternAsia','geo_city_set1','totals_bounces')
-rgs_vars = all_vars # use all vars
-
 #formula.rgs = formula(stri_join( 'revenue ~ ', stri_join(all_vars %!in_set% exclude_vars,collapse = ' + ')))
-formula.rgs = formula(stri_join( 'revenue ~ ', stri_join(unique(rgs_vars),collapse = ' + ')))
+formula.rgs = formula(stri_join( 'revenue ~ ', stri_join(unique(all_vars.rgs),collapse = ' + ')))
 
 model_vars = all.vars(formula.rgs) %!in_set% c('revenue')
 var.monotone = rep(0, length(model_vars))
 
-mon_inc_vars = c('totals_hits_max','count_log','totals_hits')
+mon_inc_vars = c('totals_hits_max','count_log', 'total_hits')
 mon_dec_vars = c()
 
 var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
 cv_folds = 10
-max_it = 2000
+max_it = 1500
 #0.49
 model.rgs  = gbm(formula.rgs,
                  distribution = "gaussian",
                  n.trees = max_it,
                  cv.folds = cv_folds,
                  shrinkage = 0.01,
-                 interaction.depth=7,
+                 interaction.depth=9,
                  train.fraction = 1.0,
                  bag.fraction = 0.8,# 0.5 for small samples, 0.7 for large
                  n.cores = 4,
@@ -788,7 +788,9 @@ model.rgs  = gbm(formula.rgs,
 #saveRDS(model.rgs, file.path(working_folder,'gstore/model_rgs.rds'))
 #model.rgs = readRDS(file.path(working_folder,'gstore/model_rgs.rds'))
 
-plot_gbmiterations(model.rgs) # 1.09765
+plot_gbmiterations(model.rgs) # 1.09660
+
+min(model.rgs$cv.error, na.rm = T)#1.096667, 1.096377
 
 best_it.rgs = gbm.perf(model.rgs, plot.it = F) #ifelse(cv_folds==0, max_it, gbm.perf(model.rgs, plot.it = F))
 
@@ -856,6 +858,82 @@ plot_profile(pred.rev[tindex], df_agg$revenue[tindex],df_agg$device_operatingSys
 
 
 table(df_agg[is_revenue == T, .(is_train, first_month)])
+```
+
+### Revenue Model (parametric search)
+i shrinkage interaction.depth bag.fraction max_it best_it        r2   min_cv
+ 1:  8      0.01                 9         0.80   2500    1423 0.4491707 1.096604
+ 2:  7      0.01                 8         0.80   2500    1368 0.4286989 1.096703
+ 
+ i shrinkage interaction.depth bag.fraction max_it best_it        r2   min_cv
+1: 5      0.01                12          0.8   1500     994 0.4464169 1.095109
+2: 4      0.01                11          0.8   1500    1016 0.4376023 1.095235
+3: 3      0.01                10          0.8   1500    1236 0.4468251 1.096002
+4: 1      0.01                 8          0.8   1500    1369 0.4293969 1.096335
+5: 2      0.01                 9          0.8   1500    1299 0.4384761 1.096377
+```{r revenue_predict_model, eval = FALSE}
+
+params = expand.grid(shrinkage = c(0.01, 0.008), interaction.depth = seq(20, 30), bag.fraction = c(0.8))
+
+print(nrow(params))
+
+param_res = ldply(seq(nrow(params)), function(i) {
+  set.seed(1012356)
+  
+  print(sprintf('%d [%s]',i, Sys.time()))
+  
+  actual.rgs = df_agg$revenue
+  tindex_rgs = tindex & df_agg$is_revenue
+  
+  rgs_vars = names(df_agg) %!in_set% c(exclude_vars.rgs, too_many_levels, zero_inf_vars.rgs)
+  
+  formula.rgs = formula(stri_join( 'revenue ~ ', stri_join(unique(rgs_vars),collapse = ' + ')))
+  
+  model_vars = all.vars(formula.rgs) %!in_set% c('revenue')
+  var.monotone = rep(0, length(model_vars))
+  
+  mon_inc_vars = c('totals_hits_max','count_log', 'total_hits')
+  mon_dec_vars = c()
+  
+  var.monotone[model_vars %in% mon_inc_vars]  =  1
+  var.monotone[model_vars %in% mon_dec_vars]  = -1
+
+  cv_folds = 10
+  max_it = 1500
+  model.rgs  = gbm(formula.rgs,
+                   distribution = "gaussian",
+                   n.trees = max_it,
+                   cv.folds = cv_folds,
+                   shrinkage = params$shrinkage[i],
+                   interaction.depth=params$interaction.depth[i],
+                   train.fraction = 1.0,
+                   bag.fraction = params$bag.fraction[i],# 0.5 for small samples, 0.7 for large
+                   n.cores = 4,
+                   var.monotone = var.monotone,
+                   data = df_agg[tindex_rgs , all.vars(formula.rgs), with = F],
+                   verbose = FALSE)
+  
+  best_it.rgs = gbm.perf(model.rgs, plot.it = F)
+    
+  min_cv = min(model.rgs$cv.error, na.rm = T)
+  
+  pred.rgs = predict(model.rgs, n.trees = best_it.rgs, newdata = df_agg[tindex_rgs,])
+  r2 = summary(lm('actual ~ model', data.frame(actual = df_agg$revenue[tindex_rgs], model = pred.rgs)))$r.squared 
+  
+  return(data.table(i, shrinkage = params$shrinkage[i], interaction.depth = params$interaction.depth[i], bag.fraction = params$bag.fraction[i], max_it = max_it,
+                    best_it= best_it.rgs, r2 = r2, min_cv ))
+})
+#best cv = 1.097665
+setDT(param_res)
+setorder(param_res, min_cv)
+
+ggplot(param_res, aes(interaction.depth, min_cv, group = shrinkage, color = factor(shrinkage) )) + geom_line() + geom_point() + facet_grid(~bag.fraction)
+ggplot(param_res, aes(shrinkage, min_cv, group = interaction.depth, color = factor(interaction.depth) )) + geom_line() + geom_point() + facet_grid(~bag.fraction)
+
+ggplot(param_res, aes(interaction.depth, r2, group = shrinkage, color = factor(shrinkage) )) + geom_line() + geom_point() + facet_grid(~bag.fraction)
+
+ggplot(param_res, aes(interaction.depth, best_it, group = shrinkage, color = factor(shrinkage) )) + geom_line() + geom_point() + facet_grid(~bag.fraction)
+
 ```
 
 ## Save Results

@@ -381,7 +381,7 @@ table(df_agg[,.(geo_networkDomain_level1, geo_networkDomain_is_cantv)])
 
 ## View Data
 
-```{r view_data}
+```{r view_data, eval = FALSE}
 
 ggplot(df_agg, aes(totals_pageviews_max_log, group = is_train, fill = is_train)) + stat_ecdf()
 ggplot(df_agg, aes(totals_hits_log, group = is_train, fill = is_train)) + stat_ecdf()
@@ -572,10 +572,24 @@ all_vars = c('totals_pageviews_sd_log','totals_pageviews_log','count_log','total
              'geo_subContinent_is_caribbean','geo_networkDomain_is_cantv', 'tablet_n','desktop_n','totals_bounces_pos','geo_country_n','geo_country_is_puertorico',
              'channelGrouping_sec','geo_continent_sec','geo_networkDomain_level3_major')
 
-all_vars = names(df_agg) %!in_set% c(exclude_vars, too_many_levels)
+zero_inf_vars.rgs = c("geo_subContinent_n","geo_country_se3","geo_city_n","device_operatingSystem_sec","device_operatingSystem_n","trafficSource_source_n", "trafficSource_medium_n",
+ "desktop_n", "device_browser_sec", "device_browser_n", "date_m1_pct_pos", "date_m2_pct_pos", "date_m3_pct_pos", "date_m4_pct_pos", "date_m5_pct_pos",
+ "date_m6_pct_pos", "date_m7_pct_pos", "date_m8_pct_pos", "date_m9_pct_pos", "date_m10_pct_pos", "date_m11_pct_pos", "date_m12_pct_pos", "totals_bounces_pos", "total_weeks", "totals_pageviews_log",
+ "totals_pageviews_sd_log", "totals_hits_log", "totals_hits_sd_log", "day_diff_sd_log", "device_operatingSystem_main", "geo_networkDomain_levels", "geo_networkDomain_is_edu", "geo_subContinent_is_SoutheastAsia",  
+ "geo_subContinent_is_EasternAsia")
 
+all_vars = names(df_agg) %!in_set% c(exclude_vars, too_many_levels, zero_inf_vars.rgs)
 
 set.seed(1012356)
+
+#outcome based sampling - all events and 50 of non-events
+#table(df_agg[,.(is_train, is_revenue)])
+#table(df_agg$is_train, df_agg$is_revenue, pd_index)
+pd_index    = df_agg$is_train
+events_n    = sum( df_agg$is_revenue & df_agg$is_train)
+nonevents_n = sum(!df_agg$is_revenue & df_agg$is_train)
+pd_index[!df_agg$is_revenue & df_agg$is_train][-sample.int(nonevents_n, events_n)] = FALSE
+logodds_adjust = log(events_n/nonevents_n)
 
 #formula.pd = formula(stri_join( 'is_revenue ~ ', stri_join(all_vars %!in_set% exclude_vars,collapse = ' + ')))
 formula.pd = formula(stri_join( 'is_revenue ~ ', stri_join(unique(all_vars), collapse = ' + ')))
@@ -612,7 +626,7 @@ model.pd  = gbm(formula.pd,
                  bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
                  n.cores = 2,
                  var.monotone = var.monotone,
-                 data = df_agg[tindex , all.vars(formula.pd), with = F],
+                 data = df_agg[pd_index , all.vars(formula.pd), with = F],
                  verbose = FALSE)
 
 #saveRDS(model.pd, file.path(working_folder,'gstore/model_pd.rds'))
@@ -622,10 +636,11 @@ plot_gbmiterations(model.pd) #0.03795, AUC
 
 best_it.pd = gbm.perf(model.pd, plot.it = F) #ifelse(cv_folds==0, max_it, gbm.perf(model.pd, plot.it = F))
 
-pred.pd  = predict(model.pd, n.trees = best_it.pd, newdata = df_agg, type = 'response')
-plot_binmodel_roc(actual.pd[tindex], pred.pd[tindex])
-plot_binmodel_cdf(actual.pd[tindex], pred.pd[tindex])
-plot_binmodel_percentiles(actual.pd[tindex], pred.pd[tindex], 100)
+pred.pd_link  = predict(model.pd, n.trees = best_it.pd, newdata = df_agg, type = 'link')
+pred.pd  = logit(pred.pd_link + logodds_adjust)
+
+plot_binmodel_predictions(actual.pd[pd_index], pred.pd[pd_index])
+plot_binmodel_predictions(actual.pd[tindex], pred.pd[tindex])
 gbm.roc.area(actual.pd[tindex], pred.pd[tindex]) #0.9910346
 
 #summary(glm('actual.pd ~ model ', data = data.frame(actual.pd = actual.pd[tindex], model = pred.gbm[tindex]), family = binomial(link = "logit"))) 
@@ -711,6 +726,7 @@ marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 
 ```
 
+## Parametric search
 
 ### Revenue Model,  rgs - revenue given sale 
 
@@ -740,7 +756,7 @@ total_days                                               total_days  1.287413405
 channelGrouping                                     channelGrouping  1.253171645
 date_wday3                                               date_wday3  1.187169509
 geo_networkDomain_major                     geo_networkDomain_major  1.136758756
-```{r revenue_predict_model, eval = FALSE}
+```{r revenue_predict_model, eval = TRUE}
 
 actual.rgs = df_agg$revenue
 
@@ -777,7 +793,7 @@ model.rgs  = gbm(formula.rgs,
                  n.trees = max_it,
                  cv.folds = cv_folds,
                  shrinkage = 0.01,
-                 interaction.depth=9,
+                 interaction.depth=22,
                  train.fraction = 1.0,
                  bag.fraction = 0.8,# 0.5 for small samples, 0.7 for large
                  n.cores = 4,
@@ -871,9 +887,11 @@ i shrinkage interaction.depth bag.fraction max_it best_it        r2   min_cv
 3: 3      0.01                10          0.8   1500    1236 0.4468251 1.096002
 4: 1      0.01                 8          0.8   1500    1369 0.4293969 1.096335
 5: 2      0.01                 9          0.8   1500    1299 0.4384761 1.096377
+
+best params: 0.01, 22, 0.8 
 ```{r revenue_predict_model, eval = FALSE}
 
-params = expand.grid(shrinkage = c(0.01, 0.008), interaction.depth = seq(20, 30), bag.fraction = c(0.8))
+params = expand.grid(shrinkage = c(0.01, 0.008, 0.006, 0.005), interaction.depth = c(22), bag.fraction = c(0.8))
 
 print(nrow(params))
 
@@ -935,6 +953,123 @@ ggplot(param_res, aes(interaction.depth, r2, group = shrinkage, color = factor(s
 ggplot(param_res, aes(interaction.depth, best_it, group = shrinkage, color = factor(shrinkage) )) + geom_line() + geom_point() + facet_grid(~bag.fraction)
 
 ```
+
+## Save probability model (parametric search)
+ i shrinkage interaction.depth bag.fraction max_it best_it       roc    min_cv
+ 1: 23     0.010                 4          0.9   1500    1500 0.9898968 0.2089296
+ 2: 13     0.010                 4          0.8   1500    1500 0.9899122 0.2089642
+ 
+     i shrinkage interaction.depth bag.fraction max_it best_it       roc    min_cv
+ 1: 36     0.020                 4         0.85   3000     963 0.9899708 0.2101603
+ 2:  2     0.010                 4         0.80   3000    1725 0.9899280 0.2103747
+ 3:  5     0.010                 5         0.80   3000    1412 0.9899709 0.2104726
+ 4: 37     0.005                 5         0.85   3000    2953 0.9900105 0.2105194
+ 5: 34     0.005                 4         0.85   3000    2979 0.9898955 0.2105638
+```{r pd_predict_model_params, eval = FALSE}
+
+#only keep several car_11 levels
+exclude_vars = c('fullVisitorId','is_train','first_date','last_date','last_iso_date','first_iso_date','revenue', 'is_revenue','device_deviceCategory_sec', 'N') #id and outcome var #replaced with logs
+
+too_many_levels = names(which(sapply(df_agg, function(x) length(levels(x))) >= 100)) #technically max is 1024 
+
+#all_vars = names(df_agg) %!in_set% exclude_vars
+all_vars = c('totals_pageviews_sd_log','totals_pageviews_log','count_log','totals_pageviews_max_log','device_deviceCategory','device_browser_major','geo_country_major','geo_city_major',
+             'date_wday1','trafficSource_medium','trafficSource_medium_sec', 'totals_hits_sd_log','day_diff_sd_log','day_diff_min','day_diff_avg','geo_city_set1','geo_networkDomain_level2_major', 'device_operatingSystem_n','mobile_n',
+             'date_m1_pct','date_m2_pct','date_m3_pct','date_m4_pct','date_m5_pct','date_m6_pct','date_m7_pct', 'date_m8_pct','date_m9_pct', 'date_m10_pct','date_m11_pct', 'date_m12_pct',
+             'geo_subContinent_is_caribbean','geo_networkDomain_is_cantv', 'tablet_n','desktop_n','totals_bounces_pos','geo_country_n','geo_country_is_puertorico',
+             'channelGrouping_sec','geo_continent_sec','geo_networkDomain_level3_major')
+
+zero_inf_vars.rgs = c("geo_subContinent_n","geo_country_se3","geo_city_n","device_operatingSystem_sec","device_operatingSystem_n","trafficSource_source_n", "trafficSource_medium_n",
+ "desktop_n", "device_browser_sec", "device_browser_n", "date_m1_pct_pos", "date_m2_pct_pos", "date_m3_pct_pos", "date_m4_pct_pos", "date_m5_pct_pos",
+ "date_m6_pct_pos", "date_m7_pct_pos", "date_m8_pct_pos", "date_m9_pct_pos", "date_m10_pct_pos", "date_m11_pct_pos", "date_m12_pct_pos", "totals_bounces_pos", "total_weeks", "totals_pageviews_log",
+ "totals_pageviews_sd_log", "totals_hits_log", "totals_hits_sd_log", "day_diff_sd_log", "device_operatingSystem_main", "geo_networkDomain_levels", 
+ "geo_networkDomain_is_edu", "geo_subContinent_is_SoutheastAsia", "geo_subContinent_is_EasternAsia")
+
+all_vars = names(df_agg) %!in_set% c(exclude_vars, too_many_levels, zero_inf_vars.rgs)
+
+params = expand.grid(shrinkage = c(0.005, 0.01, 0.02), interaction.depth = seq(1,7), bag.fraction = c(0.8, 0.85, 0.9))
+
+print(nrow(params))
+
+param_res = ldply(seq(nrow(params)), function(i) {
+  
+  print(sprintf('%d [%s]',i, Sys.time()))
+  
+  actual.pd = df_agg$is_revenue
+  
+  set.seed(1012356)
+  
+  #outcome based sampling - all events and 50 of non-events
+  #table(df_agg[,.(is_train, is_revenue)])
+  #table(df_agg$is_train, df_agg$is_revenue, pd_index)
+  pd_index    = df_agg$is_train
+  events_n    = sum( df_agg$is_revenue & df_agg$is_train)
+  nonevents_n = sum(!df_agg$is_revenue & df_agg$is_train)
+  pd_index[!df_agg$is_revenue & df_agg$is_train][-sample.int(nonevents_n, events_n)] = FALSE 
+  logodds_adjust = log(events_n/nonevents_n)
+  
+  #formula.pd = formula(stri_join( 'is_revenue ~ ', stri_join(all_vars %!in_set% exclude_vars,collapse = ' + ')))
+  formula.pd = formula(stri_join( 'is_revenue ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+  
+  model_vars = all.vars(formula.pd) %!in_set% c('is_revenue')
+  var.monotone = rep(0, length(model_vars))
+ 
+  mon_inc_vars = c('totals_pageviews_max')
+  mon_dec_vars = c()
+  
+  var.monotone[model_vars %in% mon_inc_vars]  =  1
+  var.monotone[model_vars %in% mon_dec_vars]  = -1
+  
+  cv_folds = 10
+  max_it = 3000
+  
+  model.pd  = gbm(formula.pd,
+                   distribution = "bernoulli",
+                   n.trees = max_it,
+                   cv.folds = cv_folds,
+                   shrinkage = params$shrinkage[i],
+                   interaction.depth=params$interaction.depth[i],
+                   train.fraction = 1.0,
+                   bag.fraction = params$bag.fraction[i],# 0.5 for small samples, 0.7 for large
+                   n.cores = 4,
+                   var.monotone = var.monotone,
+                   data = df_agg[pd_index , all.vars(formula.pd), with = F],
+                   verbose = FALSE)
+  
+    best_it.pd = gbm.perf(model.pd, plot.it = F) #ifelse(cv_folds==0, max_it, gbm.perf(model.pd, plot.it = F))
+    #plot_gbmiterations(model.pd) #0.03795, AUC
+
+    #plots = plot_gbmpartial(model.pd, best_it.pd, as.character(subset(summary(model.pd, n.trees = best_it.pd, plotit = F),rel.inf>0.1)$var), output_type = 'response')
+    #marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+    
+    pred.pd_link  = predict(model.pd, n.trees = best_it.pd, newdata = df_agg[tindex], type = 'link')
+    pred.pd  = logit(pred.pd_link + logodds_adjust)
+      
+    min_cv = min(model.pd$cv.error, na.rm = T)
+    
+    roc = gbm.roc.area(actual.pd[tindex], pred.pd[tindex])
+    
+    #summary(model.pd, n.trees = best_it.pd, plotit = F)
+    
+    return(data.table(i, 
+                      shrinkage = params$shrinkage[i], 
+                      interaction.depth = params$interaction.depth[i], 
+                      bag.fraction = params$bag.fraction[i], 
+                      max_it = max_it,
+                      best_it= best_it.pd, roc = roc, min_cv ))
+   
+})
+#best cv = 0.2089296
+setDT(param_res)
+setorder(param_res, min_cv)
+
+ggplot(param_res, aes(interaction.depth, min_cv, group = shrinkage, color = factor(shrinkage) )) + geom_line() + geom_point() + facet_grid(~bag.fraction)
+ggplot(param_res, aes(shrinkage, min_cv, group = interaction.depth, color = factor(interaction.depth) )) + geom_line() + geom_point() + facet_grid(~bag.fraction)
+ggplot(param_res, aes(interaction.depth, roc, group = shrinkage, color = factor(shrinkage) )) + geom_line() + geom_point() + facet_grid(~bag.fraction)
+ggplot(param_res, aes(interaction.depth, best_it, group = shrinkage, color = factor(shrinkage) )) + geom_line() + geom_point() + facet_grid(~bag.fraction)
+
+```
+
 
 ## Save Results
 1.4476 - best

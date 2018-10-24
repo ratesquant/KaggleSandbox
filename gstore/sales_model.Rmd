@@ -567,8 +567,8 @@ too_many_levels = names(which(sapply(df_agg, function(x) length(levels(x))) >= 1
 
 zero_inf_vars.rgs = c("geo_subContinent_n","geo_city_n","device_operatingSystem_sec","trafficSource_source_n", "trafficSource_medium_n",
  "device_browser_sec", "device_browser_n", "total_weeks", 
- "device_operatingSystem_main", "geo_networkDomain_levels", "geo_networkDomain_is_edu", "geo_subContinent_is_SoutheastAsia",  
- "geo_subContinent_is_EasternAsia")
+ "device_operatingSystem_main", "geo_networkDomain_levels",  "geo_subContinent_is_SoutheastAsia",'channelGrouping_main','geo_city_set1','day_diff_sd_log','totals_hits_sd_log','totals_hits_log',
+ 'date_m1_pct_pos', 'date_m2_pct_pos','date_m3_pct_pos', 'date_m4_pct_pos', 'date_m5_pct_pos','date_m6_pct_pos', 'date_m7_pct_pos','date_m8_pct_pos','date_m9_pct_pos','date_m10_pct_pos','date_m11_pct_pos','date_m12_pct_pos','geo_subContinent_is_EasternAsia','geo_networkDomain_is_edu','geo_networkDomain_level3_major','device_browser_main', 'totals_pageviews_sd_log','totals_pageviews_log','totals_bounces_pos','tablet_n')
 
 all_vars = names(df_agg) %!in_set% c(exclude_vars, too_many_levels, zero_inf_vars.rgs)
 
@@ -606,7 +606,7 @@ mon_dec_vars = c()
 
 # day_diff_sd_log is quiestionable
 
-cv_folds = 0
+cv_folds = 4
 max_it = 2000
 
 model.pd  = gbm(formula.pd,
@@ -615,7 +615,7 @@ model.pd  = gbm(formula.pd,
                  cv.folds = cv_folds,
                  shrinkage = 0.01,
                  interaction.depth=4,
-                 train.fraction = 0.7,
+                 train.fraction = 1.0,
                  bag.fraction = 0.8,# 0.5 for small samples, 0.7 for large
                  n.cores = 4,
                  var.monotone = var.monotone,
@@ -637,7 +637,7 @@ plot_binmodel_predictions(actual.pd[pd_index], pred.pd[pd_index])
 plot_binmodel_predictions(actual.pd[tindex], pred.pd[tindex])
 gbm.roc.area(actual.pd[tindex], pred.pd[tindex]) #0.9910346
 #mean(actual.pd[tindex])
-#mean(pred.pd[tindex])
+#mean(pred.pd[tindex]) #0.01430119
 
 #summary(glm('actual.pd ~ model ', data = data.frame(actual.pd = actual.pd[tindex], model = pred.gbm[tindex]), family = binomial(link = "logit"))) 
 

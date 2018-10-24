@@ -304,7 +304,7 @@ df_agg[!is.finite(day_diff_avg), day_diff_avg:=NA]
 
 df_agg[, is_revenue := as.numeric(revenue>0)]
 
-combine_levels <- function(x, n = 3000){
+combine_levels <- function(x, n = 2000){
   counts = table(x)
   keep_levels = names(counts)[which(counts > n)]
   return( fct_other(x,keep = keep_levels) )
@@ -364,7 +364,8 @@ df_agg[, (var_names_top):=lapply(.SD, function(x) fct_lump(x, max_levels)), .SDc
 
 #which(sapply(df_agg, function(x) length(levels(x))) > 50)
 
-
+#limit the size for testing
+#df_agg = df_agg[sample.int(nrow(df_agg), 10000),]
 
 table(df_agg[,.(geo_city_major)])
 table(df_agg[,.(geo_country_major)])
@@ -373,7 +374,9 @@ table(df_agg[,.(geo_networkDomain_major)])
 table(df_agg[,.(trafficSource_source_major)])
 table(df_agg[,.(device_browser_major)])
 table(df_agg[,.(device_operatingSystem_major)])
-table(df_agg[,.(geo_networkDomain_level1, geo_networkDomain_is_cantv)])
+#table(df_agg[,.(geo_networkDomain_level1, geo_networkDomain_is_cantv)])
+
+gc(reset = TRUE)
 
 #df[fullVisitorId =='1131660440785968503',log(1+sum(totals_transactionRevenue, na.rm = T)), by =  .(fullVisitorId, is_train) ]
 ```
@@ -568,7 +571,7 @@ too_many_levels = names(which(sapply(df_agg, function(x) length(levels(x))) >= 1
 zero_inf_vars.rgs = c("geo_subContinent_n","geo_city_n","device_operatingSystem_sec","trafficSource_source_n", "trafficSource_medium_n",
  "device_browser_sec", "device_browser_n", "total_weeks", 
  "device_operatingSystem_main", "geo_networkDomain_levels",  "geo_subContinent_is_SoutheastAsia",'channelGrouping_main','geo_city_set1','day_diff_sd_log','totals_hits_sd_log','totals_hits_log',
- 'date_m1_pct_pos', 'date_m2_pct_pos','date_m3_pct_pos', 'date_m4_pct_pos', 'date_m5_pct_pos','date_m6_pct_pos', 'date_m7_pct_pos','date_m8_pct_pos','date_m9_pct_pos','date_m10_pct_pos','date_m11_pct_pos','date_m12_pct_pos','geo_subContinent_is_EasternAsia','geo_networkDomain_is_edu','geo_networkDomain_level3_major','device_browser_main', 'totals_pageviews_sd_log','totals_pageviews_log','totals_bounces_pos','tablet_n')
+ 'date_m1_pct_pos', 'date_m2_pct_pos','date_m3_pct_pos', 'date_m4_pct_pos', 'date_m5_pct_pos','date_m6_pct_pos', 'date_m7_pct_pos','date_m8_pct_pos','date_m9_pct_pos','date_m10_pct_pos','date_m11_pct_pos','date_m12_pct_pos','geo_subContinent_is_EasternAsia','geo_subContinent_is_caribbean','device_operatingSystem_n','geo_networkDomain_is_edu','geo_networkDomain_level3_major','device_browser_main', 'totals_pageviews_sd_log','totals_pageviews_log','totals_bounces_pos','tablet_n','geo_country_se3','geo_continent_n','geo_continent')
 
 all_vars = names(df_agg) %!in_set% c(exclude_vars, too_many_levels, zero_inf_vars.rgs)
 
@@ -580,9 +583,9 @@ set.seed(1012356)
 pd_index    = df_agg$is_train
 events_n    = sum( df_agg$is_revenue & df_agg$is_train)
 nonevents_n = sum(!df_agg$is_revenue & df_agg$is_train)
-sample_frac = 1
+sample_frac = 2
 pd_index[!df_agg$is_revenue & df_agg$is_train][-sample.int(nonevents_n, events_n * sample_frac)] = FALSE
-logodds_adjust = log((events_n/nonevents_n)/sample_frac)
+logodds_adjust = log((events_n/nonevents_n)*sample_frac)
 
 #formula.pd = formula(stri_join( 'is_revenue ~ ', stri_join(all_vars %!in_set% exclude_vars,collapse = ' + ')))
 formula.pd = formula(stri_join( 'is_revenue ~ ', stri_join(unique(all_vars), collapse = ' + ')))
@@ -606,7 +609,7 @@ mon_dec_vars = c()
 
 # day_diff_sd_log is quiestionable
 
-cv_folds = 4
+cv_folds = 10
 max_it = 2000
 
 model.pd  = gbm(formula.pd,
@@ -705,7 +708,6 @@ plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg$geo_networkDomain_level3_
 
 plot_profile(pred.pd[tindex], actual.pd[tindex],factor(df_agg$last_month[tindex]), error_band = 'binom')
 plot_profile(pred.pd[tindex], actual.pd[tindex],factor(df_agg$first_month[tindex]), error_band = 'binom')
-
 
 plots = llply(names(df_agg)[grep('date_m', names(df_agg))], function(var_name) {
   p = plot_profile(pred.pd[tindex], actual.pd[tindex],df_agg[[var_name]][tindex], error_band = 'binom', bucket_count = 100) +

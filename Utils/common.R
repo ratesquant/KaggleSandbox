@@ -163,7 +163,7 @@ plot_gbmiterations <- function(gbm_model) {
 }
 
 
-plot_gbmpartial <- function(gbm_model, iter, variables, resolution = 100, output_type = 'response', add_rug = TRUE, max_rug_points = 1024){
+plot_gbmpartial <- function(gbm_model, iter, variables, resolution = 100, output_type = 'response', add_rug = TRUE, max_rug_points = 1000){
   plots <- llply(variables, function(vname){
     plot_data = plot(gbm_model, i.var = vname, n.trees = iter, type = output_type, continuous.resolution = resolution, return.grid = TRUE)
    
@@ -183,17 +183,23 @@ plot_gbmpartial <- function(gbm_model, iter, variables, resolution = 100, output
       plot_result = ggplot(plot_data, aes(x, y)) + geom_line(color = 'black', size = 1) +
         theme(legend.position = 'none', axis.title.y = element_blank(), axis.title.x = element_blank()) + ggtitle(vname)
       
-      if(add_rug){
-        vname_index = match(vname, gbm_model$var.names)
-        size_per_var = length(gbm_model$data$x) / length(gbm_model$var.names)
-        xdata = gbm_model$data$x[1:size_per_var + (vname_index - 1) * size_per_var]
-        
-        rug_index = sample.int(size_per_var, min(max_rug_points, size_per_var))
-          
+    }
+    
+    
+    if(add_rug){
+      vname_index = match(vname, gbm_model$var.names)
+      size_per_var = length(gbm_model$data$x) / length(gbm_model$var.names)
+      xdata = gbm_model$data$x[1:size_per_var + (vname_index - 1) * size_per_var]
+      
+      rug_index = sample.int(size_per_var, min(max_rug_points, size_per_var))
+      
+      if(is.factor(plot_data$x)){
         plot_result = plot_result + 
-          geom_rug(data = data.frame(x = xdata[rug_index]), aes(x), sides = 'b', alpha = 0.2, size = 0.2, inherit.aes = FALSE) +
+          geom_rug(data = data.frame(x = xdata[rug_index]), aes(x), sides = 'b', alpha = 0.1, size = 0.2, inherit.aes = FALSE)
+      }else{
+        plot_result = plot_result + 
+          geom_rug(data = data.frame(x = xdata[rug_index]), aes(x), sides = 'b', alpha = 0.2, size = 0.2, inherit.aes = FALSE) + 
           geom_rug(data = data.frame(x = quantile(xdata, seq(0, 1, by = 0.25), names = FALSE, na.rm = TRUE)), aes(x), sides = 'b', alpha = 0.8, size = 0.5, inherit.aes = FALSE, color = 'red')
-          
       }
     }
     return (plot_result)

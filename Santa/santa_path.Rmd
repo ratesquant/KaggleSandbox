@@ -21,24 +21,30 @@ library(gridExtra)
 library(zip)
 library(sfsmisc) #for prime
 library(GA)
+library(microbenchmark)
 
-working_folder = 'C:/Dev/Kaggle/'
+#working_folder = 'C:/Dev/Kaggle/'
+working_folder = 'F:/Github/KaggleSandbox'
 
 source(file.path(working_folder, '/Utils/common.R'))
 
 ```
 
 ## Load Data
+197769 - nodes
 
 ```{r load_data}
  
- df = fread(file.path(working_folder,'Santa/data/cities.csv'), check.names=T)
+ df_all = fread(file.path(working_folder,'Santa/data/cities.csv'), check.names=T)
 
- prime_ids = primes(max(df$CityId))
+ setorder(df_all, CityId)
 
- df[,not_prime:=as.numeric(!(CityId %in% prime_ids))]
+ prime_ids = primes(max(df_all$CityId))
+
+ df_all[,not_prime:=as.numeric(!(CityId %in% prime_ids))]
  
- df = df[1:10,] #for debugging
+ df = df_all[1:100,] #for debugging
+ 
 ```
 
 ## Plots
@@ -52,34 +58,54 @@ source(file.path(working_folder, '/Utils/common.R'))
 ## Utils
 
 ```{r utils, echo=FALSE}
-
-extra_dist = as.numeric(seq(nrow(df)+1) %% 10 == 0)
+extra_dist = as.numeric(seq(nrow(df)) %% 10 == 0)
 
 eval_path<-function(path){
-  path_ids = c(0, path, 0)
-  index_c = match(path_ids, df$CityId)
-  x_c = df$X[index_c]
-  y_c = df$Y[index_c]
-  p_c = df$not_prime[index_c]
+  path_ids = c(0, path, 0) + 1
   
-  dist = sqrt(diff(x_c)^2 + diff(y_c)^2) *(1.0 + 0.1 * extra_dist * p_c )
+  x_c = df$X[path_ids]
+  y_c = df$Y[path_ids]
+  p_c = df$not_prime[path_ids[-length(path_ids)]] #exclude last
   
-  return( -sum(dist) )
+  dx = diff(x_c)
+  dy = diff(y_c)
+  
+  dist = sum( sqrt(dx * dx + dy * dy) * (1.0 + 0.1 * extra_dist * p_c ) )
+  
+  return( -dist )
 }
 
 path = df$CityId[-1]
 
 eval_path(path) #446889323
 
+microbenchmark(eval_path(path))
+ 
 ```
 
 ## GA solution
 446889323 - in order
 ```{r ga_solultion, echo=FALSE}
+
+solution_file = file.path(working_folder,'Santa/data/population.rds')
+
+suggestedSol = NULL
+
+if( file.exists(solution_file) ){
+  suggestedSol = readRDS(solution_file)
+}
+
 res = ga(type = c( "permutation"), eval_path, 
    names = as.character(df$CityId[-1]),
-   lower = 1,upper = max(df$CityId),
-   maxiter = 10)
+   lower = 1, upper = max(df$CityId),
+   maxiter = 100,
+   suggestions = suggestedSol,
+   run = 100
+   )
+
+saveRDS(res@population, file.path(working_folder,'Santa/data/population.rds'))
+
+#head(res@population)
 
 summary(res)
    
@@ -87,7 +113,14 @@ plot(res)
 
 ga_solution = as.numeric(res@solution)
 
-eval_path(ga_solution)
+sprintf('best: %e', eval_path(ga_solution)) # -13020.02 
+
+if(nrow(df)<10000){
+ggplot(df, aes(X, Y)) + geom_point() + 
+  geom_path(data =df[c(0, ga_solution,0)+1,], aes(X, Y), color = 'red') + 
+  geom_point(data =df[1,], aes(X, Y), color = 'blue', size = 2 )
+}
+
 ```
 
 ## Submit

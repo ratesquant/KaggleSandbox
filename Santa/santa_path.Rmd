@@ -1,0 +1,108 @@
+---
+title: "Santa"
+author: "Alex"
+date: "November 21, 2018"
+output: word_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(data.table)
+library(plyr)
+library(stringi)
+library(stringr)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(sfsmisc) #for prime
+library(GA)
+
+working_folder = 'C:/Dev/Kaggle/'
+
+source(file.path(working_folder, '/Utils/common.R'))
+
+```
+
+## Load Data
+
+```{r load_data}
+ 
+ df = fread(file.path(working_folder,'Santa/data/cities.csv'), check.names=T)
+
+ prime_ids = primes(max(df$CityId))
+
+ df[,not_prime:=as.numeric(!(CityId %in% prime_ids))]
+ 
+ df = df[1:10,] #for debugging
+```
+
+## Plots
+
+```{r plots, echo=FALSE}
+
+#ggplot(df, aes(X, Y)) + geom_point()
+
+```
+
+## Utils
+
+```{r utils, echo=FALSE}
+
+extra_dist = as.numeric(seq(nrow(df)+1) %% 10 == 0)
+
+eval_path<-function(path){
+  path_ids = c(0, path, 0)
+  index_c = match(path_ids, df$CityId)
+  x_c = df$X[index_c]
+  y_c = df$Y[index_c]
+  p_c = df$not_prime[index_c]
+  
+  dist = sqrt(diff(x_c)^2 + diff(y_c)^2) *(1.0 + 0.1 * extra_dist * p_c )
+  
+  return( -sum(dist) )
+}
+
+path = df$CityId[-1]
+
+eval_path(path) #446889323
+
+```
+
+## GA solution
+446889323 - in order
+```{r ga_solultion, echo=FALSE}
+res = ga(type = c( "permutation"), eval_path, 
+   names = as.character(df$CityId[-1]),
+   lower = 1,upper = max(df$CityId),
+   maxiter = 10)
+
+summary(res)
+   
+plot(res)
+
+ga_solution = as.numeric(res@solution)
+
+eval_path(ga_solution)
+```
+
+## Submit
+
+```{r submit, echo=FALSE}
+
+df_s = data.table(Path=c(0, ga_solution, 0))
+
+file = file.path(working_folder, "santa/solution.csv")
+  
+fwrite(df_s, file = file, row.names = FALSE)
+
+zip(paste(file, '.zip', sep = ''), file)
+  
+print(file)
+
+```
+

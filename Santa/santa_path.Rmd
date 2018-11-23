@@ -24,6 +24,7 @@ library(sfsmisc) #for prime
 library(GA)
 library(TSP)
 
+library(foreach)
 library(microbenchmark)
 
 #working_folder = 'C:/Dev/Kaggle/'
@@ -138,6 +139,23 @@ saveRDS(tsp_path, file.path(working_folder,'Santa/data/tsp_path.rds'))
 
 ```
 
+
+##Load concorde tours
+```{r load_tours, echo=FALSE, eval = FALSE}
+
+tour_files = list.files(file.path(working_folder, "santa/data/"), pattern = 'concorde_tour.[a-z]*.txt',
+                        full.names = TRUE)
+
+tours = foreach(i=1:length(tour_files), .combine=cbind ) %do% {
+  tour_df = fread(tour_files[i])
+  return(tour_df)
+}
+
+eval_path(t(as.matrix(tours[2:nrow(tours),]))[3,] )
+
+```
+
+
 ## GA solution
 446'884'408 - in order
 17.43 sec per 100 it for 1k nodes
@@ -159,36 +177,38 @@ mutate_tour <- function(object, parent)
 mutate_tour_ex <- function(object, parent)
 {
   #to choose two cities on the tour randomly (at most 0.01% of nodes), and then reverse the portion of the tour that lies between them
-  node_frac = 0.01*n
+  node_frac = min(n, max(3, 0.01*n)) 
   mutate <- parent <- as.vector(object@population[parent,])
   n <- length(parent)
   i = 1+floor(n*runif(1)) #between 1 and n
-  j = min(n, i+1+floor(node_frac*runif(1))) 
+  j = max(1, min(n, i+floor(node_frac*rnorm(1))))
+  i = min(i, j)
+  j = max(i, j)
   mutate[i:j] <- rev(parent[i:j])
   return(mutate)
 }
 
-solution_file = file.path(working_folder,'Santa/data/population.100.rds')
+solution_file = file.path(working_folder,'Santa/data/population.all.rds')
 
 suggestedSol = NULL
 
 if( file.exists(solution_file) ){
   suggestedSol = readRDS(solution_file)
 }else{
-  suggestedSol = t(as.matrix(tsp_path))
+  suggestedSol = t(as.matrix(tours[2:nrow(tours),]))
 }
 
 res = ga(type = c( "permutation"), eval_path, 
    names = as.character(df$CityId[-1]),
    lower = 1, upper = max(df$CityId),
-   maxiter = 1000,
-   popSize = 100,
+   maxiter = 10,
+   popSize = 50,
    pcrossover = 0.0,
-   pmutation = 0.2,
+   pmutation = 0.9,
    mutation = mutate_tour,
    suggestions = suggestedSol)
 
-#saveRDS(res@population, file.path(working_folder,'Santa/data/population.100.rds'))
+saveRDS(res@population, file.path(working_folder,'Santa/data/population.all.rds'))
 
 #head(res@population)
 
@@ -209,12 +229,23 @@ ggplot(df, aes(X, Y)) + geom_point() +
 ```
 
 ## GA parametric
+optimal for 100 params
 pcrossover = 0
 mutation = 0.8
 popSize = 50
+
+elapsed_time
+(Intercept) -3.451531   0.238406 -14.478  < 2e-16 ***
+p_size       0.040634   0.002870  14.158  < 2e-16 ***
+p_mut        2.027431   0.226900   8.935 2.29e-12 ***
+max_it       0.009696   0.000393  24.671  < 2e-16 ***
+
 ```{r ga_params, echo=FALSE, eval = FALSE}
 
-params = expand.grid(p_size = c(50, 60), p_cross = c(0), p_mut = c(0.8, 0.9, 1.0))
+params = expand.grid(p_size = seq(30, 60, 10), 
+                     max_it = c(100, 200, 300),
+                     p_cross = c(0), 
+                     p_mut = seq(0.6, 1.0, by = 0.1))
 #params = expand.grid(p_size = seq(10, 100, 10), p_cross = c(0, 0.1), p_mut = c(0,0.1))
 
 hres = ldply(seq(nrow(params)), function(i) {
@@ -224,19 +255,27 @@ start_time <- Sys.time()
  res = ga(type = c( "permutation"), eval_path, 
    names = as.character(df$CityId[-1]),
    lower = 1, upper = max(df$CityId),
-   maxiter = 1000,
+   maxiter = params$max_it[i],
    popSize = params$p_size[i],
    pcrossover =  params$p_cross[i],
    pmutation = params$p_mut[i],
    mutation = mutate_tour,
    suggestions = NULL,
-   monitor = FALSE )
+   monitor = FALSE,
+   seed = 1234345)
  
- return( cbind(data.frame(i, tour = eval_path(as.numeric(res@solution)), Sys.time() - start_time),params[i,] ))
+ elapsed_time = as.numeric(Sys.time() - start_time)
+ 
+ return( cbind(data.frame(i, tour = eval_path(as.numeric(res@solution)), elapsed_time ),params[i,] ))
 })
+setDT(hres)
 
-ggplot(hres, aes(p_cross, -tour, group = p_mut, color = factor(p_mut) )) + geom_line() + facet_wrap(~p_size)
-ggplot(hres[p_cross<0.3,], aes(p_mut, -tour, group = p_size, color = factor(p_size) )) + geom_line() + facet_wrap(~p_cross)
+#ggplot(hres, aes(p_cross, -tour, group = p_mut, color = factor(p_mut) )) + geom_line() + facet_wrap(~p_size)
+ggplot(hres, aes(p_mut, -tour, group = p_size, color = factor(p_size) )) + geom_line() + facet_wrap(~max_it)
+ggplot(hres, aes(p_mut, elapsed_time, group = p_size, color = factor(p_size) )) + geom_line() + facet_wrap(~p_cross)
+
+
+summary( lm(elapsed_time ~ p_size + p_mut + max_it, hres) )
 ```
 
 ## Submit
@@ -257,6 +296,19 @@ zip(paste(file, '.zip', sep = ''), file)
 print(file)
 
 ```
+
+## Eval tours
+
+```{r eval_rours, echo=FALSE, eval = FALSE}
+
+filename = file.path(working_folder, "santa/data/concorde_tour.lin.sub.csv")
+  
+df_s = fread(filename)
+
+eval_path(df_s$Path[2:(nrow(df_s)-1)])
+
+```
+
 
 
 

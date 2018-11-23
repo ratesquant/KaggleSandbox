@@ -20,7 +20,10 @@ library(ggplot2)
 library(gridExtra)
 library(zip)
 library(sfsmisc) #for prime
+
 library(GA)
+library(TSP)
+
 library(microbenchmark)
 
 #working_folder = 'C:/Dev/Kaggle/'
@@ -44,20 +47,13 @@ source(file.path(working_folder, '/Utils/common.R'))
  df_all[,not_prime:=as.numeric(!(CityId %in% prime_ids))]
  
  df = df_all[1:100,] #for debugging
+ #df = df_all
  
-```
-
-## Plots
-
-```{r plots, echo=FALSE}
-
-#ggplot(df, aes(X, Y)) + geom_point()
-
 ```
 
 ## Utils
 
-```{r utils, echo=FALSE}
+```{r eval_utils, echo=FALSE}
 extra_dist = as.numeric(seq(nrow(df)) %% 10 == 0)
 
 eval_path<-function(path){
@@ -75,35 +71,124 @@ eval_path<-function(path){
   return( -dist )
 }
 
+save_tour <- function(tour, filename){
+  df_s = data.table(Path=c(0, tour, 0))
+  file = file.path(working_folder, stri_join("santa/", filename) )
+  fwrite(df_s, file = file, row.names = FALSE)
+}
+
 path = df$CityId[-1]
 
-eval_path(path) #446889323
+eval_path(path) #446884408
 
 microbenchmark(eval_path(path))
  
 ```
 
-## GA solution
-446889323 - in order
-```{r ga_solultion, echo=FALSE}
+## TSP Solution
+1k  - 85613 - 0.66 sec
+10k - 
 
-solution_file = file.path(working_folder,'Santa/data/population.rds')
+```{r tsp_solultion, echo=FALSE}
+#Sys.setenv(PATH = stri_join( Sys.getenv('PATH'), ';C:\\cygwin64\\bin'))
+#concorde_path('T:/Utils/Concorde/')
+#concorde_help()
+
+tsp <- ETSP(data.frame(x=df$X, y = df$Y, row.names = df$CityI))
+n_of_cities(tsp)
+#image(tsp)
+#plot(tsp)
+
+#write_TSPLIB(tsp, file.path(working_folder,'Santa/data/data.1k.tsp'))
+
+#check all methods
+if(FALSE) {
+  methods <- c("identity", "random", "nearest_insertion",
+    "cheapest_insertion", "farthest_insertion", "arbitrary_insertion",
+    "nn", "repetitive_nn", "two_opt")
+  tours <- lapply(methods, FUN = function(m) solve_TSP(tsp, method = m))
+  names(tours) <- methods
+  #farthest_insertion - is the best on 1k
+}
+
+#tour <- solve_TSP(tsp, method = "concorde") 
+
+tour <- solve_TSP(tsp) 
+tour_length(tour)
+
+plot(tsp, tour, tour_col = "red")
+
+tsp_solution = as.numeric(tour)
+
+index1 = which(tsp_solution==1)[1]
+if(index1 == 1 | index1 == length(tsp_solution)){
+  tsp_path = tsp_solution[-index1]
+}else{
+  tsp_path = c(tsp_solution[(index1+1):length(tsp_solution)], tsp_solution[1:(index1-1)])-1
+}
+sprintf('best: %f', eval_path(tsp_path)) # -13020.02 
+
+
+if(nrow(df)<10000){
+ggplot(df, aes(X, Y)) + geom_point() + 
+  geom_path(data =df[c(0, tsp_path,0)+1,], aes(X, Y), color = 'red') + 
+  geom_point(data =df[1,], aes(X, Y), color = 'blue', size = 2 )
+}
+saveRDS(tsp_path, file.path(working_folder,'Santa/data/tsp_path.rds'))
+
+```
+
+## GA solution
+446'884'408 - in order
+17.43 sec per 100 it for 1k nodes
+100 nodes - best: 29458.567700
+```{r ga_solultion, echo=FALSE, eval = FALSE}
+
+mutate_tour <- function(object, parent)
+{
+  #to choose two cities on the tour randomly, and then reverse the portion of the tour that lies between them
+  mutate <- parent <- as.vector(object@population[parent,])
+  n <- length(parent)
+  m <- sort(sample.int(n, size = 2))
+  i = m[1]
+  j = m[2]
+  mutate[i:j] <- rev(parent[i:j])
+  return(mutate)
+}
+
+mutate_tour_ex <- function(object, parent)
+{
+  #to choose two cities on the tour randomly (at most 0.01% of nodes), and then reverse the portion of the tour that lies between them
+  node_frac = 0.01*n
+  mutate <- parent <- as.vector(object@population[parent,])
+  n <- length(parent)
+  i = 1+floor(n*runif(1)) #between 1 and n
+  j = min(n, i+1+floor(node_frac*runif(1))) 
+  mutate[i:j] <- rev(parent[i:j])
+  return(mutate)
+}
+
+solution_file = file.path(working_folder,'Santa/data/population.100.rds')
 
 suggestedSol = NULL
 
 if( file.exists(solution_file) ){
   suggestedSol = readRDS(solution_file)
+}else{
+  suggestedSol = t(as.matrix(tsp_path))
 }
 
 res = ga(type = c( "permutation"), eval_path, 
    names = as.character(df$CityId[-1]),
    lower = 1, upper = max(df$CityId),
-   maxiter = 100,
-   suggestions = suggestedSol,
-   run = 100
-   )
+   maxiter = 1000,
+   popSize = 100,
+   pcrossover = 0.0,
+   pmutation = 0.2,
+   mutation = mutate_tour,
+   suggestions = suggestedSol)
 
-saveRDS(res@population, file.path(working_folder,'Santa/data/population.rds'))
+#saveRDS(res@population, file.path(working_folder,'Santa/data/population.100.rds'))
 
 #head(res@population)
 
@@ -113,7 +198,7 @@ plot(res)
 
 ga_solution = as.numeric(res@solution)
 
-sprintf('best: %e', eval_path(ga_solution)) # -13020.02 
+sprintf('best: %f', eval_path(ga_solution)) # -13020.02 
 
 if(nrow(df)<10000){
 ggplot(df, aes(X, Y)) + geom_point() + 
@@ -123,7 +208,41 @@ ggplot(df, aes(X, Y)) + geom_point() +
 
 ```
 
+## GA parametric
+pcrossover = 0
+mutation = 0.8
+popSize = 50
+```{r ga_params, echo=FALSE, eval = FALSE}
+
+params = expand.grid(p_size = c(50, 60), p_cross = c(0), p_mut = c(0.8, 0.9, 1.0))
+#params = expand.grid(p_size = seq(10, 100, 10), p_cross = c(0, 0.1), p_mut = c(0,0.1))
+
+hres = ldply(seq(nrow(params)), function(i) {
+  
+start_time <- Sys.time()
+  
+ res = ga(type = c( "permutation"), eval_path, 
+   names = as.character(df$CityId[-1]),
+   lower = 1, upper = max(df$CityId),
+   maxiter = 1000,
+   popSize = params$p_size[i],
+   pcrossover =  params$p_cross[i],
+   pmutation = params$p_mut[i],
+   mutation = mutate_tour,
+   suggestions = NULL,
+   monitor = FALSE )
+ 
+ return( cbind(data.frame(i, tour = eval_path(as.numeric(res@solution)), Sys.time() - start_time),params[i,] ))
+})
+
+ggplot(hres, aes(p_cross, -tour, group = p_mut, color = factor(p_mut) )) + geom_line() + facet_wrap(~p_size)
+ggplot(hres[p_cross<0.3,], aes(p_mut, -tour, group = p_size, color = factor(p_size) )) + geom_line() + facet_wrap(~p_cross)
+```
+
 ## Submit
+Best solutions
+Lin : 1526444.36
+
 
 ```{r submit, echo=FALSE}
 
@@ -138,4 +257,6 @@ zip(paste(file, '.zip', sep = ''), file)
 print(file)
 
 ```
+
+
 

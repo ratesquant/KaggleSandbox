@@ -47,7 +47,7 @@ source(file.path(working_folder, '/Utils/common.R'))
 
  df_all[,not_prime:=as.numeric(!(CityId %in% prime_ids))]
  
- df = df_all[1:1000,] #for debugging
+ df = df_all[1:101,] #for debugging
  #df = df_all
  
 ```
@@ -189,7 +189,7 @@ mutate_tour_ex <- function(object, parent, mut_pct = 0.01)
   return(mutate)
 }
 
-solution_file = file.path(working_folder,'Santa/data/population.1k.rds')
+solution_file = file.path(working_folder,'Santa/data/population.100.rds')
 
 suggestedSol = NULL
 
@@ -202,16 +202,16 @@ if( file.exists(solution_file) ){
 res = ga(type = c( "permutation"), eval_path, 
    names = as.character(df$CityId[-1]),
    lower = 1, upper = max(df$CityId),
-   maxiter = 1000,
+   maxiter = 10000,
    popSize = 100,
    pcrossover = 0.0,
    pmutation = 0.7,
    #mutation = mutate_tour,
-   #monitor = FALSE,
+   monitor = FALSE,
    mutation = function(object, parent) {mutate_tour_ex(object, parent, mut_pct = 0.05)},
    suggestions = suggestedSol)
 
-saveRDS(res@population, file.path(working_folder,'Santa/data/population.1k.rds'))
+saveRDS(res@population, file.path(working_folder,'Santa/data/population.100.rds'))
 
 #head(res@population)
 
@@ -251,7 +251,7 @@ params = expand.grid(p_size = c(100),
                      max_it = c(1000),
                      p_cross = c(0), 
                      p_mut = seq(0.2, 1.0, by = 0.2),
-                     mut_pct = c(0.001, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6))
+                     mut_pct = c(0.001, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6))
 #params = expand.grid(p_size = seq(10, 100, 10), p_cross = c(0, 0.1), p_mut = c(0,0.1))
 
 hres = ldply(seq(nrow(params)), function(i) {
@@ -283,7 +283,8 @@ setDT(hres)
 ggplot(hres, aes(p_mut, -tour, group = p_size, color = factor(p_size) )) + geom_line() + facet_wrap(mut_pct~max_it)
 ggplot(hres, aes(p_mut, elapsed_time, group = p_size, color = factor(p_size) )) + geom_line() + facet_wrap(mut_pct~max_it)
 
-ggplot(hres, aes(p_mut, -tour+max(tour), group = mut_pct, color = factor(mut_pct) )) + geom_line() + facet_wrap(~mut_pct)
+ggplot(hres, aes(p_mut, -tour+max(tour), group = mut_pct, color = factor(mut_pct) )) + 
+  geom_line() + geom_point() + facet_wrap(~mut_pct)
 
 
 summary( lm(elapsed_time ~ p_size + p_mut + max_it, hres) )

@@ -47,6 +47,8 @@ source(file.path(working_folder, '/Utils/common.R'))
 
  df_all[,not_prime:=as.numeric(!(CityId %in% prime_ids))]
  
+ #fwrite(df_all, file.path(working_folder,'Santa/data/cities_ex.csv'))
+ 
  #df = df_all[1:100,] #for debugging
  df = df_all
  
@@ -218,7 +220,7 @@ summary(res)
    
 plot(res)
 
-plot(res@fitness)
+ggplot(data.frame(fitness=res@fitness), aes(fitness) ) + stat_ecdf()
 
 ga_solution = as.numeric(res@solution)
 
@@ -285,7 +287,6 @@ summary( lm(elapsed_time ~ p_size + p_mut + max_it, hres) )
 ## Submit
 Best solutions
 Lin : 1526444.36
-
 
 ```{r submit, echo=FALSE}
 

@@ -47,8 +47,8 @@ source(file.path(working_folder, '/Utils/common.R'))
 
  df_all[,not_prime:=as.numeric(!(CityId %in% prime_ids))]
  
- #df = df_all[1:100,] #for debugging
- df = df_all
+ df = df_all[1:1000,] #for debugging
+ #df = df_all
  
 ```
 
@@ -189,7 +189,7 @@ mutate_tour_ex <- function(object, parent, mut_pct = 0.01)
   return(mutate)
 }
 
-solution_file = file.path(working_folder,'Santa/data/population.all.rds')
+solution_file = file.path(working_folder,'Santa/data/population.1k.rds')
 
 suggestedSol = NULL
 
@@ -207,10 +207,11 @@ res = ga(type = c( "permutation"), eval_path,
    pcrossover = 0.0,
    pmutation = 0.7,
    #mutation = mutate_tour,
-   mutation = function(object, parent) {mutate_tour_ex(object, parent, mut_pct = 0.01)},
+   #monitor = FALSE,
+   mutation = function(object, parent) {mutate_tour_ex(object, parent, mut_pct = 0.05)},
    suggestions = suggestedSol)
 
-saveRDS(res@population, file.path(working_folder,'Santa/data/population.all.rds'))
+saveRDS(res@population, file.path(working_folder,'Santa/data/population.1k.rds'))
 
 #head(res@population)
 
@@ -218,7 +219,7 @@ summary(res)
    
 plot(res)
 
-plot(res@fitness)
+#plot(res@fitness)
 
 ga_solution = as.numeric(res@solution)
 
@@ -246,13 +247,16 @@ max_it       0.009696   0.000393  24.671  < 2e-16 ***
 
 ```{r ga_params, echo=FALSE, eval = FALSE}
 
-params = expand.grid(p_size = seq(30, 60, 10), 
-                     max_it = c(100, 200, 300),
+params = expand.grid(p_size = c(100), 
+                     max_it = c(1000),
                      p_cross = c(0), 
-                     p_mut = seq(0.6, 1.0, by = 0.1))
+                     p_mut = seq(0.2, 1.0, by = 0.2),
+                     mut_pct = c(0.001, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6))
 #params = expand.grid(p_size = seq(10, 100, 10), p_cross = c(0, 0.1), p_mut = c(0,0.1))
 
 hres = ldply(seq(nrow(params)), function(i) {
+  
+  print(i)
   
 start_time <- Sys.time()
   
@@ -263,8 +267,9 @@ start_time <- Sys.time()
    popSize = params$p_size[i],
    pcrossover =  params$p_cross[i],
    pmutation = params$p_mut[i],
-   mutation = mutate_tour,
-   suggestions = NULL,
+   mutation = function(object, parent) {mutate_tour_ex(object, parent, mut_pct = params$mut_pct[i])},
+   #suggestions = NULL,
+   suggestions = suggestedSol,
    monitor = FALSE,
    seed = 1234345)
  
@@ -275,8 +280,10 @@ start_time <- Sys.time()
 setDT(hres)
 
 #ggplot(hres, aes(p_cross, -tour, group = p_mut, color = factor(p_mut) )) + geom_line() + facet_wrap(~p_size)
-ggplot(hres, aes(p_mut, -tour, group = p_size, color = factor(p_size) )) + geom_line() + facet_wrap(~max_it)
-ggplot(hres, aes(p_mut, elapsed_time, group = p_size, color = factor(p_size) )) + geom_line() + facet_wrap(~p_cross)
+ggplot(hres, aes(p_mut, -tour, group = p_size, color = factor(p_size) )) + geom_line() + facet_wrap(mut_pct~max_it)
+ggplot(hres, aes(p_mut, elapsed_time, group = p_size, color = factor(p_size) )) + geom_line() + facet_wrap(mut_pct~max_it)
+
+ggplot(hres, aes(p_mut, -tour+max(tour), group = mut_pct, color = factor(mut_pct) )) + geom_line() + facet_wrap(~mut_pct)
 
 
 summary( lm(elapsed_time ~ p_size + p_mut + max_it, hres) )

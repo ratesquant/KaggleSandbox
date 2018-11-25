@@ -54,7 +54,7 @@ double mean(const std::vector<double>& x)
 	return avg/x.size();
 }
 
-double min(const std::vector<double>& x)
+double amin(const std::vector<double>& x)
 {
 	double min_x = x[0];
 
@@ -68,7 +68,7 @@ double min(const std::vector<double>& x)
 
 const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, int maxit, int p_size) const
 {
-	int n_best = std::max(1, int(0.05 * p_size));
+	int n_best = std::max(1, int(0.95 * p_size));
 	int n_tour_size = tour.size();
 
 	std::vector<double> scores(p_size);
@@ -96,6 +96,9 @@ const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, in
 
 	best_score = scores[0];
 
+	clock_t clock_start = clock();	
+	
+
 	for(int it=0; it<maxit; it++)
 	{			
 		//mutate all, replace "n_best" worst with unchanged "n_best" tours from previous iteration	
@@ -112,10 +115,11 @@ const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, in
 		std::vector<size_t> next_score_index = sort_indexes(next_scores);
 
 		//update best score
-		if(next_scores[next_score_index[0]] <  best_score)
+		int best_tour_index = next_score_index[0];
+			
+		if(next_scores[best_tour_index] <  best_score)
 		{
-			best_score = next_scores[next_score_index[0]];
-			int best_tour_index = next_score_index[0];
+			best_score = next_scores[best_tour_index];
 			
 			for(int i=0; i<n_tour_size; i++)
 			{
@@ -123,28 +127,38 @@ const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, in
 			}
 		}
 
-		double mean_score = mean(next_scores);
-		double min_score = min(next_scores);
-
         //replace "n_best" of worst with best from previous tours
 		for(int i=0; i<n_best; i++)
-		{
-			int index1 = score_index[i] * n_tour_size;
-			int index2 = next_score_index[p_size - 1 - i] * n_tour_size;
+		{	
+			int p_index1 = score_index[i];
+			int p_index2 = next_score_index[p_size - 1 - i];
 
-			for(int j=0; j<n_tour_size; j++)
+			if(next_scores[p_index2] > scores[p_index1] )
 			{
-				next_tours[j + index2] = tours[j + index1];
+				int index1 = p_index1 * n_tour_size;
+				int index2 = p_index2 * n_tour_size;
+
+				for(int j=0; j<n_tour_size; j++)
+				{
+					next_tours[j + index2] = tours[j + index1];
+				}
+				next_scores[p_index2] =  scores[p_index1];
 			}
 
-			next_scores[next_score_index[p_size - 1 - i]] =  scores[score_index[i]];
 		}
 		
-		std::cout<<"it, "<<it<<", ";
-		std::cout<<"best score, "<<best_score<<", ";
-		std::cout<<"mean score, "<<mean_score<<", ";
-		std::cout<<"min score, "<<min_score<<", ";
-		std::cout<<std::endl;
+		if(it % 10 == 0)
+		{
+			clock_t clock_end = clock();
+
+			std::cout<<"it, "<<it<<", ";
+			std::cout<<"best score, "<<best_score<<", ";
+			std::cout<<"mean score, "<<mean(next_scores)<<", ";
+			std::cout<<"time, "<<clock_end -  clock_start<<", ";
+			std::cout<<std::endl;
+
+			clock_start = clock_end;
+		}
 
 		//next iteration
 		tours = next_tours;

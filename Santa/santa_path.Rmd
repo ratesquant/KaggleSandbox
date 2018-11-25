@@ -49,8 +49,8 @@ source(file.path(working_folder, '/Utils/common.R'))
  
  #fwrite(df_all, file.path(working_folder,'Santa/data/cities_ex.csv'))
  
- #df = df_all[1:100,] #for debugging
- df = df_all
+ df = df_all[1:101,] #for debugging
+ #df = df_all
  
 ```
 
@@ -203,6 +203,7 @@ if( file.exists(solution_file) ){
 
 res = ga(type = c( "permutation"), eval_path, 
    names = as.character(df$CityId[-1]),
+   lower = 1,upper = max(df$CityId),
    lower = 1, upper = max(df$CityId),
    maxiter = 1000,
    popSize = 100,
@@ -232,6 +233,7 @@ ggplot(df, aes(X, Y)) + geom_point() +
   geom_point(data =df[1,], aes(X, Y), color = 'blue', size = 2 )
 }
 
+#6 8 5 7 1 9 3 2 4
 ```
 
 ## GA parametric

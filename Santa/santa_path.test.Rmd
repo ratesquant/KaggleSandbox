@@ -233,6 +233,20 @@ ggplot(df, aes(X, Y)) + geom_point() +
 
 ```
 
+```{r cpp_solution, echo=FALSE, eval = FALSE}
+
+read.csv(file.path(working_folder,'Santa/data/cpp.solution.tour.100.txt'), header=F)
+
+sprintf('best: %f', eval_path(ga_solution)) # -13020.02 
+
+if(nrow(df)<10000){
+ggplot(df, aes(X, Y)) + geom_point() + 
+  geom_path(data =df[c(0, ga_solution,0)+1,], aes(X, Y), color = 'red') + 
+  geom_point(data =df[1,], aes(X, Y), color = 'blue', size = 2 )
+}
+
+```
+
 ## GA parametric
 optimal for 100 params
 pcrossover = 0

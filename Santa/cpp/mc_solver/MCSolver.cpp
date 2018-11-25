@@ -99,7 +99,8 @@ double max(const std::vector<double>& x)
 
 const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, int maxit, int p_size)
 {
-	int n_best = std::max(1, int(0.99 * p_size));
+	const int selection_strategy = 0;
+	int n_best = std::max(1, int(0.50 * p_size));
 	int n_tour_size = tour.size();
 
 	std::vector<double> scores(p_size);
@@ -142,8 +143,7 @@ const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, in
 
 			//compute new scores
 			next_scores[i] = m_nodes.tour_distance(next_tours, i * n_tour_size,  n_tour_size);
-		}
-
+		}		
 		std::vector<size_t> next_score_index = sort_indexes(next_scores);
 
 		//update best score
@@ -158,23 +158,48 @@ const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, in
 			}
 		}
 
-        //replace "n_best" of worst with best from previous tours
-		for(int i=0; i<n_best; i++)
+		if(selection_strategy == 0)
 		{
-			int p_index1 = score_index[i]; // best previous
-			int p_index2 = next_score_index[p_size - 1 - i]; //worst current
-
-			if(next_scores[p_index2] > scores[p_index1])
+			//replace "n_best" of worst with best from previous tours
+			for(int i=0; i<n_best; i++)
 			{
-				int index1 = p_index1 * n_tour_size;
-				int index2 = p_index2 * n_tour_size;
+				int p_index1 = score_index[i]; // best previous
+				int p_index2 = next_score_index[p_size - 1 - i]; //worst current
 
-				for(int j=0; j<n_tour_size; j++)
+				if(next_scores[p_index2] > scores[p_index1])
 				{
-					next_tours[j + index2] = tours[j + index1];
-				}
+					int index1 = p_index1 * n_tour_size;
+					int index2 = p_index2 * n_tour_size;
 
-				next_scores[p_index2] =  scores[p_index1];
+					for(int j=0; j<n_tour_size; j++)
+					{
+						next_tours[j + index2] = tours[j + index1];
+					}
+
+					next_scores[p_index2] =  scores[p_index1];
+				}
+			}
+		}else if(selection_strategy == 1)
+		{
+			//take best from current and previous
+			for(int i=0, prev_index = 0; i<p_size; i++)
+			{
+				int p_index1 = score_index[prev_index]; // best previous
+				int p_index2 = next_score_index[i];     // best current
+
+				if(scores[p_index1] < next_scores[p_index2])
+				{
+					int index1 = p_index1 * n_tour_size;
+					int index2 = p_index2 * n_tour_size;
+
+					for(int j=0; j<n_tour_size; j++)
+					{
+						next_tours[j + index2] = tours[j + index1];
+					}
+
+					next_scores[p_index2] =  scores[p_index1];
+					prev_index++;
+				}
 			}
 		}
 		
@@ -194,6 +219,8 @@ const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, in
 		//next iteration
 		tours = next_tours;
 		scores = next_scores;
+
+		score_index = sort_indexes(scores);
 	}
 
 	return best_tour;

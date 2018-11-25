@@ -53,7 +53,7 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	string filename("F:/Github/KaggleSandbox/Santa/data/cities_ex.100.csv");
 	string tour_filename("F:/Github/KaggleSandbox/Santa/data/tour.100.txt");
-	string solution_filename("F:/Github/KaggleSandbox/Santa/data/solution.tour.100.txt");
+	string solution_filename("F:/Github/KaggleSandbox/Santa/data/cpp.solution.tour.100.txt");
 
 	Nodes nodes(filename);
 
@@ -63,13 +63,13 @@ int _tmain(int argc, _TCHAR* argv[])
 	
 	clock_t start = clock();	
 	
-	cout<<"Starting tour distance: "<<std::fixed << std::setprecision( 6 ) <<nodes.tour_distance(tour)<<"("<<clock()-start<<")"<<std::endl;
+	cout<<"Starting tour distance: "<<std::fixed << std::setprecision( 6 ) <<nodes.tour_distance(tour)<<",("<<clock()-start<<")"<<std::endl;
 
 	// run simulation
 
 	MCSolver solver(nodes);
 
-	int maxit = 10;
+	int maxit = 10000;
 	int p_size = 100;
 
 	std::vector<int> best_tour = solver.run_iterations(tour, maxit, p_size);

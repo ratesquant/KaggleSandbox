@@ -206,9 +206,9 @@ res = ga(type = c( "permutation"), eval_path,
    popSize = 100,
    pcrossover = 0.0,
    pmutation = 0.7,
-   #mutation = mutate_tour,
+   mutation = mutate_tour,
    monitor = FALSE,
-   mutation = function(object, parent) {mutate_tour_ex(object, parent, mut_pct = 0.05)},
+   #mutation = function(object, parent) {mutate_tour_ex(object, parent, mut_pct = 0.1)},
    suggestions = suggestedSol)
 
 saveRDS(res@population, file.path(working_folder,'Santa/data/population.100.rds'))

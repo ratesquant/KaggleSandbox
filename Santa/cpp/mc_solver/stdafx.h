@@ -9,12 +9,15 @@
 
 #include <stdio.h>
 #include <tchar.h>
+#include <stdlib.h>
 
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <iomanip>
 #include <ctime>
+#include <numeric>
+#include <algorithm> 
 
 #include <vector>
 #include <string>

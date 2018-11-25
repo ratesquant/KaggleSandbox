@@ -65,7 +65,7 @@ double mean(const std::vector<double>& x)
 {
 	double avg = 0.0;
 
-	for(int i=0; i<x.size(); i++)
+	for(size_t i=0; i<x.size(); i++)
 	{
 		avg += x[i];
 	}
@@ -77,7 +77,7 @@ double amin(const std::vector<double>& x)
 {
 	double min_x = x[0];
 
-	for(int i=0; i<x.size(); i++)
+	for(size_t i=0; i<x.size(); i++)
 	{
 		if( x[i] < min_x) min_x = x[i];
 	}
@@ -89,7 +89,7 @@ double max(const std::vector<double>& x)
 {
 	double max_x = x[0];
 
-	for(int i=0; i<x.size(); i++)
+	for(size_t i=0; i<x.size(); i++)
 	{
 		if( x[i] > max_x) max_x = x[i];
 	}
@@ -135,6 +135,7 @@ const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, in
 		//mutate all, replace "n_best" worst with unchanged "n_best" tours from previous iteration	
 
 		//mutate all tours
+		#pragma omp parallel for
 		for(int i=0; i<p_size; i++)
 		{
 			mutate_tour(tours, i * n_tour_size, n_tour_size, next_tours);
@@ -177,7 +178,7 @@ const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, in
 			}
 		}
 		
-		if(it % 100 == 0)
+		if(it % 10 == 0)
 		{
 			clock_t clock_end = clock();
 

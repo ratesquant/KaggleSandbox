@@ -100,7 +100,7 @@ n_of_cities(tsp)
 #image(tsp)
 #plot(tsp)
 
-#write_TSPLIB(tsp, file.path(working_folder,'Santa/data/data.1k.tsp'))
+#write_TSPLIB(tsp, file.path(working_folder,'Santa/data/data.100.tsp'))
 
 #check all methods
 if(FALSE) {
@@ -189,7 +189,7 @@ mutate_tour_ex <- function(object, parent, mut_pct = 0.01)
   return(mutate)
 }
 
-solution_file = file.path(working_folder,'Santa/data/population.100.rds')
+solution_file = file.path(working_folder,'Santa/data/population.10.rds')
 
 suggestedSol = NULL
 
@@ -202,16 +202,16 @@ if( file.exists(solution_file) ){
 res = ga(type = c( "permutation"), eval_path, 
    names = as.character(df$CityId[-1]),
    lower = 1, upper = max(df$CityId),
-   maxiter = 10000,
+   maxiter = 1000,
    popSize = 100,
    pcrossover = 0.0,
-   pmutation = 0.7,
+   pmutation = 0.8,
    mutation = mutate_tour,
    monitor = FALSE,
    #mutation = function(object, parent) {mutate_tour_ex(object, parent, mut_pct = 0.1)},
    suggestions = suggestedSol)
 
-saveRDS(res@population, file.path(working_folder,'Santa/data/population.100.rds'))
+saveRDS(res@population, file.path(working_folder,'Santa/data/population.10.rds'))
 
 #head(res@population)
 
@@ -233,17 +233,16 @@ ggplot(df, aes(X, Y)) + geom_point() +
 
 ```
 
-```{r cpp_solution, echo=FALSE, eval = FALSE}
+```{r cpp_solultion, echo=FALSE, eval = FALSE}
 
-read.csv(file.path(working_folder,'Santa/data/cpp.solution.tour.100.txt'), header=F)
-
-sprintf('best: %f', eval_path(ga_solution)) # -13020.02 
-
+cpp_tour = read.csv(file.path(working_folder,'Santa/data/cpp.solution.tour.100.txt'), header = FALSE)
 if(nrow(df)<10000){
 ggplot(df, aes(X, Y)) + geom_point() + 
-  geom_path(data =df[c(0, ga_solution,0)+1,], aes(X, Y), color = 'red') + 
+  geom_path(data =df[cpp_tour$V1+1,], aes(X, Y), color = 'red') + 
   geom_point(data =df[1,], aes(X, Y), color = 'blue', size = 2 )
 }
+
+eval_path(cpp_tour$V1[2:(nrow(cpp_tour)-1)])
 
 ```
 

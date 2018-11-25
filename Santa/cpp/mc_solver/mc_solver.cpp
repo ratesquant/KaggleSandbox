@@ -77,8 +77,8 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	MCSolver solver(nodes);
 
-	int maxit  = 2000;
-	int p_size = 1000;
+	int maxit = 100000;
+	int p_size = 100;
 
 	std::vector<int> best_tour = solver.run_iterations(tour, maxit, p_size);
 

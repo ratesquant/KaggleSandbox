@@ -22,9 +22,13 @@ void mutate_tour(const std::vector<int>& tour, int start_index, int n_tour_size,
 	//first and last point of each tour is 0 and does not change
 	double scale = (double) (n_tour_size - 2) /(RAND_MAX + 1.0);
 
-	//pick 2 induces between [start_index + 1, start_index + 1 + n_tour_size] and reverse path between them  
-	int index_1 = start_index + 1 + (int)floor(scale * rand());
-	int index_2 = start_index + 1 + (int)floor(scale * rand());
+	//pick 2 induces between [start_index + 1, start_index + 1 + n_tour_size] and reverse path between them
+	int index_1,index_2; 
+	do
+	{
+		index_1 = start_index + 1 + (int)floor(scale * rand());
+		index_2 = start_index + 1 + (int)floor(scale * rand());
+	}while(index_1 == index_2);
 
 	int s_index = std::min(index_1, index_2);
 	int e_index = std::max(index_1, index_2);
@@ -40,6 +44,8 @@ void mutate_tour(const std::vector<int>& tour, int start_index, int n_tour_size,
 	//copy unchanged
 	for(int i=e_index+1; i<start_index + n_tour_size; i++)
 		next_tour[i] = tour[i];
+
+	assert (tour[start_index] == 0 && next_tour[start_index] == 0 && tour[start_index + n_tour_size - 1] == 0 && next_tour[start_index + n_tour_size - 1] == 0);
 }
 
 double mean(const std::vector<double>& x)
@@ -66,9 +72,21 @@ double amin(const std::vector<double>& x)
 	return min_x;
 }
 
+double max(const std::vector<double>& x)
+{
+	double max_x = x[0];
+
+	for(int i=0; i<x.size(); i++)
+	{
+		if( x[i] > max_x) max_x = x[i];
+	}
+
+	return max_x;
+}
+
 const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, int maxit, int p_size) const
 {
-	int n_best = std::max(1, int(0.95 * p_size));
+	int n_best = std::max(1, int(0.8 * p_size));
 	int n_tour_size = tour.size();
 
 	std::vector<double> scores(p_size);
@@ -116,9 +134,8 @@ const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, in
 
 		//update best score
 		int best_tour_index = next_score_index[0];
-			
 		if(next_scores[best_tour_index] <  best_score)
-		{
+		{		
 			best_score = next_scores[best_tour_index];
 			
 			for(int i=0; i<n_tour_size; i++)
@@ -129,11 +146,11 @@ const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, in
 
         //replace "n_best" of worst with best from previous tours
 		for(int i=0; i<n_best; i++)
-		{	
-			int p_index1 = score_index[i];
-			int p_index2 = next_score_index[p_size - 1 - i];
+		{
+			int p_index1 = score_index[i]; // best previous
+			int p_index2 = next_score_index[p_size - 1 - i]; //worst current
 
-			if(next_scores[p_index2] > scores[p_index1] )
+			if(next_scores[p_index2] > scores[p_index1])
 			{
 				int index1 = p_index1 * n_tour_size;
 				int index2 = p_index2 * n_tour_size;
@@ -142,9 +159,9 @@ const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, in
 				{
 					next_tours[j + index2] = tours[j + index1];
 				}
+
 				next_scores[p_index2] =  scores[p_index1];
 			}
-
 		}
 		
 		if(it % 10 == 0)

@@ -99,7 +99,7 @@ double max(const std::vector<double>& x)
 
 const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, int maxit, int p_size)
 {
-	int n_best = std::max(1, int(0.95 * p_size));
+	int n_best = std::max(1, int(0.99 * p_size));
 	int n_tour_size = tour.size();
 
 	std::vector<double> scores(p_size);
@@ -178,7 +178,7 @@ const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, in
 			}
 		}
 		
-		if(it % 10 == 0)
+		if(it % 1000 == 0)
 		{
 			clock_t clock_end = clock();
 

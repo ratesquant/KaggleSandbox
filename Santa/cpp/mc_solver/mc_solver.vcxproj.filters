@@ -13,6 +13,9 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="sfmt">
+      <UniqueIdentifier>{83deabb5-25cb-4f20-a339-e8a8f3fa359c}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="ReadMe.txt" />
@@ -30,6 +33,57 @@
     <ClInclude Include="MCSolver.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="sfmt\SFMT.h">
+      <Filter>sfmt</Filter>
+    </ClInclude>
+    <ClInclude Include="sfmt\SFMT-alti.h">
+      <Filter>sfmt</Filter>
+    </ClInclude>
+    <ClInclude Include="sfmt\SFMT-common.h">
+      <Filter>sfmt</Filter>
+    </ClInclude>
+    <ClInclude Include="sfmt\SFMT-neon.h">
+      <Filter>sfmt</Filter>
+    </ClInclude>
+    <ClInclude Include="sfmt\SFMT-params.h">
+      <Filter>sfmt</Filter>
+    </ClInclude>
+    <ClInclude Include="sfmt\SFMT-params607.h">
+      <Filter>sfmt</Filter>
+    </ClInclude>
+    <ClInclude Include="sfmt\SFMT-params1279.h">
+      <Filter>sfmt</Filter>
+    </ClInclude>
+    <ClInclude Include="sfmt\SFMT-params2281.h">
+      <Filter>sfmt</Filter>
+    </ClInclude>
+    <ClInclude Include="sfmt\SFMT-params4253.h">
+      <Filter>sfmt</Filter>
+    </ClInclude>
+    <ClInclude Include="sfmt\SFMT-params11213.h">
+      <Filter>sfmt</Filter>
+    </ClInclude>
+    <ClInclude Include="sfmt\SFMT-params19937.h">
+      <Filter>sfmt</Filter>
+    </ClInclude>
+    <ClInclude Include="sfmt\SFMT-params44497.h">
+      <Filter>sfmt</Filter>
+    </ClInclude>
+    <ClInclude Include="sfmt\SFMT-params86243.h">
+      <Filter>sfmt</Filter>
+    </ClInclude>
+    <ClInclude Include="sfmt\SFMT-params132049.h">
+      <Filter>sfmt</Filter>
+    </ClInclude>
+    <ClInclude Include="sfmt\SFMT-params216091.h">
+      <Filter>sfmt</Filter>
+    </ClInclude>
+    <ClInclude Include="sfmt\SFMT-sse2.h">
+      <Filter>sfmt</Filter>
+    </ClInclude>
+    <ClInclude Include="sfmt\SFMT-sse2-msc.h">
+      <Filter>sfmt</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="stdafx.cpp">
@@ -43,6 +97,9 @@
     </ClCompile>
     <ClCompile Include="MCSolver.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="sfmt\SFMT.c">
+      <Filter>sfmt</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

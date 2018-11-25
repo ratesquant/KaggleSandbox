@@ -51,17 +51,17 @@ int _tmain(int argc, _TCHAR* argv[])
     //string filename("F:/Github/KaggleSandbox/Santa/data/cities_ex.csv");
 	//string tour_filename("F:/Github/KaggleSandbox/Santa/data/concorde_tour.lin.txt");
 
-	//string filename("F:/Github/KaggleSandbox/Santa/data/cities_ex.100.csv");
-	//string tour_filename("F:/Github/KaggleSandbox/Santa/data/tour.100.txt");
-	//string solution_filename("F:/Github/KaggleSandbox/Santa/data/cpp.solution.tour.100.txt");
+	string filename("F:/Github/KaggleSandbox/Santa/data/cities_ex.100.csv");
+	string tour_filename("F:/Github/KaggleSandbox/Santa/data/tour.100.txt");
+	string solution_filename("F:/Github/KaggleSandbox/Santa/data/cpp.solution.tour.100.txt");
 
 	//string filename("C:/Dev/Kaggle/Santa/data/cities_ex.100.csv");
 	//string tour_filename("C:/Dev/Kaggle/Santa/data/tour.100.csv");
 	//string solution_filename("C:/Dev/Kaggle/Santa/data/cpp.solution.tour.100.txt");
 
-	string filename("C:/Dev/Kaggle/Santa/data/cities_ex.csv");
-	string tour_filename("C:/Dev/Kaggle/Santa/data/concorde_tour.lin.txt");
-	string solution_filename("C:/Dev/Kaggle/Santa/data/cpp.solution.tour.all.txt");
+	//string filename("C:/Dev/Kaggle/Santa/data/cities_ex.csv");
+	//string tour_filename("C:/Dev/Kaggle/Santa/data/concorde_tour.lin.txt");
+	//string solution_filename("C:/Dev/Kaggle/Santa/data/cpp.solution.tour.all.txt");
 
 	Nodes nodes(filename);
 
@@ -71,18 +71,23 @@ int _tmain(int argc, _TCHAR* argv[])
 	
 	clock_t start = clock();	
 
-	cout<<"Starting tour distance: "<<std::fixed << std::setprecision( 6 ) <<nodes.tour_distance(tour)<<",("<<clock()-start<<")"<<std::endl;
+	double starting_distance = nodes.tour_distance(tour);
+
+	cout<<"Starting tour distance: "<<std::fixed << std::setprecision( 6 ) <<starting_distance<<",("<<clock()-start<<")"<<std::endl;
 
 	// run simulation
 
 	MCSolver solver(nodes);
 
-	int maxit = 100000;
-	int p_size = 100;
+	int maxit = 10000;
+	int p_size = 1000;
 
 	std::vector<int> best_tour = solver.run_iterations(tour, maxit, p_size);
 
-	cout<<"Final tour distance: "<<std::fixed << std::setprecision( 6 ) << nodes.tour_distance(best_tour)<<std::endl;
+	double final_distance = nodes.tour_distance(best_tour);
+
+	cout<<"Final tour distance: "<<std::fixed << std::setprecision( 6 ) << final_distance<<", ";
+	cout<<"Improvment: "<<std::fixed << std::setprecision( 6 ) <<  starting_distance - final_distance <<std::endl;
 	 
 	save_tour(solution_filename, best_tour);
 

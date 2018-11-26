@@ -6,11 +6,6 @@
 MCSolver::MCSolver(const Nodes& nodes):m_nodes(nodes)
 {
 	sfmt_init_gen_rand(&m_sfmt, 1234);
-
-//	for (int i = 0; i < 10000; i++) {		
-//		std::cout<<sfmt_genrand_uint32(&m_sfmt)<<std::endl;
-//	}
-
 }
 
 
@@ -37,9 +32,9 @@ void MCSolver::mutate_tour(const std::vector<int>& tour, int start_index, int n_
 
 	//pick 2 induces between [start_index + 1, start_index + 1 + n_tour_size] and reverse path between them
 	int index_1,index_2; 
+	index_1 = start_index + 1 + (int)floor(scale * sfmt_genrand_real2(&m_sfmt));
 	do
-	{
-		index_1 = start_index + 1 + (int)floor(scale * sfmt_genrand_real2(&m_sfmt));
+	{		
 		index_2 = start_index + 1 + (int)floor(scale * sfmt_genrand_real2(&m_sfmt));
 	}while(index_1 == index_2);
 
@@ -58,7 +53,10 @@ void MCSolver::mutate_tour(const std::vector<int>& tour, int start_index, int n_
 	for(int i=e_index+1; i<start_index + n_tour_size; i++)
 		next_tour[i] = tour[i];
 
-	assert (tour[start_index] == 0 && next_tour[start_index] == 0 && tour[start_index + n_tour_size - 1] == 0 && next_tour[start_index + n_tour_size - 1] == 0);
+	assert (tour     [start_index] == 0 && 
+		    next_tour[start_index] == 0 && 
+		    tour     [start_index + n_tour_size - 1] == 0 && 
+			next_tour[start_index + n_tour_size - 1] == 0);
 }
 
 double mean(const std::vector<double>& x)
@@ -100,7 +98,7 @@ double max(const std::vector<double>& x)
 const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, int maxit, int p_size)
 {
 	const int selection_strategy = 1;
-	int n_best = std::max(1, int(0.50 * p_size));
+	int n_best = std::max(1, int(0.70 * p_size));
 	int n_tour_size = tour.size();
 
 	std::vector<double> scores(p_size);
@@ -203,7 +201,7 @@ const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, in
 			}
 		}
 		
-		if(it % 100 == 0)
+		if(it % 1000 == 0)
 		{
 			clock_t clock_end = clock();
 

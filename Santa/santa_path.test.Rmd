@@ -253,47 +253,71 @@ mutate_tour <- function(object, parent)
   return(mutate)
 }
 
+plot_list = list()
 
-for(i in seq(3, 10)) {
-  
-  print(i)
+suggestedSol = NULL
+
+for(i in seq(3, 100)) {
 
   df_part = df[1:i,]
   
-  suggestedSol = NULL
+  if(!is.null(suggestedSol))
+  {
+    #add new city df_part$CityId[i]
+    
+    #find closest city
+    di = (df_part$X[-i] - df_part$X[i])**2 +  (df_part$Y[-i] - df_part$Y[i])**2
+    close_city_id = df_part$CityId[ which(di==min(di))[1] ]
+    
+    temp = matrix(nrow=nrow(suggestedSol), ncol = ncol(suggestedSol)+1)
+    #insert new city right after close match 
+    for(k in seq(nrow(suggestedSol))){
+      if(close_city_id==0){
+        temp[k,] = c(suggestedSol[k,], df_part$CityId[i]) #insert at the end
+      }else{
+        insert_index = which(suggestedSol[k,] == close_city_id)
+        temp[k,] = append(suggestedSol[k,], df_part$CityId[i], after = insert_index)
+      }
+    }
+    suggestedSol = temp
+    
+  }
   
   res = ga(type = c( "permutation"), eval_path, 
      names = as.character(df_part$CityId[-1]),
      lower = 1, upper = max(df_part$CityId),
      maxiter = 100,
-     popSize = 100,
+     popSize = min(50, exp(lfactorial(nrow(df_part)-1))) ,
      pcrossover = 0.0,
      pmutation = 0.8,
      mutation = mutate_tour,
-     monitor = TRUE,
+     monitor = FALSE,
      #mutation = function(object, parent) {mutate_tour_ex(object, parent, mut_pct = 0.1)},
      suggestions = suggestedSol)
   
   #head(res@population)
+  suggestedSol = res@population
   
-  summary(res)
+  #summary(res)
      
-  plot(res)
+  #plot(res)
   
   #plot(res@fitness)
   
   ga_solution = as.numeric(res@solution)
   
-  sprintf('best: %f', eval_path(ga_solution)) # -13020.02 
+  print(sprintf('best: %d, %f', i, eval_path(ga_solution))) # -13020.02 
+  #plot_list[[paste(i)]] = p
   
-  if(nrow(df)<10000){
-  ggplot(df_part, aes(X, Y)) + geom_point() + 
-    geom_path(data =df_part[c(0, ga_solution,0)+1,], aes(X, Y), color = 'red') + 
-    geom_point(data =df_part[1,], aes(X, Y), color = 'blue', size = 2 )
-  }
-
-  }
+  write.csv(data.frame(Path = c(0,ga_solution,0)), 
+            file.path(working_folder,sprintf('Santa/data/ga.it.solution.%d.csv', i)),
+            row.names = FALSE, quote= FALSE)
 }
+
+ggplot(df_part, aes(X, Y)) + geom_point() + 
+geom_path(data =df_part[c(0, ga_solution,0)+1,], aes(X, Y), color = 'red') + 
+geom_point(data =df_part[1,], aes(X, Y), color = 'blue', size = 2 )
+
 
 
 ```

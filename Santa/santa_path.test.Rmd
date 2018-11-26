@@ -325,12 +325,11 @@ geom_point(data =df_part[1,], aes(X, Y), color = 'blue', size = 2 )
 
 ```{r cpp_solultion, echo=FALSE, eval = FALSE}
 
-cpp_tour = read.csv(file.path(working_folder,'Santa/data/cpp.solution.tour.1k.txt'), header = FALSE)
-if(nrow(df)<10000){
-ggplot(df, aes(X, Y)) + geom_point() + 
+cpp_tour = read.csv(file.path(working_folder,'Santa/data/cpp.solution.tour.100.txt'), header = FALSE)
+
+ggplot(df[cpp_tour$V1+1,], aes(X, Y)) + geom_point() + 
   geom_path(data =df[cpp_tour$V1+1,], aes(X, Y), color = 'red') + 
   geom_point(data =df[1,], aes(X, Y), color = 'blue', size = 2 )
-}
 
 eval_path(cpp_tour$V1[2:(nrow(cpp_tour)-1)])
 
@@ -338,7 +337,7 @@ eval_path(cpp_tour$V1[2:(nrow(cpp_tour)-1)])
 
 ```{r concorde_solultion, echo=FALSE, eval = FALSE}
 
-con_tour = read.csv(file.path(working_folder,'Santa/data/concorde_tour.1k.txt'), header = FALSE)
+con_tour = read.csv(file.path(working_folder,'Santa/data/concorde_tour.100.txt'), header = FALSE)
 if(nrow(df)<10000){
 ggplot(df, aes(X, Y)) + geom_point() + 
   geom_path(data =df[c(con_tour$V1,0)+1,], aes(X, Y), color = 'red') + 

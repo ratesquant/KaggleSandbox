@@ -47,19 +47,17 @@ int save_tour(const string& filename, const vector<int>& tour)
 
 int _tmain(int argc, _TCHAR* argv[])
 {
+    string filename("F:/Github/KaggleSandbox/Santa/data/cities_ex.csv");
+	string tour_filename("F:/Github/KaggleSandbox/Santa/data/concorde_tour.lin.txt");
+	string solution_filename("F:/Github/KaggleSandbox/Santa/data/cpp.solution.tour.all.txt");
 
-    //string filename("F:/Github/KaggleSandbox/Santa/data/cities_ex.csv");
-	//string tour_filename("F:/Github/KaggleSandbox/Santa/data/concorde_tour.lin.txt");
-
-	string filename("F:/Github/KaggleSandbox/Santa/data/cities_ex.100.csv");
-	string tour_filename("F:/Github/KaggleSandbox/Santa/data/tour.100.txt");
-	string solution_filename("F:/Github/KaggleSandbox/Santa/data/cpp.solution.tour.100.txt");
+	//string filename("F:/Github/KaggleSandbox/Santa/data/cities_ex.100.csv");
+	//string tour_filename("F:/Github/KaggleSandbox/Santa/data/tour.100.txt");
+	//string solution_filename("F:/Github/KaggleSandbox/Santa/data/cpp.solution.tour.100.txt");
 
 	//string filename("F:/Github/KaggleSandbox/Santa/data/cities_ex.1k.csv");
 	//string tour_filename("F:/Github/KaggleSandbox/Santa/data/tour.1k.txt");
-	//string solution_filename("F:/Github/KaggleSandbox/Santa/data/cpp.solution.tour.1k.txt");
-
-	//tour_filename = solution_filename; // do one more iteration
+	//string solution_filename("F:/Github/KaggleSandbox/Santa/data/cpp.solution.tour.1k.txt");	
 
 	//string filename("F:/Github/KaggleSandbox/Santa/data/cities_ex.csv");
 	//string tour_filename("F:/Github/KaggleSandbox/Santa/data/concorde_tour.lin.txt");
@@ -69,9 +67,11 @@ int _tmain(int argc, _TCHAR* argv[])
 	//string tour_filename("C:/Dev/Kaggle/Santa/data/tour.100.csv");
 	//string solution_filename("C:/Dev/Kaggle/Santa/data/cpp.solution.tour.100.txt");
 
-	//string filename("C:/Dev/Kaggle/Santa/data/cities_ex.csv");
-	//string tour_filename("C:/Dev/Kaggle/Santa/data/concorde_tour.lin.txt");
-	//string solution_filename("C:/Dev/Kaggle/Santa/data/cpp.solution.tour.all.txt");
+   //string filename("C:/Dev/Kaggle/Santa/data/cities_ex.csv");
+   //string tour_filename("C:/Dev/Kaggle/Santa/data/concorde_tour.lin.txt");
+   //string solution_filename("C:/Dev/Kaggle/Santa/data/cpp.solution.tour.all.txt");
+
+	tour_filename = solution_filename; // do one more iteration
 
 	Nodes nodes(filename);
 
@@ -89,7 +89,7 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	MCSolver solver(nodes);
 
-	int maxit  = 50000;
+	int maxit  =  1000;
 	int p_size =  1000;
 
 	std::vector<int> best_tour = solver.run_iterations(tour, maxit, p_size);

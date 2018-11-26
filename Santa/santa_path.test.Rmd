@@ -47,8 +47,8 @@ source(file.path(working_folder, '/Utils/common.R'))
 
  df_all[,not_prime:=as.numeric(!(CityId %in% prime_ids))]
  
- df = df_all[1:101,] #for debugging
- #df = df_all
+ #df = df_all[1:1001,] #for debugging
+ df = df_all
  
 ```
 
@@ -83,6 +83,11 @@ path = df$CityId[-1]
 eval_path(path) #446884408
 
 microbenchmark(eval_path(path))
+
+ggplot(df[1:4,], aes(X, Y)) + geom_point() + 
+  geom_path(aes(X, Y), color = 'red') + 
+  geom_point(data =df[1,], aes(X, Y), color = 'blue', size = 2 )
+
  
 ```
 
@@ -100,7 +105,7 @@ n_of_cities(tsp)
 #image(tsp)
 #plot(tsp)
 
-#write_TSPLIB(tsp, file.path(working_folder,'Santa/data/data.100.tsp'))
+#write_TSPLIB(tsp, file.path(working_folder,'Santa/data/data.1k.tsp'))
 
 #check all methods
 if(FALSE) {
@@ -233,9 +238,70 @@ ggplot(df, aes(X, Y)) + geom_point() +
 
 ```
 
+## Iterative GA solution
+```{r it_ga_solultion, echo=FALSE, eval = FALSE}
+
+mutate_tour <- function(object, parent)
+{
+  #to choose two cities on the tour randomly, and then reverse the portion of the tour that lies between them
+  mutate <- parent <- as.vector(object@population[parent,])
+  n <- length(parent)
+  m <- sort(sample.int(n, size = 2))
+  i = m[1]
+  j = m[2]
+  mutate[i:j] <- rev(parent[i:j])
+  return(mutate)
+}
+
+
+for(i in seq(3, 10)) {
+  
+  print(i)
+
+  df_part = df[1:i,]
+  
+  suggestedSol = NULL
+  
+  res = ga(type = c( "permutation"), eval_path, 
+     names = as.character(df_part$CityId[-1]),
+     lower = 1, upper = max(df_part$CityId),
+     maxiter = 100,
+     popSize = 100,
+     pcrossover = 0.0,
+     pmutation = 0.8,
+     mutation = mutate_tour,
+     monitor = TRUE,
+     #mutation = function(object, parent) {mutate_tour_ex(object, parent, mut_pct = 0.1)},
+     suggestions = suggestedSol)
+  
+  #head(res@population)
+  
+  summary(res)
+     
+  plot(res)
+  
+  #plot(res@fitness)
+  
+  ga_solution = as.numeric(res@solution)
+  
+  sprintf('best: %f', eval_path(ga_solution)) # -13020.02 
+  
+  if(nrow(df)<10000){
+  ggplot(df_part, aes(X, Y)) + geom_point() + 
+    geom_path(data =df_part[c(0, ga_solution,0)+1,], aes(X, Y), color = 'red') + 
+    geom_point(data =df_part[1,], aes(X, Y), color = 'blue', size = 2 )
+  }
+
+  }
+}
+
+
+```
+
+
 ```{r cpp_solultion, echo=FALSE, eval = FALSE}
 
-cpp_tour = read.csv(file.path(working_folder,'Santa/data/cpp.solution.tour.100.txt'), header = FALSE)
+cpp_tour = read.csv(file.path(working_folder,'Santa/data/cpp.solution.tour.1k.txt'), header = FALSE)
 if(nrow(df)<10000){
 ggplot(df, aes(X, Y)) + geom_point() + 
   geom_path(data =df[cpp_tour$V1+1,], aes(X, Y), color = 'red') + 
@@ -243,6 +309,19 @@ ggplot(df, aes(X, Y)) + geom_point() +
 }
 
 eval_path(cpp_tour$V1[2:(nrow(cpp_tour)-1)])
+
+```
+
+```{r concorde_solultion, echo=FALSE, eval = FALSE}
+
+con_tour = read.csv(file.path(working_folder,'Santa/data/concorde_tour.1k.txt'), header = FALSE)
+if(nrow(df)<10000){
+ggplot(df, aes(X, Y)) + geom_point() + 
+  geom_path(data =df[c(con_tour$V1,0)+1,], aes(X, Y), color = 'red') + 
+  geom_point(data =df[1,], aes(X, Y), color = 'blue', size = 2 )
+}
+
+eval_path(con_tour$V1[2:(nrow(con_tour))])
 
 ```
 

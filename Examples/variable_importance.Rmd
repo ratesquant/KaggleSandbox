@@ -1,0 +1,119 @@
+---
+title: "Variable Importance"
+output: word_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(gbm)
+library(data.table)
+library(plyr)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(xgboost)
+library(wesanderson)
+#library(caret)
+
+#working_folder = 'C:/Dev/Kaggle/'
+working_folder = 'F:/Github/KaggleSandbox'
+
+source(file.path(working_folder, '/Utils/common.R'))
+```
+
+## Data
+
+```{r load_data}
+df = fread(file.path(working_folder,'/Titanic/input/train.csv'))
+
+df[,Survived := as.numeric(Survived)]
+
+cat_vars = c('Pclass','Sex','Embarked')
+df[, (cat_vars):=lapply(.SD, as.factor), .SDcols = cat_vars]
+
+factor_vars = names(df)[sapply(df, class) == 'factor']
+
+actual = df$Survived
+
+```
+
+## GBM Model
+
+```{r gbm_model, echo=FALSE}
+formula.gbm = formula(Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare + Embarked)
+
+model_vars = all.vars(formula.gbm) %!in_set% c('Survived')
+
+model.gbm  = gbm(formula.gbm, 
+                            distribution = "bernoulli",
+                            n.trees = 2000,
+                            cv.folds=10,
+                            shrinkage = 0.01,
+                            interaction.depth=2,
+                 train.fraction = 1.0,
+                 bag.fraction = 0.8,
+                 n.cores = 2,
+                 var.monotone = NULL,
+                 data = df[,all.vars(formula.gbm), with = F],
+                 verbose = FALSE)
+
+plot_gbmiterations(model.gbm)
+
+best_it.gbm = gbm.perf(model.gbm, plot.it = F)
+pred.gbm = predict(model.gbm, n.trees = best_it.gbm, type = 'response')
+
+
+var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
+plot_gbminfluence(var_inf)
+print(var_inf)
+
+plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var), output_type = 'response')
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+
+plot_binmodel_predictions(actual, pred.gbm)
+
+```
+
+### GBM Model: Partial Dependency
+
+```{r gbm_model_pd, echo=FALSE}
+
+n_profile = 10
+n_sample = 10
+sample_index = sample.int(nrow(df),n_sample )
+
+vname = 'Age'
+
+min_x = min( df[[vname]], na.rm = T )
+max_x = max( df[[vname]], na.rm = T )
+
+df_profiles = ldply(sample_index, function(index){
+  
+  x_range = sort(c(df[[vname]][index], seq(min_x, max_x, length.out = n_profile)), na.last = TRUE)
+  
+  temp = df[rep(index, n_profile+1),]
+  temp[[vname]] = x_range
+  temp[['model']] = predict(model.gbm, n.trees = best_it.gbm, type = 'response', newdata = temp)
+  temp[['sample_id']] = index
+  
+  return (temp)
+})
+
+setDT(df_profiles)
+
+df_profiles_avg = df_profiles[, .(mean(model) ), by = .(Age)]
+
+ggplot(cbind(df[sample_index,c(vname), with = F], p = pred.gbm[sample_index]), aes_string(vname, 'p')) + 
+  geom_point(color = 'red') + geom_line(data = df_profiles, aes_string(vname, 'model', group = 'sample_id'), color = 'blue', alpha = 0.2)
+  
+
+
+```
+

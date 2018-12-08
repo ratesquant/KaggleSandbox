@@ -21,6 +21,8 @@ library(zip)
 library(xgboost)
 library(wesanderson)
 library(knitr)
+
+library(rBayesianOptimization)
 #library(caret)
 
 #working_folder = 'C:/Dev/Kaggle/'
@@ -52,24 +54,30 @@ formula.gbm = formula(Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare + Emb
 
 model_vars = all.vars(formula.gbm) %!in_set% c('Survived')
 
+var.monotone = rep(0, length(model_vars))
+mon_inc_vars = c()
+mon_dec_vars = c('Age')
+var.monotone[model_vars %in% mon_inc_vars]  =  1
+var.monotone[model_vars %in% mon_dec_vars]  = -1
+
 model.gbm  = gbm(formula.gbm, 
                             distribution = "bernoulli",
-                            n.trees = 2000,
+                            n.trees = 1500,
                             cv.folds=10,
                             shrinkage = 0.01,
-                            interaction.depth=2,
+                            interaction.depth=4,
                  train.fraction = 1.0,
-                 bag.fraction = 0.8,
-                 n.cores = 2,
-                 var.monotone = NULL,
+                 bag.fraction = 0.9,
+                 n.cores = 4,
+                 var.monotone = var.monotone,
                  data = df[,all.vars(formula.gbm), with = F],
                  verbose = FALSE)
 
-plot_gbmiterations(model.gbm)
+plot_gbmiterations(model.gbm)#0.84
 
 best_it.gbm = gbm.perf(model.gbm, plot.it = F)
 pred.gbm = predict(model.gbm, n.trees = best_it.gbm, type = 'response')
-
+gbm.roc.area(actual, pred.gbm) #0.9229753
 
 var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
 plot_gbminfluence(var_inf)
@@ -90,6 +98,46 @@ marrangeGrob(plots, nrow = 3, ncol = 2, top = NULL)
 
 plot_binmodel_predictions(actual, pred.gbm)
 #gbm.roc.area(actual, pred.gbm)
+
+```
+
+## GBM: b opt
+```{r gbm_model_param_tune, echo=FALSE, eval = FALSE}
+
+gbm_bayes <- function(bag_fraction, my_shrinkage) {
+  
+  set.seed(1234)
+  model.gbm_test  = gbm(formula.gbm, 
+                            distribution = "bernoulli",
+                            n.trees = 10,
+                            cv.folds=10,
+                            shrinkage = my_shrinkage,
+                            interaction.depth=2,
+                            train.fraction = 1.0,
+                            bag.fraction = bag_fraction,
+                            n.cores = 4,
+                            var.monotone = NULL,
+                            data = df[,all.vars(formula.gbm), with = F],
+                            verbose = FALSE)
+  best_it.gbm_test = gbm.perf(model.gbm_test, plot.it = F)
+  pred.gbm_test = predict(model.gbm_test, n.trees = best_it.gbm_test, type = 'response')
+  
+  return ( list(Score = -min(model.gbm_test$cv.error, na.rm = T),   Pred = pred.gbm_test) )
+}
+
+my_bounds = list(bag_fraction = c(0.5, 1.0),
+                 my_shrinkage = c(0.1, 0.001))
+
+list(bag_fraction = c(0.1, 1.0),
+     my_shrinkage = c(0.1, 0.001),
+     interaction_depth = c(1L, 10L))
+
+opt_res <- BayesianOptimization(gbm_bayes,
+                                bounds = my_bounds,
+                                init_grid_dt = NULL, init_points = 10, n_iter = 20,
+                                acq = "ucb",  #"ucb", "ei" or "poi"
+                                kappa = 2.576, eps = 0.0,
+                                verbose = TRUE)
 
 ```
 
@@ -154,6 +202,8 @@ marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
 
 ```{r gbm_model_importance, echo=FALSE}
 
+sum_sqr <-function(x) {sum(x * x, na.rm = T)}
+
 runs = 100
 
 perm_importance = ldply(as.character(var_inf$var), function(vname) {
@@ -181,7 +231,11 @@ ggplot(perm_importance, aes(ks, auc_orig - auc, group = name, color = name)) + g
 importance = perm_importance[,.(diff = auc_orig - mean(auc), std=sd(auc) ), by = .(name)]
 setorder(importance, -std)
 
+importance$rating = 100*importance$std * importance$std/sum_sqr(importance$std)
+
 kable(importance)
+
+plot_gbminfluence(data.frame(var = importance$name, rel.inf = importance$rating))
 
 ggplot(importance, aes(diff, std, group = name, color = name, label = name)) + geom_point() + 
 #  geom_label(hjust = 0) +

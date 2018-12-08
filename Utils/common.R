@@ -196,6 +196,7 @@ plot_gbmpartial <- function(gbm_model, iter, variables, resolution = 100, output
       if(is.factor(plot_data$x)){
         plot_result = plot_result + 
           geom_rug(data = data.frame(x = xdata[rug_index]), aes(x), sides = 'b', alpha = 0.1, size = 0.2, inherit.aes = FALSE)
+          #position = position_jitter(width = ifelse(x_factor,0.25, 0) , height = 0)
       }else{
         plot_result = plot_result + 
           geom_rug(data = data.frame(x = xdata[rug_index]), aes(x), sides = 'b', alpha = 0.2, size = 0.2, inherit.aes = FALSE) + 

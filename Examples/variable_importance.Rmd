@@ -20,6 +20,7 @@ library(gridExtra)
 library(zip)
 library(xgboost)
 library(wesanderson)
+library(knitr)
 #library(caret)
 
 #working_folder = 'C:/Dev/Kaggle/'
@@ -77,7 +78,18 @@ print(var_inf)
 plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var), output_type = 'response')
 marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 
+var_interaction = gbm_interactions(model.gbm, df, iter = best_it.gbm, min_influence = 1, degree = 2) 
+plot_gbminteractions(subset(var_interaction, interaction_score>0.05))
+print(var_interaction)
+
+plots = plot_gbmpartial_2d(model.gbm, best_it.gbm, as.character(subset(var_interaction,interaction_score>0.1)$vars), output_type = 'link')
+marrangeGrob(plots, nrow = 3, ncol = 2, top = NULL)
+
+plots = plot_gbmpartial_2d(model.gbm, best_it.gbm, as.character(subset(var_interaction,interaction_score>0.1)$vars), output_type = 'response')
+marrangeGrob(plots, nrow = 3, ncol = 2, top = NULL)
+
 plot_binmodel_predictions(actual, pred.gbm)
+#gbm.roc.area(actual, pred.gbm)
 
 ```
 
@@ -85,35 +97,104 @@ plot_binmodel_predictions(actual, pred.gbm)
 
 ```{r gbm_model_pd, echo=FALSE}
 
-n_profile = 10
-n_sample = 10
+n_profile = 20
+n_sample = 100
 sample_index = sample.int(nrow(df),n_sample )
 
-vname = 'Age'
+plots = llply(as.character(var_inf$var), function(vname) {
+  
+  x_factor = is.factor(df[[vname]])
 
-min_x = min( df[[vname]], na.rm = T )
-max_x = max( df[[vname]], na.rm = T )
+  range = NULL
+  if( x_factor ){
+    range = levels(df[[vname]])
+  }else{
+    min_x = min( df[[vname]], na.rm = T )
+    max_x = max( df[[vname]], na.rm = T )
+    range = seq(min_x, max_x, length.out = n_profile)
+  }
+  
+  df_profiles = ldply(sample_index, function(index){
+    
+    if(x_factor)
+      x_range = as.factor(unique( c(as.character(df[[vname]][index]), range) ))
+    else
+      x_range = unique( c(df[[vname]][index], range) )
+    
+    temp = df[rep(index, length(x_range)),]
+    temp[[vname]] = x_range
+    temp[['model']] = predict(model.gbm, n.trees = best_it.gbm, type = 'response', newdata = temp)
+    temp[['sample_id']] = index
+    
+    return (temp)
+  })
+  
+  setDT(df_profiles)
+  
+  df_profiles_avg = df_profiles[, .(avg=mean(model, na.rm = T), .N), by = c(vname)]
+  
+  p = ggplot(cbind(df[sample_index,c(vname), with = F], p = pred.gbm[sample_index]), aes_string(vname, 'p')) + 
+    geom_point(color = 'red') + geom_rug(alpha = 0.2,  position = position_jitter(width = ifelse(x_factor,0.25, 0) , height = 0)) +
+    geom_line(data = df_profiles, aes_string(vname, 'model', group = 'sample_id'), color = 'blue', alpha = 0.2) + 
+    geom_line(data = df_profiles_avg[N>=n_sample,], aes_string(vname, 'avg'), color = 'black', size = 1) + 
+    ggtitle(vname)
+  
+  if(x_factor)
+    p = p + geom_point(data = df_profiles_avg[N>=n_sample,], aes_string(vname, 'avg'), color = 'black')
+  
+  return (p)
+})
+marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
 
-df_profiles = ldply(sample_index, function(index){
+
+
+```
+
+### GBM Model: Permutation importance
+
+```{r gbm_model_importance, echo=FALSE}
+
+runs = 100
+
+perm_importance = ldply(as.character(var_inf$var), function(vname) {
   
-  x_range = sort(c(df[[vname]][index], seq(min_x, max_x, length.out = n_profile)), na.last = TRUE)
+  orig_x = df[[vname]]
   
-  temp = df[rep(index, n_profile+1),]
-  temp[[vname]] = x_range
-  temp[['model']] = predict(model.gbm, n.trees = best_it.gbm, type = 'response', newdata = temp)
-  temp[['sample_id']] = index
+  res = ldply(seq(runs), function(i){
+    df[[vname]] = sample(orig_x, length(orig_x))
+    
+    pred.gbm_i = predict(model.gbm, n.trees = best_it.gbm, type = 'response', newdata = df)
+    
+    data.frame(i, auc = gbm.roc.area(actual, pred.gbm_i), ks = binmodel_ks(actual, pred.gbm_i) )
+  })
+  res$name = vname
   
-  return (temp)
+  return(res)
 })
 
-setDT(df_profiles)
+setDT(perm_importance)
 
-df_profiles_avg = df_profiles[, .(mean(model) ), by = .(Age)]
+auc_orig = gbm.roc.area(actual, pred.gbm)
 
-ggplot(cbind(df[sample_index,c(vname), with = F], p = pred.gbm[sample_index]), aes_string(vname, 'p')) + 
-  geom_point(color = 'red') + geom_line(data = df_profiles, aes_string(vname, 'model', group = 'sample_id'), color = 'blue', alpha = 0.2)
-  
+ggplot(perm_importance, aes(ks, auc_orig - auc, group = name, color = name)) + geom_point()
 
+importance = perm_importance[,.(diff = auc_orig - mean(auc), std=sd(auc) ), by = .(name)]
+setorder(importance, -std)
+
+kable(importance)
+
+ggplot(importance, aes(diff, std, group = name, color = name, label = name)) + geom_point() + 
+#  geom_label(hjust = 0) +
+  geom_text(hjust = 0, angle = 0, fontface = "bold", check_overlap = TRUE)
+
+ggplot(perm_importance, aes(auc, group = reorder(name,auc), fill = reorder(name,auc))) + 
+  geom_density(alpha = 0.8, adjust = 0.5)  + theme(legend.position = 'bottom')
+
+ggplot(perm_importance, aes(reorder(name,auc), auc)) + 
+  #geom_violin(adjust = 0.5) + 
+  geom_boxplot() +
+  geom_jitter(height = 0, width = 0.2, alpha = 0.5) + 
+  geom_hline(yintercept = gbm.roc.area(actual, pred.gbm), color = 'red')
 
 ```
 

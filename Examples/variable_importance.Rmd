@@ -104,33 +104,31 @@ plot_binmodel_predictions(actual, pred.gbm)
 ## GBM: b opt
 ```{r gbm_model_param_tune, echo=FALSE, eval = FALSE}
 
-gbm_bayes <- function(bag_fraction, my_shrinkage) {
+df_s = df[,all.vars(formula.gbm), with = F]
+
+gbm_bayes <- function(bag_fraction, my_shrinkage, interaction_depth) {
   
   set.seed(1234)
-  model.gbm_test  = gbm(formula.gbm, 
+  model.gbm_test  = gbm(formula.gbm,
                             distribution = "bernoulli",
-                            n.trees = 10,
+                            n.trees = 2000,
                             cv.folds=10,
                             shrinkage = my_shrinkage,
-                            interaction.depth=2,
+                            interaction.depth=interaction_depth,
                             train.fraction = 1.0,
                             bag.fraction = bag_fraction,
                             n.cores = 4,
                             var.monotone = NULL,
-                            data = df[,all.vars(formula.gbm), with = F],
+                            data = df_s,
                             verbose = FALSE)
-  best_it.gbm_test = gbm.perf(model.gbm_test, plot.it = F)
-  pred.gbm_test = predict(model.gbm_test, n.trees = best_it.gbm_test, type = 'response')
-  
-  return ( list(Score = -min(model.gbm_test$cv.error, na.rm = T),   Pred = pred.gbm_test) )
+  #best_it.gbm_test = gbm.perf(model.gbm_test, plot.it = F)
+  #pred.gbm_test = predict(model.gbm_test, n.trees = best_it.gbm_test, type = 'response')
+  return ( list(Score = -min(model.gbm_test$cv.error, na.rm = T),   Pred = 0) )
 }
 
-my_bounds = list(bag_fraction = c(0.5, 1.0),
-                 my_shrinkage = c(0.1, 0.001))
-
-list(bag_fraction = c(0.1, 1.0),
-     my_shrinkage = c(0.1, 0.001),
-     interaction_depth = c(1L, 10L))
+my_bounds = list(my_shrinkage = c(0.001, 0.1),
+                 bag_fraction = c(0.5, 1.0),
+                 interaction_depth = c(1L, 10L))
 
 opt_res <- BayesianOptimization(gbm_bayes,
                                 bounds = my_bounds,

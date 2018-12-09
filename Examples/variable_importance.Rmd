@@ -41,6 +41,9 @@ df[,Survived := as.numeric(Survived)]
 cat_vars = c('Pclass','Sex','Embarked')
 df[, (cat_vars):=lapply(.SD, as.factor), .SDcols = cat_vars]
 
+df[, Cabin_count := stri_count_fixed(df$Cabin, ' ') + 1 ]
+df[, Cabin_char := stri_sub(df$Cabin, length = 1) ]
+
 factor_vars = names(df)[sapply(df, class) == 'factor']
 
 actual = df$Survived
@@ -55,7 +58,7 @@ formula.gbm = formula(Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare + Emb
 model_vars = all.vars(formula.gbm) %!in_set% c('Survived')
 
 var.monotone = rep(0, length(model_vars))
-mon_inc_vars = c()
+mon_inc_vars = c('Fare')
 mon_dec_vars = c('Age')
 var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
@@ -65,7 +68,7 @@ model.gbm  = gbm(formula.gbm,
                             n.trees = 1500,
                             cv.folds=10,
                             shrinkage = 0.01,
-                            interaction.depth=4,
+                            interaction.depth=3,
                  train.fraction = 1.0,
                  bag.fraction = 0.9,
                  n.cores = 4,
@@ -89,6 +92,10 @@ marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 var_interaction = gbm_interactions(model.gbm, df, iter = best_it.gbm, min_influence = 1, degree = 2) 
 plot_gbminteractions(subset(var_interaction, interaction_score>0.05))
 print(var_interaction)
+setDT(var_interaction)
+#var_interaction[, var1:=stri_split_fixed(vars, '|', simplify =T)[,1]]
+#var_interaction[, var2:=stri_split_fixed(vars, '|', simplify =T)[,2]]
+
 
 plots = plot_gbmpartial_2d(model.gbm, best_it.gbm, as.character(subset(var_interaction,interaction_score>0.1)$vars), output_type = 'link')
 marrangeGrob(plots, nrow = 3, ncol = 2, top = NULL)
@@ -99,12 +106,23 @@ marrangeGrob(plots, nrow = 3, ncol = 2, top = NULL)
 plot_binmodel_predictions(actual, pred.gbm)
 #gbm.roc.area(actual, pred.gbm)
 
+#all vars
+plots = llply(all.vars(formula.gbm)[-1], function(var_name) {
+  p = plot_profile(pred.gbm, actual, df[[var_name]], error_band = 'binom') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 3, ncol = 2, top = NULL)
+
+
 ```
 
 ## GBM: b opt
 ```{r gbm_model_param_tune, echo=FALSE, eval = FALSE}
 
 df_s = df[,all.vars(formula.gbm), with = F]
+
+#cv_folds <- KFold(df$Survived, nfolds = 10, stratified = TRUE, seed = 0)
 
 gbm_bayes <- function(bag_fraction, my_shrinkage, interaction_depth) {
   
@@ -118,7 +136,7 @@ gbm_bayes <- function(bag_fraction, my_shrinkage, interaction_depth) {
                             train.fraction = 1.0,
                             bag.fraction = bag_fraction,
                             n.cores = 4,
-                            var.monotone = NULL,
+                            var.monotone = var.monotone,
                             data = df_s,
                             verbose = FALSE)
   #best_it.gbm_test = gbm.perf(model.gbm_test, plot.it = F)
@@ -132,18 +150,20 @@ my_bounds = list(my_shrinkage = c(0.001, 0.1),
 
 opt_res <- BayesianOptimization(gbm_bayes,
                                 bounds = my_bounds,
-                                init_grid_dt = NULL, init_points = 10, n_iter = 20,
+                                init_grid_dt = NULL, init_points = 10, n_iter = 30,
                                 acq = "ucb",  #"ucb", "ei" or "poi"
                                 kappa = 2.576, eps = 0.0,
                                 verbose = TRUE)
 
+#fixed seed(1234), ucb,  init_points = 10, n_iter = 20, kappa = 2.576, eps = 0.0 (non-mon)
+#my_shrinkage = 0.0937	bag_fraction = 0.8774	interaction_depth = 3.0000 
 ```
 
 ### GBM Model: Partial Dependency
 
 ```{r gbm_model_pd, echo=FALSE}
 
-n_profile = 20
+n_profile = 100
 n_sample = 100
 sample_index = sample.int(nrow(df),n_sample )
 
@@ -177,13 +197,22 @@ plots = llply(as.character(var_inf$var), function(vname) {
   
   setDT(df_profiles)
   
+  rel_interactions = var_interaction[stri_detect_fixed(as.character(vars), vname),]
+  setorder(rel_interactions, -interaction_score)
+  
+  strongest_interaction = ''
+  
+  if(nrow(rel_interactions)>0)
+     strongest_interaction = stri_replace_all_fixed(stri_replace_all_fixed( as.character(rel_interactions$vars[1]), vname, ''), '|','')
+  
   df_profiles_avg = df_profiles[, .(avg=mean(model, na.rm = T), .N), by = c(vname)]
   
   p = ggplot(cbind(df[sample_index,c(vname), with = F], p = pred.gbm[sample_index]), aes_string(vname, 'p')) + 
     geom_point(color = 'red') + geom_rug(alpha = 0.2,  position = position_jitter(width = ifelse(x_factor,0.25, 0) , height = 0)) +
-    geom_line(data = df_profiles, aes_string(vname, 'model', group = 'sample_id'), color = 'blue', alpha = 0.2) + 
+    geom_line(data = df_profiles, aes_string(vname, 'model', group = 'sample_id', color = 'Sex'), alpha = 0.2) +
+    #geom_line(data = df_profiles, aes_string(vname, 'model', group = 'sample_id'), color = 'blue', alpha = 0.2) + 
     geom_line(data = df_profiles_avg[N>=n_sample,], aes_string(vname, 'avg'), color = 'black', size = 1) + 
-    ggtitle(vname)
+    ggtitle(vname) + theme(legend.position = 'none')
   
   if(x_factor)
     p = p + geom_point(data = df_profiles_avg[N>=n_sample,], aes_string(vname, 'avg'), color = 'black')
@@ -215,6 +244,7 @@ perm_importance = ldply(as.character(var_inf$var), function(vname) {
     
     data.frame(i, auc = gbm.roc.area(actual, pred.gbm_i), ks = binmodel_ks(actual, pred.gbm_i) )
   })
+  df[[vname]] = orig_x
   res$name = vname
   
   return(res)
@@ -244,9 +274,82 @@ ggplot(perm_importance, aes(auc, group = reorder(name,auc), fill = reorder(name,
 
 ggplot(perm_importance, aes(reorder(name,auc), auc)) + 
   #geom_violin(adjust = 0.5) + 
-  geom_boxplot() +
+  geom_boxplot(color = 'red') +
   geom_jitter(height = 0, width = 0.2, alpha = 0.5) + 
   geom_hline(yintercept = gbm.roc.area(actual, pred.gbm), color = 'red')
 
 ```
+
+## Linear Model: Permutation importance
+
+```{r linear_model_importance, echo=FALSE}
+
+n_points = 1000
+
+x1 = rnorm(n_points)
+x2 = 0.5*rnorm(n_points)
+
+df_lm = data.frame(y = 2*x1 + x2 + 0.5 * rnorm(n_points), x1, x2)
+
+actual = df_lm$y
+
+formula.lm = as.formula(y ~ x1 + x2)
+
+model.lm = lm(formula.lm, df_lm)
+
+summary(model.lm)
+
+pred.lm = predict(model.lm, newdata = df_lm)
+
+sum_sqr <-function(x) {sum(x * x, na.rm = T)}
+
+runs = 100
+
+perm_importance = ldply(all.vars(formula.lm)[-1], function(vname) {
+  
+  orig_x = df_lm[[vname]]
+  
+  res = ldply(seq(runs), function(i){
+    df_lm[[vname]] = sample(orig_x, length(orig_x))
+    
+    pred.lm_i = predict(model.lm, newdata = df_lm)
+    
+    data.frame(i, r2 = summary(lm(actual ~ pred.lm_i))$r.squared )
+  })
+  orig_x = df_lm[[vname]]
+  res$name = vname
+  
+  return(res)
+})
+
+setDT(perm_importance)
+
+r2_orig = summary(lm(actual ~ pred.lm))$r.squared
+
+importance = perm_importance[,.(diff = r2_orig - mean(r2), std=sd(r2) ), by = .(name)]
+setorder(importance, -std)
+
+importance$rating = 100*importance$std * importance$std/sum_sqr(importance$std)
+
+kable(importance)
+
+plot_gbminfluence(data.frame(var = importance$name, rel.inf = importance$rating))
+
+ggplot(importance, aes(diff, std, group = name, color = name, label = name)) + geom_point() + 
+#  geom_label(hjust = 0) +
+  geom_text(hjust = 0, angle = 0, fontface = "bold", check_overlap = TRUE)
+
+ggplot(perm_importance, aes(r2, group = reorder(name,r2), fill = reorder(name,r2))) + 
+  geom_density(alpha = 0.8, adjust = 0.5)  + theme(legend.position = 'bottom')
+
+ggplot(perm_importance, aes(reorder(name,r2), r2)) + 
+  #geom_violin(adjust = 0.5) + 
+  geom_boxplot(color = 'red') +
+  geom_jitter(height = 0, width = 0.2, alpha = 0.5) + 
+  geom_hline(yintercept = gbm.roc.area(actual, pred.gbm), color = 'red')
+
+```
+
+
+
 

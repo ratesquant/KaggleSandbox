@@ -83,7 +83,9 @@ if(file.exists(df_filename)) {
   device_fields = c('browser', 'operatingSystem', 'isMobile', 'deviceCategory')
   trafficSource_fields = c('campaign', 'source', 'medium', 'keyword',
                            'isTrueDirect','adContent',
-                           'adwordsClickInfo.page','adwordsClickInfo.slot','adwordsClickInfo.gclId','adwordsClickInfo.adNetworkType','adwordsClickInfo.isVideoAd','referralPath')
+                           'adwordsClickInfo.page',
+                           'adwordsClickInfo.slot','adwordsClickInfo.gclId','adwordsClickInfo.adNetworkType','adwordsClickInfo.isVideoAd',
+                           'referralPath')
   totals_fields = c('visits', 'hits', 'pageviews','bounces', 'newVisits', 'transactionRevenue')
   
   geo_columns           = stri_join('geo_', geo_fields)
@@ -119,13 +121,13 @@ if(file.exists(df_filename)) {
   #df[,totals_columns, with = F]
   
   #check forpossible values
-  #temp = ldply(sample.int(nrow(df), 10000), function(i) {
-  #   res = data.table(t(unlist(parse_json_all(df$trafficSource[i]))))  
-  #   return (res)
-  #} )
+  temp = ldply(sample.int(nrow(df), 10000), function(i) {
+     res = data.table(t(unlist(parse_json_all(df$geoNetwork[i]))))  
+     return (res)
+  } )
+  setDT(temp)
   #str(temp)
   #sapply(temp, function(x) length(unique(x)))
-  
   
   #a = df[, .(geoNetwork, geo_continent)]
   #a = df[, .(device, device_isMobile)]
@@ -157,6 +159,10 @@ if(file.exists(df_agg_filename)) {
     
   nth_most_freq <- function(x, nth = 1) {names(sort(table(x, useNA = "ifany"), decreasing=TRUE))[nth]}
   count_unique <- function(x) {length(unique(x))}
+  
+  #
+  #system.time(nth_most_freq(df$channelGrouping))
+  #system.time(count_unique(df$channelGrouping))
   
   df_agg = df[, .(.N, 
                   
@@ -228,13 +234,23 @@ if(file.exists(df_agg_filename)) {
                   trafficSource_referralPath_sec = nth_most_freq(trafficSource_referralPath, 2),
                   trafficSource_referralPath_n   = count_unique(trafficSource_referralPath),
                   
-                  geo_networkDomain     = nth_most_freq(geo_networkDomain),
-                  geo_networkDomain_sec = nth_most_freq(geo_networkDomain, 2),
-                  geo_networkDomain_n   = count_unique(geo_networkDomain),
+                  trafficSource_campaign     = nth_most_freq(trafficSource_campaign),
+                  trafficSource_campaign_n   = count_unique(trafficSource_campaign),
                   
+                  trafficSource_adContent     = nth_most_freq(trafficSource_adContent),
+                  trafficSource_adContent_n   = count_unique(trafficSource_adContent),
+                   
                   trafficSource_medium     = nth_most_freq(trafficSource_medium),
                   trafficSource_medium_sec = nth_most_freq(trafficSource_medium, 2),
                   trafficSource_medium_n  = count_unique(trafficSource_medium),
+                  
+                  trafficSource_keyword     = nth_most_freq(trafficSource_keyword),
+                  trafficSource_keyword_n  = count_unique(trafficSource_keyword),
+                  trafficSource_keyword_all = stri_join(unique(trafficSource_keyword), '|'),
+                  
+                  geo_networkDomain     = nth_most_freq(geo_networkDomain),
+                  geo_networkDomain_sec = nth_most_freq(geo_networkDomain, 2),
+                  geo_networkDomain_n   = count_unique(geo_networkDomain),
                   
                   device_deviceCategory      = nth_most_freq(device_deviceCategory),
                   device_deviceCategory_sec  = nth_most_freq(device_deviceCategory, 2),
@@ -250,12 +266,28 @@ if(file.exists(df_agg_filename)) {
                   totals_hits      = sum(totals_hits, na.rm = T)/.N,
                   totals_pageviews = sum(totals_pageviews, na.rm = T)/.N,
                   totals_bounces   = sum(totals_bounces, na.rm = T)/.N,
+                  totals_newVisits = sum(totals_newVisits, na.rm = T)/.N,
                   
                   totals_hits_sd      = sd(totals_hits, na.rm = T),
                   totals_pageviews_sd = sd(totals_pageviews, na.rm = T),
                   
+                  totals_hits_sk      = skewness(totals_hits, na.rm = T),
+                  totals_pageviews_sk = skewness(totals_pageviews, na.rm = T),
+                  
+                  totals_hits_ku      = kurtosis(totals_hits, na.rm = T),
+                  totals_pageviews_ku = kurtosis(totals_pageviews, na.rm = T),
+                  
                   totals_hits_max      = max(totals_hits, na.rm = T),
                   totals_pageviews_max = max(totals_pageviews, na.rm = T),
+                  
+                  totals_hits_min      = min(totals_hits, na.rm = T),
+                  totals_pageviews_min = min(totals_pageviews, na.rm = T),
+                  
+                  totals_hits_q80      = quantile(totals_hits, probs = 0.8, na.rm = T, names = F),
+                  totals_pageviews_q80 = quantile(totals_pageviews, probs = 0.8, na.rm = T, names = F),
+                  
+                  totals_hits_q20      = quantile(totals_hits, probs = 0.2, na.rm = T, names = F),
+                  totals_pageviews_q20 = quantile(totals_pageviews, probs = 0.2, na.rm = T, names = F),
                   
                   revenue = log(1  + sum(totals_transactionRevenue, na.rm = T))),
               , by = .(fullVisitorId, is_train)]
@@ -347,6 +379,9 @@ df_agg[, geo_subContinent_is_SoutheastAsia:=as.numeric(geo_subContinent == 'Sout
 df_agg[, geo_subContinent_is_EasternAsia:=as.numeric(geo_subContinent == 'Eastern Asia')]
 df_agg[, geo_subContinent_is_caribbean:=as.numeric(geo_subContinent == 'Caribbean')]
 df_agg[, geo_country_is_puertorico:=as.numeric(geo_country == 'Puerto Rico')]
+
+df_agg[,trafficSource_keyword_isset := as.numeric(!is.na(trafficSource_keyword))]
+df_agg[trafficSource_keyword %in% c('(not provided)', '(User vertical targeting)','(automatic matching)'), trafficSource_keyword_isset := 0]
 
 max_levels = 100 #gbm can handle up to 1024
 var_names = names(which(lapply(df_agg, function(x) length(levels(x))>max_levels)==TRUE)) %!in_set% c('fullVisitorId')
@@ -571,7 +606,8 @@ too_many_levels = names(which(sapply(df_agg, function(x) length(levels(x))) >= 1
 zero_inf_vars.rgs = c("geo_subContinent_n","geo_city_n","device_operatingSystem_sec","trafficSource_source_n", "trafficSource_medium_n",
  "device_browser_sec", "device_browser_n", "total_weeks", 
  "device_operatingSystem_main", "geo_networkDomain_levels",  "geo_subContinent_is_SoutheastAsia",'channelGrouping_main','geo_city_set1','day_diff_sd_log','totals_hits_sd_log','totals_hits_log',
- 'date_m1_pct_pos', 'date_m2_pct_pos','date_m3_pct_pos', 'date_m4_pct_pos', 'date_m5_pct_pos','date_m6_pct_pos', 'date_m7_pct_pos','date_m8_pct_pos','date_m9_pct_pos','date_m10_pct_pos','date_m11_pct_pos','date_m12_pct_pos','geo_subContinent_is_EasternAsia','geo_subContinent_is_caribbean','device_operatingSystem_n','geo_networkDomain_is_edu','geo_networkDomain_level3_major','device_browser_main', 'totals_pageviews_sd_log','totals_pageviews_log','totals_bounces_pos','tablet_n','geo_country_se3','geo_continent_n','geo_continent')
+ 'date_m1_pct_pos', 'date_m2_pct_pos','date_m3_pct_pos', 'date_m4_pct_pos', 'date_m5_pct_pos','date_m6_pct_pos', 'date_m7_pct_pos','date_m8_pct_pos','date_m9_pct_pos','date_m10_pct_pos','date_m11_pct_pos','date_m12_pct_pos','geo_subContinent_is_EasternAsia','geo_subContinent_is_caribbean','device_operatingSystem_n','geo_networkDomain_is_edu','geo_networkDomain_level3_major','device_browser_main', 'totals_pageviews_sd_log','totals_pageviews_log','totals_bounces_pos','tablet_n','geo_country_se3','geo_continent_n','geo_continent',
+ 'channelGrouping_n','trafficSource_referralPath_n', 'geo_networkDomain_is_cantv')
 
 all_vars = names(df_agg) %!in_set% c(exclude_vars, too_many_levels, zero_inf_vars.rgs)
 
@@ -610,7 +646,7 @@ mon_dec_vars = c()
 # day_diff_sd_log is quiestionable
 
 cv_folds = 10
-max_it = 2000
+max_it = 4000
 
 model.pd  = gbm(formula.pd,
                  distribution = "bernoulli",
@@ -790,7 +826,7 @@ var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
 cv_folds = 10
-max_it = 1500
+max_it = 3000
 #0.49
 model.rgs  = gbm(formula.rgs,
                  distribution = "gaussian",

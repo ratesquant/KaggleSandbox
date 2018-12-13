@@ -28,7 +28,9 @@ library(foreach)
 library(microbenchmark)
 
 #working_folder = 'C:/Dev/Kaggle/'
-working_folder = 'F:/Github/KaggleSandbox'
+#working_folder = 'F:/Github/KaggleSandbox'
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
 
 source(file.path(working_folder, '/Utils/common.R'))
 
@@ -47,10 +49,12 @@ source(file.path(working_folder, '/Utils/common.R'))
 
  df_all[,not_prime:=as.numeric(!(CityId %in% prime_ids))]
  
- #fwrite(df_all, file.path(working_folder,'Santa/data/cities_ex.csv'))
+ #fwrite(df_all, file.path(working_folder,'Santa/data/cities.100.csv'))
  
  df = df_all[1:101,] #for debugging
  #df = df_all
+ 
+ #fwrite(df, file.path(working_folder,'Santa/data/cities.1k.csv'))
  
 ```
 
@@ -191,7 +195,7 @@ mutate_tour_ex <- function(object, parent, mut_pct = 0.01)
   return(mutate)
 }
 
-solution_file = file.path(working_folder,'Santa/data/population.all.rds')
+solution_file = file.path(working_folder,'Santa/data/population.100.rds')
 
 suggestedSol = NULL
 
@@ -204,16 +208,16 @@ if( file.exists(solution_file) ){
 res = ga(type = c( "permutation"), eval_path, 
    names = as.character(df$CityId[-1]),
    lower = 1,upper = max(df$CityId),
-   lower = 1, upper = max(df$CityId),
-   maxiter = 1000,
+   maxiter = 10000,
    popSize = 100,
    pcrossover = 0.0,
    pmutation = 0.7,
+   monitor = FALSE,
    #mutation = mutate_tour,
    mutation = function(object, parent) {mutate_tour_ex(object, parent, mut_pct = 0.01)},
    suggestions = suggestedSol)
 
-saveRDS(res@population, file.path(working_folder,'Santa/data/population.all.rds'))
+saveRDS(res@population, file.path(working_folder,'Santa/data/population.100.rds'))
 
 #head(res@population)
 
@@ -230,7 +234,8 @@ sprintf('best: %f', eval_path(ga_solution)) # -13020.02
 if(nrow(df)<10000){
 ggplot(df, aes(X, Y)) + geom_point() + 
   geom_path(data =df[c(0, ga_solution,0)+1,], aes(X, Y), color = 'red') + 
-  geom_point(data =df[1,], aes(X, Y), color = 'blue', size = 2 )
+  geom_point(data =df[1,], aes(X, Y), color = 'blue', size = 2 ) + 
+    ggtitle(sprintf('best: %0.1f', eval_path(ga_solution)) )
 }
 
 #6 8 5 7 1 9 3 2 4

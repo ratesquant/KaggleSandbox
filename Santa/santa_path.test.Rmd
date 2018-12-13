@@ -105,7 +105,7 @@ n_of_cities(tsp)
 #image(tsp)
 #plot(tsp)
 
-#write_TSPLIB(tsp, file.path(working_folder,'Santa/data/data.1k.tsp'))
+#write_TSPLIB(tsp, file.path(working_folder,'Santa/data/data.tsp'))
 
 #check all methods
 if(FALSE) {

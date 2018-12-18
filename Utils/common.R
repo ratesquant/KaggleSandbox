@@ -313,9 +313,7 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
     }
   }
   
-  index = complete.cases(act, mod)
-  
-  res = ddply(data.frame(buckets = buckets[index], actual = act[index], model = mod[index], profile = profile[index]), .(buckets), function(x) {
+  agg_buckets<-function(x) {
     ns = length(x$actual)
     
     if(average_value == 'mean'){
@@ -338,7 +336,7 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
     
     conf_break = model_mean < conf_int[1] | model_mean > conf_int[2]
     
-    res = c(actual = actual_mean,
+    res = list(actual = actual_mean,
       model = model_mean,
       actual_std = actual_std,
       count = ns,
@@ -349,9 +347,12 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
       actual_min_break = ifelse(conf_break, conf_int[1], actual_mean),
       actual_max_break = ifelse(conf_break, conf_int[2], actual_mean))
     return ( res )
-  })
+  }
   
-  res = subset(res, count >= min_obs)
+  df_temp = data.table(actual = act, model = mod, bucket = buckets, profile)
+  res = df_temp[complete.cases(act, mod),agg_buckets(.SD), by = .(bucket)]
+  
+  res = res[count >= min_obs,]
   
   y_min = min(res$actual, res$model)
   y_max = max(res$actual, res$model)
@@ -359,7 +360,7 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
   if(nrow(res) > 0 )
   {
     if(factor_plot){
-      res$buckets = factor(res$buckets)
+      res[,buckets := factor(buckets)]
       xlabels = levels(res$buckets)
       
       plot_result = ggplot(res, aes(buckets, actual, group = 1)) + 

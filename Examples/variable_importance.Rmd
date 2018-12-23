@@ -15,6 +15,7 @@ library(gbm)
 library(data.table)
 library(plyr)
 library(stringi)
+library(stringr)
 library(ggplot2)
 library(gridExtra)
 library(zip)
@@ -164,7 +165,7 @@ opt_res <- BayesianOptimization(gbm_bayes,
 ```{r gbm_model_pd, echo=FALSE}
 
 n_profile = 100
-n_sample = 100
+n_sample = 5
 sample_index = sample.int(nrow(df),n_sample )
 
 plots = llply(as.character(var_inf$var), function(vname) {
@@ -183,19 +184,19 @@ plots = llply(as.character(var_inf$var), function(vname) {
   df_profiles = ldply(sample_index, function(index){
     
     if(x_factor)
-      x_range = as.factor(unique( c(as.character(df[[vname]][index]), range) ))
+      x_range = unique(df[[vname]])
     else
       x_range = unique( c(df[[vname]][index], range) )
     
     temp = df[rep(index, length(x_range)),]
     temp[[vname]] = x_range
-    temp[['model']] = predict(model.gbm, n.trees = best_it.gbm, type = 'response', newdata = temp)
     temp[['sample_id']] = index
     
     return (temp)
   })
-  
   setDT(df_profiles)
+  model_prof = predict(model.gbm, n.trees = best_it.gbm, type = 'response', newdata = df_profiles)
+  df_profiles[, model:= model_prof]
   
   rel_interactions = var_interaction[stri_detect_fixed(as.character(vars), vname),]
   setorder(rel_interactions, -interaction_score)
@@ -214,12 +215,15 @@ plots = llply(as.character(var_inf$var), function(vname) {
     geom_line(data = df_profiles_avg[N>=n_sample,], aes_string(vname, 'avg'), color = 'black', size = 1) + 
     ggtitle(vname) + theme(legend.position = 'none')
   
-  if(x_factor)
-    p = p + geom_point(data = df_profiles_avg[N>=n_sample,], aes_string(vname, 'avg'), color = 'black')
+  if(x_factor){
+    df_profiles_avg[, xnum := as.numeric(df_profiles_avg[[vname]])-0.5]
+    df_profiles_avg[, xnum_end := xnum + 1.0]
+    p = p + geom_segment(data = df_profiles_avg[N>=n_sample,], aes_string(x = 'xnum', xend = 'xnum_end', y = 'avg', yend = 'avg', group = 1), color = 'black', size = 1)
+  }
   
   return (p)
 })
-marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
+marrangeGrob(plots, nrow = 2, ncol = 3, top = NULL)
 
 
 
@@ -349,6 +353,7 @@ ggplot(perm_importance, aes(reorder(name,r2), r2)) +
   geom_hline(yintercept = gbm.roc.area(actual, pred.gbm), color = 'red')
 
 ```
+
 
 
 

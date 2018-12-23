@@ -1,0 +1,332 @@
+---
+title: "Catagorical Features"
+output: word_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(data.table)
+library(rpart)
+library(ggdendro)
+library(gbm)
+library(plyr)
+library(Matrix)
+library(pryr)
+library(stringr)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+
+working_folder = 'F:/Github/KaggleSandbox'
+
+source(file.path(working_folder, '/Utils/common.R'))
+
+
+temp = combn(LETTERS,3,simplify = TRUE)
+total_comb = stri_join(temp[1,], temp[2,], temp[3,])
+
+gen_cat_data <- function(n_levels) {
+  df = data.table(y = sample(c(0,1),n_levels, replace= TRUE), cat = factor(sample(total_comb, n_levels, replace= TRUE )) )
+  return (df)
+}
+
+```
+
+## Util functions
+
+```{r util_funct}
+
+fit_model_f <- function(df) {
+  model.rp = rpart(y ~ .,
+        data = df,
+        method = "class",
+        parms = list(split = "information"),
+        #parms = list(split = "gini"),
+        control = rpart.control(minsplit = 1,
+                                minbucket = 1,
+                                cp = 1e-15,
+                                maxcompete = 1,
+                                maxsurrogate = 1,
+                                usesurrogate = 0,
+                                xval = 1,
+                                surrogatestyle = 1,
+                                maxdepth = 30))
+  
+  return (model.rp)
+}
+
+```
+
+## Recursive Partitioning
+
+```{r rpart_example}
+df = gen_cat_data(64)
+
+model.rp = fit_model_f(df)
+
+summary(model.rp)
+
+printcp(model.rp)
+
+ggdendrogram( dendro_data(model.rp),  rotate = TRUE, size = 1)
+
+fitr <- dendro_data(model.rp)
+  ggplot() + 
+    geom_segment(data=fitr$segments, aes(x=x, y=y, xend=xend, yend=yend)) + 
+    geom_text(data=fitr$labels, aes(x=x, y=y, label=label)) +
+    geom_text(data=fitr$leaf_labels, aes(x=x, y=y, label=label)) +
+    theme_dendro()
+
+pred.rp = predict(model.rp, newdata = df)
+
+plot_binmodel_predictions(df$y, pred.rp[,2])
+
+print(sprintf('AUC = %f', gbm.roc.area(df$y, pred.rp[,2] )) )
+
+# how it depends in number of levels
+res_f = ldply(seq(4, length(total_comb)), function(i) {
+  df = gen_cat_data(i)
+  model.rp = fit_model_f(df)
+  data.frame(cat_levels = i, auc = gbm.roc.area(df$y, predict(model.rp, newdata = df)[,2] ) )
+})
+res_f$run_type= 'categorical'
+
+ggplot(res_f, aes(cat_levels, auc)) + geom_point() + ggtitle('rpart AUC (true cat)')
+
+```
+
+## One-hot encoding
+
+```{r rpart_example_one_hot}
+df = gen_cat_data(64)
+
+#pryr::object_size(df)
+
+#sparse.model.matrix(~ cat + 0, data = df)
+
+df_1h = data.table(model.matrix(~ cat + 0, data = df))
+df_1h[, y := df$y]
+
+model.rp = rpart(y ~ .,
+      data = df_1h,
+      method = "class",
+      parms = list(split = "information"),
+      control = rpart.control(minsplit = 1,
+                              minbucket = 1,
+                              cp = 1e-15,
+                              maxcompete = 1,
+                              maxsurrogate = 1,
+                              usesurrogate = 0,
+                              xval = 1,
+                              surrogatestyle = 1,
+                              maxdepth = 30))
+summary(model.rp)
+
+printcp(model.rp)
+
+ggdendrogram(model.rp)
+ggdendrogram( dendro_data(model.rp),  rotate = TRUE, size = 1)
+
+pred.rp = predict(model.rp, newdata = df_1h)
+
+plot_binmodel_predictions(df_1h$y, pred.rp[,2])
+
+print(sprintf('AUC = %f', gbm.roc.area(df_1h$y, pred.rp[,2] )) )
+
+# how it depends in number of levels
+res_1h = ldply(seq(4, length(total_comb)), function(i) {
+  df = gen_cat_data(i)
+  
+  df_1h = data.table(model.matrix(~ cat + 0, data = df))
+  df_1h[, y := df$y]
+
+  model.rp = fit_model_f(df_1h)
+  data.frame(cat_levels = i, auc = gbm.roc.area(df_1h$y, predict(model.rp, newdata = df_1h)[,2] ) )
+})
+
+res_1h$run_type= 'one hot'
+
+ggplot(res_1h, aes(cat_levels, auc)) + geom_point() + ggtitle('rpart AUC (one hot)')
+
+
+```
+
+## Num encoding
+
+```{r rpart_example_num}
+df = gen_cat_data(64)
+
+df[, cat_num := as.numeric(cat)]
+
+model.rp = rpart(y ~ cat_num,
+      data = df,
+      method = "class",
+      parms = list(split = "information"),
+      control = rpart.control(minsplit = 1,
+                              minbucket = 1,
+                              cp = 1e-15,
+                              maxcompete = 1,
+                              maxsurrogate = 1,
+                              usesurrogate = 0,
+                              xval = 1,
+                              surrogatestyle = 1,
+                              maxdepth = 30))
+summary(model.rp)
+
+printcp(model.rp)
+
+ggdendrogram(model.rp)
+ggdendrogram( dendro_data(model.rp),  rotate = TRUE, size = 1)
+
+pred.rp = predict(model.rp, newdata = df)
+
+plot_binmodel_predictions(df$y, pred.rp[,2])
+
+print(sprintf('AUC = %f', gbm.roc.area(df$y, pred.rp[,2] )) )
+
+# how it depends in number of levels
+res_num = ldply(seq(4, length(total_comb)), function(i) {
+  df = gen_cat_data(i)
+  
+  df[, cat_num := as.numeric(cat)]
+
+  model.rp = fit_model_f(df)
+  data.frame(cat_levels = i, auc = gbm.roc.area(df$y, predict(model.rp, newdata = df)[,2] ) )
+})
+
+res_num$run_type= 'numerical'
+
+ggplot(res_num, aes(cat_levels, auc)) + geom_point() + ggtitle('rpart AUC (numeric)')
+
+```
+
+## Binomial encoding
+
+```{r rpart_example_bin}
+df = gen_cat_data(64)
+
+df_bin = data.table(matrix(
+  as.integer(intToBits(as.integer(as.factor(df$cat)))),
+  ncol = 32,
+  nrow = nrow(df),
+  byrow = TRUE
+)[, 1:ceiling(log(nrow(unique(df)) + 1)/log(2))])
+
+df_bin[, y := df$y]
+
+model.rp = rpart(y ~ .,
+      data = df_bin,
+      method = "class",
+      parms = list(split = "information"),
+      control = rpart.control(minsplit = 1,
+                              minbucket = 1,
+                              cp = 1e-15,
+                              maxcompete = 1,
+                              maxsurrogate = 1,
+                              usesurrogate = 0,
+                              xval = 1,
+                              surrogatestyle = 1,
+                              maxdepth = 30))
+summary(model.rp)
+
+printcp(model.rp)
+
+ggdendrogram(model.rp)
+ggdendrogram( dendro_data(model.rp),  rotate = TRUE, size = 1)
+
+pred.rp = predict(model.rp, newdata = df_bin)
+
+plot_binmodel_predictions(df_bin$y, pred.rp[,2])
+
+print(sprintf('AUC = %f', gbm.roc.area(df_bin$y, pred.rp[,2] )) )
+
+# how it depends in number of levels
+res_bin = ldply(seq(4, length(total_comb)), function(i) {
+  df = gen_cat_data(i)
+  
+    df_bin = data.table(matrix(
+    as.integer(intToBits(as.integer(as.factor(df$cat)))),
+    ncol = 32,
+    nrow = nrow(df),
+    byrow = TRUE
+  )[, 1:ceiling(log(nrow(unique(df)) + 1)/log(2))])
+
+  df_bin[, y := df$y]
+
+  model.rp = fit_model_f(df_bin)
+  data.frame(cat_levels = i, auc = gbm.roc.area(df_bin$y, predict(model.rp, newdata = df_bin)[,2] ) )
+})
+
+res_bin$run_type= 'binomial'
+
+ggplot(res_bin, aes(cat_levels, auc)) + geom_point() + ggtitle('rpart AUC (binomial)')
+
+```
+
+
+## Num encoding
+
+```{r summary}
+
+res = rbind(res_num, res_1h, res_f, res_bin)
+
+ggplot(res, aes(cat_levels, auc, group = run_type, color = run_type)) + geom_point() + geom_smooth() + ggtitle('rpart AUC')
+
+
+```
+
+## GBM
+
+```{r gbm_example_num}
+df = gen_cat_data(64)
+
+maxit = 1000
+
+model.gbm = gbm(y ~ ., 
+                data = df, 
+                distribution = 'bernoulli',
+                n.trees = maxit,
+                shrinkage = 0.01,#0.005
+                bag.fraction = 0.8,
+                interaction.depth = 2,
+                n.cores = 1,
+                verbose =  TRUE)
+
+plot_gbmiterations(model.gbm)
+
+pred.gbm = predict(model.gbm, n.trees = maxit, newdata = df, type = 'response')
+
+plot_binmodel_predictions(df$y, pred.gbm)
+
+print(sprintf('AUC = %f', gbm.roc.area(df$y, pred.gbm )) )
+
+# how it depends in number of levels
+res_gbm = ldply(seq(4, length(total_comb)), function(i) {
+    df = gen_cat_data(i)
+  
+    maxit = 100
+
+    model.gbm = gbm(y ~ ., 
+                    data = df, 
+                    distribution = 'bernoulli',
+                    n.trees = maxit,
+                    shrinkage = 0.01,#0.005
+                    interaction.depth = 7,
+                    bag.fraction = 0.9,
+                    n.minobsinnode = 1,
+                    n.cores = 1,
+                    verbose =  FALSE)
+  
+  data.frame(cat_levels = i, auc = gbm.roc.area(df$y, predict(model.gbm, n.trees = maxit, newdata = df, type = 'response') ) )
+})
+
+res_gbm$run_type= 'gbm'
+
+ggplot(res_gbm, aes(cat_levels, auc)) + geom_point() + ggtitle('rpart AUC (gbm)')
+
+```

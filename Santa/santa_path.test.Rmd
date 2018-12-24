@@ -57,7 +57,7 @@ source(file.path(working_folder, '/Utils/common.R'))
 ```{r eval_utils, echo=FALSE}
 extra_dist = as.numeric(seq(nrow(df)) %% 10 == 0)
 
-eval_path<-function(path){
+eval_path_ga<-function(path){
   path_ids = c(0, path, 0) + 1
   
   x_c = df$X[path_ids]
@@ -145,27 +145,27 @@ saveRDS(tsp_path, file.path(working_folder,'Santa/data/tsp_path.rds'))
 ```
 
 
-##Load concorde tours
+##Load tours
 ```{r load_tours, echo=FALSE, eval = FALSE}
 
-tour_files = list.files(file.path(working_folder, "santa/data/"), pattern = 'concorde_tour.[a-z]*.txt',
-                        full.names = TRUE)
+tour_files = list.files(file.path(working_folder, "santa/tours/"), pattern = 'solution*', full.names = TRUE)
 
 tours = foreach(i=1:length(tour_files), .combine=cbind ) %do% {
   tour_df = fread(tour_files[i])
   return(tour_df)
 }
 
-eval_path(t(as.matrix(tours[2:nrow(tours),]))[3,] )
+for (i in seq(ncol(tours))) {
+print(eval_path(t(as.matrix(tours[2:nrow(tours),]))[i,] ) )
+}
 
 ```
 
 
 ## GA solution
-446'884'408 - in order
-17.43 sec per 100 it for 1k nodes
-100 nodes - best: 29458.567700
 ```{r ga_solultion, echo=FALSE, eval = FALSE}
+
+best_solution = 1516840.8073343499563634
 
 mutate_tour <- function(object, parent)
 {
@@ -194,41 +194,52 @@ mutate_tour_ex <- function(object, parent, mut_pct = 0.01)
   return(mutate)
 }
 
-solution_file = file.path(working_folder,'Santa/data/population.10.rds')
+solution_file = file.path(working_folder,'Santa/data/population.all.rds')
 
 suggestedSol = NULL
+popSize = 100
 
 if( file.exists(solution_file) ){
   suggestedSol = readRDS(solution_file)
 }else{
+  #temp = t(as.matrix(tours[2:nrow(tours),]))
+  #suggestedSol = temp[ sample.int(nrow(temp),popSize, replace = TRUE), ]
   suggestedSol = t(as.matrix(tours[2:nrow(tours),]))
 }
 
-res = ga(type = c( "permutation"), eval_path, 
+#sapply(seq(nrow(suggestedSol)), function(i)eval_path_ga(suggestedSol[i,]))
+
+#sum(is.na(suggestedSol))
+#suggestedSol[1:5,c(1:10,ncol(suggestedSol)) ]
+
+res = ga(type = c( "permutation"), eval_path_ga, 
    names = as.character(df$CityId[-1]),
    lower = 1, upper = max(df$CityId),
    maxiter = 1000,
-   popSize = 100,
+   popSize = popSize,
    pcrossover = 0.0,
-   pmutation = 0.8,
+   pmutation = 0.80,
    mutation = mutate_tour,
-   monitor = FALSE,
+   monitor = TRUE,
    #mutation = function(object, parent) {mutate_tour_ex(object, parent, mut_pct = 0.1)},
    suggestions = suggestedSol)
 
-saveRDS(res@population, file.path(working_folder,'Santa/data/population.10.rds'))
+saveRDS(res@population, file.path(working_folder,'Santa/data/population.all.rds'))
 
 #head(res@population)
+#sapply(seq(nrow(res@population)), function(i)eval_path_ga(res@population[i,]))
 
 summary(res)
    
 plot(res)
 
-#plot(res@fitness)
+ggplot(data.frame(fitness = -sort(res@fitness)), aes(seq(length(fitness)), fitness)) + geom_point() + 
+  geom_hline(yintercept = best_solution, color = 'red')
 
 ga_solution = as.numeric(res@solution)
 
-sprintf('best: %f', eval_path(ga_solution)) # -13020.02 
+sprintf('improved: %e', eval_path(ga_solution)-best_solution) # current best 1516841
+#sprintf('best: %f', eval_path_ga(ga_solution)) # 
 
 if(nrow(df)<10000){
 ggplot(df, aes(X, Y)) + geom_point() + 

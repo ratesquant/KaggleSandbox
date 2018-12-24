@@ -42,16 +42,35 @@ void MCSolver::mutate_tour(const std::vector<int>& tour, int start_index, int n_
 	int e_index = std::max(index_1, index_2);
 
     //copy unchanged
-	for(int i=start_index; i<s_index; i++)
+	for(int i=start_index; i<start_index + n_tour_size; i++)
 		next_tour[i] = tour[i];
 
 	//reverse direction
 	for(int i=s_index; i<=e_index; i++)
 		next_tour[i] = tour[e_index + s_index - i];
 
-	//copy unchanged
-	for(int i=e_index+1; i<start_index + n_tour_size; i++)
+	assert (tour     [start_index] == 0 && 
+		    next_tour[start_index] == 0 && 
+		    tour     [start_index + n_tour_size - 1] == 0 && 
+			next_tour[start_index + n_tour_size - 1] == 0);
+}
+
+void MCSolver::mutate_tour_flip(const std::vector<int>& tour, int start_index, int n_tour_size, std::vector<int>& next_tour)
+{
+	//first and last point of each tour is 0 and does not change
+	double scale = (double) (n_tour_size - 2);
+
+	//sfmt_genrand_real2(&m_sfmt)
+
+	//pick 2 induces between [start_index + 1, start_index + 1 + n_tour_size] and reverse path between them
+	int index_1 = start_index + 1 + (int)floor(scale * sfmt_genrand_real2(&m_sfmt));
+	
+    //copy unchanged
+	for(int i=start_index; i<start_index + n_tour_size; i++)
 		next_tour[i] = tour[i];
+
+	next_tour[index_1  ] = tour[index_1+1];
+	next_tour[index_1+1] = tour[index_1  ];
 
 	assert (tour     [start_index] == 0 && 
 		    next_tour[start_index] == 0 && 
@@ -93,6 +112,52 @@ double max(const std::vector<double>& x)
 	}
 
 	return max_x;
+}
+
+const std::vector<int> MCSolver::random_search(const std::vector<int>& input_tour, int maxit)
+{
+	clock_t clock_start = clock();	
+
+	int n_tour_size = input_tour.size();
+
+	std::vector<int> tour = input_tour;
+	std::vector<int> next_tour(n_tour_size);	
+
+	bool improved_tour = false;
+
+	double starting_dist = m_nodes.tour_distance(tour, 0,  n_tour_size);
+
+	for(int it=0; it<maxit; it++)
+	{
+		mutate_tour_flip(tour, 0, n_tour_size, next_tour);
+
+		double dist = m_nodes.tour_distance(next_tour, 0,  n_tour_size);
+
+		if(dist < starting_dist)
+		{
+			tour = next_tour;
+
+			starting_dist = dist;
+
+			improved_tour = true;
+		}
+
+		if(it % 1000 == 0  | improved_tour)
+		{
+			clock_t clock_end = clock();
+
+			std::cout<<"it, "<<it<<", ";
+			std::cout<<"best score, "<<starting_dist<<", ";			
+			std::cout<<"time, "<<clock_end -  clock_start<<", ["<<improved_tour<<"] ";
+			std::cout<<std::endl;
+
+			clock_start = clock_end;
+
+			improved_tour = false;
+		}
+	}
+
+	return tour; 
 }
 
 const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, int maxit, int p_size)

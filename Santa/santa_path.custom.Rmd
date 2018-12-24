@@ -28,8 +28,8 @@ library(foreach)
 library(microbenchmark)
 
 #working_folder = 'C:/Dev/Kaggle/'
-#working_folder = 'F:/Github/KaggleSandbox'
-working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+working_folder = 'F:/Github/KaggleSandbox'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 
 
 source(file.path(working_folder, '/Utils/common.R'))
@@ -125,8 +125,9 @@ concorde_path(file.path(Sys.getenv("HOME"), 'source/cpp/concorde/bin'))
 
 #image(tsp)
 #plot(tsp)
-
-#write_TSPLIB(tsp, file.path(working_folder,'Santa/data/data.tsp'), precision = 14)
+scale = 1000
+tsp <- ETSP(data.frame(x=scale*df$X, y = scale*df$Y, row.names = df$CityI))
+write_TSPLIB(tsp, file.path(working_folder,'Santa/data/data.tsp'), precision = 16)
 
 #tour <- solve_TSP(tsp, method = "concorde")
 library(doMC)

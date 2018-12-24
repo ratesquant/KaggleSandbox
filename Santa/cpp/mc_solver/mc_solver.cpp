@@ -51,9 +51,10 @@ int _tmain(int argc, _TCHAR* argv[])
 	//string tour_filename("F:/Github/KaggleSandbox/Santa/data/concorde_tour.lin.txt");
 	//string solution_filename("F:/Github/KaggleSandbox/Santa/data/cpp.solution.tour.all.txt");
 
-	string filename("F:/Github/KaggleSandbox/Santa/data/cities_ex.100.csv");
-	string tour_filename("F:/Github/KaggleSandbox/Santa/data/tour.100.txt");
-	string solution_filename("F:/Github/KaggleSandbox/Santa/data/cpp.solution.tour.100.txt");
+	string filename("F:/Github/KaggleSandbox/Santa/data/cities_ex.csv");
+    //string tour_filename("F:/Github/KaggleSandbox/Santa/data/tour.all.txt");
+	string tour_filename("F:/Github/KaggleSandbox/Santa/data/cpp.solution.tour.txt");
+	string solution_filename("F:/Github/KaggleSandbox/Santa/data/cpp.solution.tour.txt");
 
 	//string filename("F:/Github/KaggleSandbox/Santa/data/cities_ex.1k.csv");
 	//string tour_filename("F:/Github/KaggleSandbox/Santa/data/tour.1k.txt");
@@ -89,10 +90,12 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	MCSolver solver(nodes);
 
-	int maxit  =  50000;
-	int p_size =   2;
+	int maxit  =  100000;
+	int p_size =  100;
 
-	std::vector<int> best_tour = solver.run_iterations(tour, maxit, p_size);
+  //std::vector<int> best_tour = solver.run_iterations(tour, maxit, p_size);
+	
+	std::vector<int> best_tour = solver.random_search(tour, maxit);
 
 	double final_distance = nodes.tour_distance(best_tour);
 

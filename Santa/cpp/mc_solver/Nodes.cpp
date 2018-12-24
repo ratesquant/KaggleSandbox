@@ -79,11 +79,13 @@ double Nodes::tour_distance(const std::vector<int>& tour, int start_index, int n
 
 	double total_dist = 0.0;
 	
+	#pragma omp parallel for reduction(+:total_dist)
 	for(int j=1; j<n_tour_size; j++)
 	{
 		int i = start_index + j;
 
-		int curr_id = tour[i];
+		int prev_id = tour[i-1];
+		int curr_id = tour[i  ];
 
 		double dx = node_x[curr_id] - node_x[prev_id];
 		double dy = node_y[curr_id] - node_y[prev_id];
@@ -94,7 +96,6 @@ double Nodes::tour_distance(const std::vector<int>& tour, int start_index, int n
 		{
 			dist = 1.1 * dist;
 		}
-		prev_id = curr_id;
 
 		total_dist += dist;
 	}

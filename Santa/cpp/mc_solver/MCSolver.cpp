@@ -5,7 +5,11 @@
 
 MCSolver::MCSolver(const Nodes& nodes):m_nodes(nodes)
 {
-	sfmt_init_gen_rand(&m_sfmt, 1234);
+	int seed = time(0);
+	std::cout << "Seed = " << seed << std::endl;
+
+	//sfmt_init_gen_rand(&m_sfmt, 12345678);
+	sfmt_init_gen_rand(&m_sfmt, seed);	
 }
 
 
@@ -54,6 +58,7 @@ void MCSolver::mutate_tour(const std::vector<int>& tour, int start_index, int n_
 		    tour     [start_index + n_tour_size - 1] == 0 && 
 			next_tour[start_index + n_tour_size - 1] == 0);
 }
+
 
 void MCSolver::mutate_tour_flip(const std::vector<int>& tour, int start_index, int n_tour_size, std::vector<int>& next_tour)
 {
@@ -114,14 +119,35 @@ double max(const std::vector<double>& x)
 	return max_x;
 }
 
-const std::vector<int> MCSolver::random_search(const std::vector<int>& input_tour, int maxit)
+void MCSolver::get_random_indexes(int n, int span, int& s_index, int& e_index)
+{
+	int offset = (int)floor((2 * span + 1) * sfmt_genrand_real2(&m_sfmt)) - span; //[-s; s]
+	int index_1 = (int)floor(n * sfmt_genrand_real2(&m_sfmt)); //[0; n-1]	
+	int index_2 = std::min(n-1, std::max(0, index_1 + offset));
+
+	s_index = std::min(index_1, index_2);
+	e_index = std::max(index_1, index_2);
+}
+
+void MCSolver::get_random_indexes(int n, int& s_index, int& e_index)
+{
+	int index_1,index_2; 
+
+	index_1 = 1 + (int)floor((n-2) * sfmt_genrand_real2(&m_sfmt)); //[1; n-2]	
+	index_2 = 1 + (int)floor((n-2) * sfmt_genrand_real2(&m_sfmt)); //[1; n-2]	
+
+	s_index = std::min(index_1, index_2);
+	e_index = std::max(index_1, index_2);
+}
+
+const std::vector<int> MCSolver::random_search(const std::vector<int>& input_tour, int method, int maxit, int span)
 {
 	clock_t clock_start = clock();	
 
-	int n_tour_size = input_tour.size();
+	int n_tour_size = input_tour.size();		
 
 	std::vector<int> tour = input_tour;
-	std::vector<int> next_tour(n_tour_size);	
+	std::vector<int> next_tour = tour;	
 
 	bool improved_tour = false;
 
@@ -129,31 +155,134 @@ const std::vector<int> MCSolver::random_search(const std::vector<int>& input_tou
 
 	for(int it=0; it<maxit; it++)
 	{
-		mutate_tour_flip(tour, 0, n_tour_size, next_tour);
-
-		double dist = m_nodes.tour_distance(next_tour, 0,  n_tour_size);
-
-		if(dist < starting_dist)
+		for(int jt=0; jt< n_tour_size; jt++)
 		{
-			tour = next_tour;
+			int s_index, e_index;
 
-			starting_dist = dist;
+			if(method == 1)
+			{
+				get_random_indexes(n_tour_size, span, s_index, e_index); //get random swap indexes
+			
+				if(s_index == e_index)
+					continue;
 
-			improved_tour = true;
-		}
+				for(int i=s_index + 1; i<e_index; i++)
+					next_tour[i] = tour[e_index + s_index - i];
+			
+				double prev_dist = m_nodes.segment_distance(tour,      s_index, e_index, n_tour_size);
+				double next_dist = m_nodes.segment_distance(next_tour, s_index, e_index, n_tour_size);		
 
-		if(it % 1000 == 0  | improved_tour)
-		{
-			clock_t clock_end = clock();
+				if(next_dist < prev_dist)
+				{
+					tour = next_tour;
 
-			std::cout<<"it, "<<it<<", ";
-			std::cout<<"best score, "<<starting_dist<<", ";			
-			std::cout<<"time, "<<clock_end -  clock_start<<", ["<<improved_tour<<"] ";
-			std::cout<<std::endl;
+					starting_dist = m_nodes.tour_distance(tour, 0,  n_tour_size);
 
-			clock_start = clock_end;
+					improved_tour = true;
+				}else
+				{
+					//restore tour
+					for(int i=s_index + 1; i<e_index; i++)
+						next_tour[i] = tour[i];
+				}
+			}else if (method == 2)
+			{
+				get_random_indexes(n_tour_size, s_index, e_index); //get random swap indexes
+			
+				if(s_index == e_index)
+					continue;
 
-			improved_tour = false;
+				next_tour[s_index] = tour[e_index];
+				next_tour[e_index] = tour[s_index];		
+				
+				double prev_dist = m_nodes.segment_distance(tour,      s_index-1, s_index+1, n_tour_size) + m_nodes.segment_distance(tour,      e_index-1, e_index+1, n_tour_size);
+				double next_dist = m_nodes.segment_distance(next_tour, s_index-1, s_index+1, n_tour_size) + m_nodes.segment_distance(next_tour, e_index-1, e_index+1, n_tour_size);		
+
+				if(next_dist < prev_dist)
+				{
+					tour = next_tour;
+
+					starting_dist = m_nodes.tour_distance(tour);
+
+					improved_tour = true;
+				}else
+				{
+					//restore tour
+					next_tour[e_index] = tour[e_index];
+					next_tour[s_index] = tour[s_index];
+				}
+
+			}//end of method 2
+			else if (method == 3)
+			{
+				get_random_indexes(n_tour_size, s_index, e_index); //get random swap indexes			
+
+				if(s_index == e_index)
+					continue;
+
+				int node_id = tour[s_index];
+
+				next_tour.erase(next_tour.begin()+s_index);				
+				next_tour.insert(next_tour.begin()+e_index, node_id);
+
+				assert(m_nodes.check_tour(next_tour) == true);
+
+				double next_dist = m_nodes.tour_distance(next_tour);
+
+				if(next_dist < starting_dist)
+				{
+					tour = next_tour;
+
+					starting_dist = m_nodes.tour_distance(tour);
+
+					improved_tour = true;
+				}else
+				{
+					//restore tour
+					next_tour = tour;
+				}				
+			}//end of method 3
+			else if (method == 4)
+			{
+				get_random_indexes(n_tour_size, s_index, e_index); //get random swap indexes			
+
+				if(s_index == e_index)
+					continue;
+
+				for(int i=s_index + 1; i<e_index; i++)
+					next_tour[i] = tour[e_index + s_index - i];
+
+				assert(m_nodes.check_tour(next_tour) == true);
+
+				double next_dist = m_nodes.tour_distance(next_tour);
+
+				if(next_dist < starting_dist)
+				{
+					tour = next_tour;
+
+					starting_dist = m_nodes.tour_distance(tour);
+
+					improved_tour = true;
+				}else
+				{
+					//restore tour
+					next_tour = tour;
+				}				
+			}//end of method 4
+
+			if(jt == 0  | improved_tour)
+			{
+				clock_t clock_end = clock();
+
+				std::cout<<"it, "<<it<<", ";
+				std::cout<<"best score, "<<starting_dist<<", ";			
+				std::cout<<"time, "<<clock_end -  clock_start<<", "<<(improved_tour? "improved":"");
+				std::cout<<std::endl;
+
+				clock_start = clock_end;
+
+				improved_tour = false;
+			}
 		}
 	}
 
@@ -293,4 +422,5 @@ const std::vector<int> MCSolver::run_iterations(const std::vector<int>& tour, in
 MCSolver::~MCSolver(void)
 {
 }
+
 

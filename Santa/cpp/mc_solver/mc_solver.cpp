@@ -90,19 +90,39 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	MCSolver solver(nodes);
 
-	int maxit  =  100000;
+	//int maxit  =  100;//000;
+	int maxit  =  5;
 	int p_size =  100;
+	int span = 10000; 
+    //span 100   - 0.5 sec per it
+	//span 1000  - 4.0 sec per it
+	//span  5000  - 20 sec
+	//span 10000  - 40 sec
+
+	//int method = 1; //reverse everything between 2 nodes (usually the best)
+	//int method = 2; //swap two nodes
+	int method = 3; //move a position of a single node
+	//int method = 4; //reverse everything between 2 nodes (full span), 460 sec per it
 
   //std::vector<int> best_tour = solver.run_iterations(tour, maxit, p_size);
+
+	//cout<<"Final tour distance: "<<std::fixed << std::setprecision( 6 ) << nodes.tour_distance(tour)<<", ";
+	//cout<<"Final tour distance: "<<std::fixed << std::setprecision( 6 ) << nodes.tour_distance(tour, 0, tour.size())<<", ";
 	
-	std::vector<int> best_tour = solver.random_search(tour, maxit);
+	
+	std::vector<int> best_tour = solver.random_search(tour, method, maxit, span);
 
 	double final_distance = nodes.tour_distance(best_tour);
 
 	cout<<"Final tour distance: "<<std::fixed << std::setprecision( 6 ) << final_distance<<", ";
-	cout<<"Improvement: "<<std::fixed << std::setprecision( 6 ) <<  1.0 - final_distance/starting_distance <<std::endl;
+	cout<<"Improvement: "<<std::fixed << std::setprecision( 6 ) <<  starting_distance - final_distance <<std::endl;
 	 
-	save_tour(solution_filename, best_tour);
+	if(final_distance<starting_distance)
+	{
+		save_tour(solution_filename, best_tour);
+
+		cout<<"Saved to: "<<solution_filename <<std::endl;
+	}
 
 	//save tour
 

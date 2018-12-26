@@ -49,13 +49,13 @@ Nodes::Nodes(const string& filename)
 
 double Nodes::tour_distance(const std::vector<int>& tour) const
 {
-	int prev_id = tour[0];
-
 	double total_dist = 0.0;
 
-	for(size_t i=1; i<tour.size(); i++)
+	#pragma omp parallel for reduction(+:total_dist)
+	for(int i=1; i<tour.size(); i++)
 	{
-		int curr_id = tour[i];
+		int prev_id = tour[i-1];
+		int curr_id = tour[i  ];
 
 		double dx = node_x[curr_id] - node_x[prev_id];
 		double dy = node_y[curr_id] - node_y[prev_id];
@@ -66,17 +66,33 @@ double Nodes::tour_distance(const std::vector<int>& tour) const
 		{
 			dist = 1.1 * dist;
 		}
-		prev_id = curr_id;
 
 		total_dist += dist;
 	}
 	return total_dist;
 }
 
+bool Nodes::check_tour(const std::vector<int>& tour) const
+{
+	std::vector<int> my_tour = tour;
+
+	if(my_tour.size()<2 || my_tour[0] != 0 ||  my_tour[my_tour.size()-1] != 0)
+		return false;
+		
+	std::sort (my_tour.begin(), my_tour.end());    
+
+	for(int i=2; i<my_tour.size(); i++)
+	{
+		if(my_tour[i] != (i-1))
+			return false;
+	}
+
+	return true;
+}
+
+
 double Nodes::tour_distance(const std::vector<int>& tour, int start_index, int n_tour_size) const
 {
-	int prev_id = tour[start_index];
-
 	double total_dist = 0.0;
 	
 	#pragma omp parallel for reduction(+:total_dist)
@@ -93,6 +109,32 @@ double Nodes::tour_distance(const std::vector<int>& tour, int start_index, int n
 		double dist = sqrt(dx * dx + dy * dy);
 
 		if( j % 10 == 0 && node_p[prev_id] == 1)
+		{
+			dist = 1.1 * dist;
+		}
+
+		total_dist += dist;
+	}
+	return total_dist;
+}
+
+
+double Nodes::segment_distance(const std::vector<int>& tour, int s_index, int e_index, int n_tour_size) const
+{	
+	double total_dist = 0.0;
+
+	//#pragma omp parallel for reduction(+:total_dist)
+	for(int i=s_index+1; i<=e_index; i++)
+	{
+		int prev_id = tour[i-1];
+		int curr_id = tour[i  ];
+
+		double dx = node_x[curr_id] - node_x[prev_id];
+		double dy = node_y[curr_id] - node_y[prev_id];
+
+		double dist = sqrt(dx * dx + dy * dy);
+
+		if( i % 10 == 0 && node_p[prev_id] == 1)
 		{
 			dist = 1.1 * dist;
 		}

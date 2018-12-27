@@ -77,7 +77,7 @@ random_tour_3 <- function(tour)
   return(m_tour)
 }
 
-n = 1024
+n = 256
 set.seed(1234)
 
 df = data.frame(x = runif(n), y = runif(n))
@@ -90,7 +90,7 @@ tsp <- ETSP(df)
 
 #write_TSPLIB(ETSP(data.frame(x = 1000*df$x, y = 1000*df$y )), file.path('F:/Github/KaggleSandbox','Santa/data/random.1024.tsp'), precision = 16)
 
-tour <- solve_TSP(tsp, two_opt = TRUE, repetitions = 100, control = list( start = 1) ) #tour_length(tour)
+tour <- solve_TSP(tsp, two_opt = TRUE, repetitions = 100) #tour_length(tour)
 
 tsp_solution = as.numeric(tour)
 tsp_solution = c(tsp_solution, tsp_solution[1])
@@ -98,34 +98,47 @@ tsp_solution = c(tsp_solution, tsp_solution[1])
 tour_len(df, tsp_solution)
 
 ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
-  geom_path(data = df[tsp_solution, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, tsp_solution))) #25.34373
-#condor best 23.503
+  geom_path(data = df[tsp_solution, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, tsp_solution)))
+#condor best 12.68103
 
 #----- random tour ----
-r_tour = c(seq(nrow(df)), 1)
+r_tour = c(1, sample(seq(from = 2, to = nrow(df))), 1)
 
 ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
   geom_path(data = df[r_tour, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, r_tour)))
 
-maxit = 100*10000
+maxit = 100*1000
 
-best_len =  tour_len(df, r_tour)
+curr_len =  tour_len(df, r_tour)
+best_len =  curr_len
+r_tour_best = r_tour
 for(i in seq(maxit)){
   
-  #r_tour_next = random_tour(r_tour)
+  scale = 0.005*exp(-5.0*i/maxit)
+  
+  r_tour_next = random_tour(r_tour)
   #r_tour_next = random_tour(r_tour_next)
   #r_tour_next = random_tour_2(r_tour_next)
   #r_tour_next = random_tour_2(r_tour)
-  r_tour_next = random_tour_3(r_tour)
+  #r_tour_next = random_tour_3(r_tour)
   
-  r_tour_next_len = tour_len(df, r_tour_next)
+  df_t = data.frame(x = df$x + scale*rnorm(nrow(df)), y = df$y + scale*rnorm(nrow(df)) )
   
-  if(r_tour_next_len<best_len){
-    print(sprintf('%d: %f -> %f', i, best_len, r_tour_next_len))
-    best_len = r_tour_next_len
+  r_tour_next_len_t = tour_len(df_t, r_tour_next)
+  r_tour_next_len   = tour_len(df, r_tour_next)
+  
+  if(r_tour_next_len_t<curr_len){
+    print(sprintf('%d: %f -> %f (%f)', i, curr_len, r_tour_next_len, scale))
+    curr_len = r_tour_next_len
     r_tour = r_tour_next
   }
+  
+  if(r_tour_next_len<best_len){
+    best_len = r_tour_next_len
+    r_tour_best = r_tour
+  }
 }
+r_tour = r_tour_best
 
 ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
   geom_path(data = df[r_tour, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, r_tour))) #3.517602

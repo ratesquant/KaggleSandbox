@@ -129,19 +129,100 @@ void MCSolver::get_random_indexes(int n, int span, int& s_index, int& e_index)
 	e_index = std::max(index_1, index_2);
 }
 
-void MCSolver::get_random_indexes(int n, int& s_index, int& e_index)
+void MCSolver::get_random_indexes(int n, int& index_1, int& index_2)
 {
-	int index_1,index_2; 
-
 	index_1 = 1 + (int)floor((n-2) * sfmt_genrand_real2(&m_sfmt)); //[1; n-2]	
 	index_2 = 1 + (int)floor((n-2) * sfmt_genrand_real2(&m_sfmt)); //[1; n-2]	
+}
 
-	s_index = std::min(index_1, index_2);
-	e_index = std::max(index_1, index_2);
+const std::vector<int> MCSolver::random_search_with_noise(const std::vector<int>& input_tour, int maxit, double sigma)
+{
+	clock_t clock_start = clock();	
+
+	int n_tour_size = input_tour.size();		
+
+	std::vector<int> tour = input_tour;
+	std::vector<int> next_tour = tour;	
+	std::vector<int> best_tour = tour;	
+
+	std::vector<double> sigma_x(n_tour_size);
+	std::vector<double> sigma_y(n_tour_size);
+
+	bool improved_tour = false;
+
+	double starting_dist = m_nodes.tour_distance(tour);
+	double prev_dist = starting_dist;
+	double best_dist = starting_dist;
+
+	for(int it=0; it<maxit; it++)
+	{
+		for(int jt=0; jt<n_tour_size; jt++)
+		{
+			int s_index, e_index;
+
+			get_random_indexes(n_tour_size, s_index, e_index); //get random swap indexes
+			
+			if(s_index == e_index)
+				continue;
+			//apply chnage 
+			for(int i=s_index + 1; i<e_index; i++)
+				next_tour[i] = tour[e_index + s_index - i];			
+
+			//compute noise
+			for(int jn=0; jn<n_tour_size; jn++)
+			{
+				sigma_x[jn] = sigma*sfmt_genrand_real2(&m_sfmt);
+				sigma_y[jn] = sigma*sfmt_genrand_real2(&m_sfmt);
+			}
+			
+			double next_dist       = m_nodes.tour_distance(next_tour);		
+			double next_dist_noise = m_nodes.tour_distance_noise(next_tour, sigma_x, sigma_y);		
+
+			//keep best tour
+			if(next_dist < best_dist)
+			{
+				best_tour = next_tour;
+				best_dist = next_dist;
+				improved_tour = true;
+			}
+
+			if(next_dist_noise < prev_dist)
+			{
+				tour = next_tour;
+				prev_dist = next_dist;				
+			}else
+			{
+				//restore tour
+				for(int i=s_index + 1; i<e_index; i++)
+					next_tour[i] = tour[i];
+			}
+
+			if(jt == (n_tour_size-1) | improved_tour)
+			{
+				clock_t clock_end = clock();
+
+				double elapsed = 1e-3*(clock_end -  clock_start);
+
+				std::cout<<"it, "<<std::setw(3)<< it<<", ";
+				std::cout<<"best score, "<<std::setprecision( 6 )<<best_dist<<", ";			
+				std::cout<<"time, "<<std::setprecision( 3 )<<elapsed<<", "<<std::setprecision( 2 )<< (maxit-it-1)*elapsed/60.0  <<(improved_tour? " improved":"");
+				std::cout<<std::endl;
+
+				clock_start = clock_end;
+
+				improved_tour = false;
+			}
+		}
+	}
+
+	return best_tour; 
+
 }
 
 const std::vector<int> MCSolver::random_search(const std::vector<int>& input_tour, int method, int maxit, int span)
 {
+	std::cout<<"method: "<< method<<", maxit: "<< maxit<<", span: "<<span<<std::endl;
+
 	clock_t clock_start = clock();	
 
 	int n_tour_size = input_tour.size();		
@@ -155,7 +236,7 @@ const std::vector<int> MCSolver::random_search(const std::vector<int>& input_tou
 
 	for(int it=0; it<maxit; it++)
 	{
-		for(int jt=0; jt< n_tour_size; jt++)
+		for(int jt=0; jt<n_tour_size; jt++)
 		{
 			int s_index, e_index;
 
@@ -169,8 +250,8 @@ const std::vector<int> MCSolver::random_search(const std::vector<int>& input_tou
 				for(int i=s_index + 1; i<e_index; i++)
 					next_tour[i] = tour[e_index + s_index - i];
 			
-				double prev_dist = m_nodes.segment_distance(tour,      s_index, e_index, n_tour_size);
-				double next_dist = m_nodes.segment_distance(next_tour, s_index, e_index, n_tour_size);		
+				double prev_dist = m_nodes.segment_distance(tour,      s_index, e_index);
+				double next_dist = m_nodes.segment_distance(next_tour, s_index, e_index);		
 
 				if(next_dist < prev_dist)
 				{
@@ -195,8 +276,8 @@ const std::vector<int> MCSolver::random_search(const std::vector<int>& input_tou
 				next_tour[s_index] = tour[e_index];
 				next_tour[e_index] = tour[s_index];		
 				
-				double prev_dist = m_nodes.segment_distance(tour,      s_index-1, s_index+1, n_tour_size) + m_nodes.segment_distance(tour,      e_index-1, e_index+1, n_tour_size);
-				double next_dist = m_nodes.segment_distance(next_tour, s_index-1, s_index+1, n_tour_size) + m_nodes.segment_distance(next_tour, e_index-1, e_index+1, n_tour_size);		
+				double prev_dist = m_nodes.segment_distance(tour,      s_index-1, s_index+1) + m_nodes.segment_distance(tour,      e_index-1, e_index+1);
+				double next_dist = m_nodes.segment_distance(next_tour, s_index-1, s_index+1) + m_nodes.segment_distance(next_tour, e_index-1, e_index+1);		
 
 				if(next_dist < prev_dist)
 				{
@@ -270,13 +351,15 @@ const std::vector<int> MCSolver::random_search(const std::vector<int>& input_tou
 				}				
 			}//end of method 4
 
-			if(jt == 0  | improved_tour)
+			if(jt == (n_tour_size-1) | improved_tour)
 			{
 				clock_t clock_end = clock();
 
-				std::cout<<"it, "<<it<<", ";
-				std::cout<<"best score, "<<starting_dist<<", ";			
-				std::cout<<"time, "<<clock_end -  clock_start<<", "<<(improved_tour? "improved":"");
+				double elapsed = 1e-3*(clock_end -  clock_start);
+
+				std::cout<<"it, "<<std::setw(3)<< it<<", ";
+				std::cout<<"best score, "<<std::setprecision( 6 )<<starting_dist<<", ";			
+				std::cout<<"time, "<<std::setprecision( 3 )<<elapsed<<", "<<std::setprecision( 2 )<< (maxit-it-1)*elapsed/60.0  <<(improved_tour? " improved":"");
 				std::cout<<std::endl;
 
 				clock_start = clock_end;

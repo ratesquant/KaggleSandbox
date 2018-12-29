@@ -27,8 +27,8 @@ library(TSP)
 library(foreach)
 library(microbenchmark)
 
-working_folder = 'C:/Dev/Kaggle/'
-#working_folder = 'F:/Github/KaggleSandbox'
+#working_folder = 'C:/Dev/Kaggle/'
+working_folder = 'F:/Github/KaggleSandbox'
 #working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 
 
@@ -79,7 +79,7 @@ eval_path<-function(nodes, path){
 
 ```{r utils, echo=FALSE}
 
-starting_tour = fread(file.path(working_folder, "Santa/solution.csv"))$Path
+starting_tour = fread(file.path(working_folder, "Santa/data/cpp.solution.tour.txt"), header = FALSE)$V1
 
 starting_dist = eval_path(df, starting_tour)
 
@@ -98,9 +98,9 @@ mutate_tour <- function(tour)
 
 ```{r utils, echo=FALSE}
 
-maxit = 100
+maxit = 10000
 
-r_tour = starting_tour
+#r_tour = starting_tour
 
 curr_len =  eval_path(df, starting_tour)
 best_len =  curr_len
@@ -130,6 +130,7 @@ for(i in seq(maxit)){
   }
   
   if(r_tour_next_len<best_len){
+    print(sprintf('%d: %f -> %f (%f)', i, r_tour_next_len, best_len, scale))
     best_len = r_tour_next_len
     r_tour_best = r_tour
   }
@@ -137,4 +138,23 @@ for(i in seq(maxit)){
 r_tour = r_tour_best
 
 print( best_len - starting_dist )
+```
+
+## Estimate variance
+```{r estimate_variance, echo=FALSE}
+
+curr_len =  eval_path(df, starting_tour)
+
+res = ldply(seq(256), function(i){
+  scale = 0.01
+  
+  df_t = data.frame(X = df$X + scale*rnorm(nrow(df)), 
+                    Y = df$Y + scale*rnorm(nrow(df)), 
+                    not_prime = df$not_prime )
+  
+  data.frame(i, scale , dist = eval_path(df_t, starting_tour))
+  })
+ 
+ggplot(res, aes(dist)) + geom_density(adjust = 0.2) + geom_vline(xintercept = curr_len) 
+  
 ```

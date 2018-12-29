@@ -14,6 +14,7 @@ public:
 
 	const std::vector<int> run_iterations(const std::vector<int>& tour, int maxit, int p_size);
 	const std::vector<int> random_search(const std::vector<int>& tour, int method, int maxit, int span);
+	const std::vector<int> random_search_with_noise(const std::vector<int>& input_tour, int maxit, double sigma);
 
 	virtual ~MCSolver(void);
 

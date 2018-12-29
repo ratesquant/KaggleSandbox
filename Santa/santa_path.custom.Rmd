@@ -82,6 +82,25 @@ eval_path<-function(path){
   return( dist )
 }
 
+eval_path_ex<-function(nodes, path){
+  
+  if(path[1] == 0)
+    path_ids = c(path, 0) + 1
+  else
+    path_ids = c(0, path, 0) + 1
+  
+  x_c = nodes$X[path_ids]
+  y_c = nodes$Y[path_ids]
+  p_c = nodes$not_prime[path_ids[-length(path_ids)]] #exclude last
+  
+  dx = diff(x_c)
+  dy = diff(y_c)
+  
+  dist = sum( sqrt(dx * dx + dy * dy) * (1.0 + 0.1 * extra_dist * p_c ) )
+  
+  return( dist )
+}
+
 eval_path_s<-function(path){
   
   if(path[1] == 0)
@@ -115,6 +134,39 @@ eval_path(path) #446884408
 #microbenchmark(eval_path(path))
  
 ```
+
+## Noise Estimate
+
+```{r noise_estimate, echo=FALSE, eval = FALSE}
+
+my_tour = c(fread(file.path(working_folder, "Santa/tours/solution0.csv"), header = FALSE)$V1, 0)
+
+base_dist = eval_path(my_tour)
+eval_path_ex(df, my_tour)
+
+df_noise = copy(df)
+
+res = ldply(seq(256), function(i){
+  
+  df_noise[, X:= df$X + 0.1*rnorm(nrow(df))]
+  df_noise[, Y:= df$Y + 0.1*rnorm(nrow(df))]
+  
+  data.frame(i, dist = eval_path_ex(df_noise, my_tour) - base_dist)
+  
+})
+
+setDT(res)
+
+res[,.(avg=mean(dist), std=sd(dist)) ]
+
+ggplot(res, aes(i, dist + base_dist)) + geom_point()
+
+#sigma   1 => dist sigma=464, mean=31254.51
+#sigma 0.1 => dist sigma=43,  mean=  305.13
+
+
+```
+
 
 ## TSP Solution: Linkern
 

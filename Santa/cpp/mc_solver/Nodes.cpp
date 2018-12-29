@@ -72,6 +72,31 @@ double Nodes::tour_distance(const std::vector<int>& tour) const
 	return total_dist;
 }
 
+double Nodes::tour_distance_noise(const std::vector<int>& tour, const std::vector<double>& sigma_x, const std::vector<double>& sigma_y) const
+{
+	double total_dist = 0.0;
+
+	#pragma omp parallel for reduction(+:total_dist)
+	for(int i=1; i<tour.size(); i++)
+	{
+		int prev_id = tour[i-1];
+		int curr_id = tour[i  ];
+
+		double dx = node_x[curr_id] - node_x[prev_id] + (sigma_x[curr_id] - sigma_x[prev_id]);
+		double dy = node_y[curr_id] - node_y[prev_id] + (sigma_y[curr_id] - sigma_y[prev_id]);
+
+		double dist = sqrt(dx * dx + dy * dy);
+
+		if( i % 10 == 0 && node_p[prev_id] == 1)
+		{
+			dist = 1.1 * dist;
+		}
+
+		total_dist += dist;
+	}
+	return total_dist;
+}
+
 bool Nodes::check_tour(const std::vector<int>& tour) const
 {
 	std::vector<int> my_tour = tour;
@@ -119,7 +144,7 @@ double Nodes::tour_distance(const std::vector<int>& tour, int start_index, int n
 }
 
 
-double Nodes::segment_distance(const std::vector<int>& tour, int s_index, int e_index, int n_tour_size) const
+double Nodes::segment_distance(const std::vector<int>& tour, int s_index, int e_index) const
 {	
 	double total_dist = 0.0;
 

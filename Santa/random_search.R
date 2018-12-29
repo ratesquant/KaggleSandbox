@@ -37,9 +37,9 @@ modify_tour <- function(m, tour)
   return(m_tour)
 }
 
+#to choose two cities on the tour randomly, and then reverse the portion of the tour that lies between them
 random_tour <- function(tour)
 {
-  #to choose two cities on the tour randomly, and then reverse the portion of the tour that lies between them
   m_tour <- tour
   n <- length(tour)
   m <- sort(1+sample.int(n-2, size = 2))
@@ -49,9 +49,9 @@ random_tour <- function(tour)
   return(m_tour)
 }
 
+#to choose two cities on the tour randomly, and then swap them
 random_tour_2 <- function(tour)
 {
-  #to choose two cities on the tour randomly, and then swap them
   m_tour <- tour
   n <- length(tour)
   m <- sort(1+sample.int(n-2, size = 2))
@@ -62,9 +62,9 @@ random_tour_2 <- function(tour)
   return(m_tour)
 }
 
+#to choose one citiy on the tour randomly, and move its position
 random_tour_3 <- function(tour)
 {
-  #to choose one citiy on the tour randomly, and move its position
   n <- length(tour)
   m <- 1+sample.int(n-2, size = 2) #[2, n-1]
   i = m[1] #i moved to j position
@@ -77,7 +77,7 @@ random_tour_3 <- function(tour)
   return(m_tour)
 }
 
-n = 256
+n = 64
 set.seed(1234)
 
 df = data.frame(x = runif(n), y = runif(n))
@@ -99,49 +99,57 @@ tour_len(df, tsp_solution)
 
 ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
   geom_path(data = df[tsp_solution, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, tsp_solution)))
-#condor best 12.68103
+#condor best 6.208191 (32)
 
 #----- random tour ----
-r_tour = c(1, sample(seq(from = 2, to = nrow(df))), 1)
+#r_tour = c(1, sample(seq(from = 2, to = nrow(df))), 1)
+r_tour = c(seq(nrow(df)), 1)
+
+#rlen = ldply(seq(1024), function(i) tour_len(df, c(1, sample(seq(from = 2, to = nrow(df))), 1)))
 
 ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
   geom_path(data = df[r_tour, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, r_tour)))
 
-maxit = 100*1000
+maxit = 1000
 
-curr_len =  tour_len(df, r_tour)
-best_len =  curr_len
-r_tour_best = r_tour
-for(i in seq(maxit)){
+tsp_solver <-function(df, r_tour, maxit, scale_0, decay){
   
-  scale = 0.005*exp(-5.0*i/maxit)
-  
-  r_tour_next = random_tour(r_tour)
-  #r_tour_next = random_tour(r_tour_next)
-  #r_tour_next = random_tour_2(r_tour_next)
-  #r_tour_next = random_tour_2(r_tour)
-  #r_tour_next = random_tour_3(r_tour)
-  
-  df_t = data.frame(x = df$x + scale*rnorm(nrow(df)), y = df$y + scale*rnorm(nrow(df)) )
-  
-  r_tour_next_len_t = tour_len(df_t, r_tour_next)
-  r_tour_next_len   = tour_len(df, r_tour_next)
-  
-  if(r_tour_next_len_t<curr_len){
-    print(sprintf('%d: %f -> %f (%f)', i, curr_len, r_tour_next_len, scale))
-    curr_len = r_tour_next_len
-    r_tour = r_tour_next
+  curr_len =  tour_len(df, r_tour)
+  best_len =  curr_len
+  r_tour_best = r_tour
+  for(i in seq(maxit * length(r_tour))){
+    
+    scale = scale_0*exp(-decay*i/maxit)
+    
+    r_tour_next = random_tour(r_tour)
+    #r_tour_next = random_tour_2(r_tour)
+    #r_tour_next = random_tour_3(r_tour)
+    
+    df_t = data.frame(x = df$x + scale*rnorm(nrow(df)), y = df$y + scale*rnorm(nrow(df)) )
+    
+    r_tour_next_len_t = tour_len(df_t, r_tour_next)
+    r_tour_next_len   = tour_len(df, r_tour_next)
+    
+    if(r_tour_next_len_t<curr_len){
+      #print(sprintf('%d: %f -> %f %f (%f)', i, curr_len, r_tour_next_len, best_len, scale))
+      curr_len = r_tour_next_len
+      r_tour = r_tour_next
+    }
+    
+    if(r_tour_next_len<best_len){
+      best_len = r_tour_next_len
+      r_tour_best = r_tour
+    }
   }
-  
-  if(r_tour_next_len<best_len){
-    best_len = r_tour_next_len
-    r_tour_best = r_tour
-  }
+  return(r_tour_best)
 }
-r_tour = r_tour_best
+
+r_tour = tsp_solver(df, r_tour, maxit, 0.02, 3)
 
 ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
-  geom_path(data = df[r_tour, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, r_tour))) #3.517602
+  geom_path(data = df[r_tour, ], aes(x, y), size = 1) + 
+  geom_path(data = df[tsp_solution, ], aes(x, y), color = 'blue', alpha = 0.5, size = 2)  +
+  ggtitle(paste('length:', tour_len(df, r_tour))) #3.517602
 
 ggplot(df, aes(x, y)) + 
   geom_point(color = 'red') + 
@@ -152,3 +160,19 @@ ggplot(df, aes(x, y)) +
 #res = ldply(seq(1000), function(i){  data.frame(i, len = tour_len(df, random_tour(r_tour) )- best_len) })
 #ggplot(res, aes(len)) + stat_ecdf()
 #sort(res$len)
+
+#----- parametric search ----
+
+init_tour = c(seq(nrow(df)), 1)
+
+params = expand.grid(decay = c(3), sigma = c( 0.01, 0.02, 0.03), maxit = 1000*c(10, 20, 30, 40, 50))
+
+res = ldply(seq(nrow(params)), function(i){
+  r_tour = tsp_solver(df, init_tour, params$maxit[i], params$sigma[i], params$decay[i])
+  
+  cbind( data.frame(len= tour_len(df, r_tour)), params[i,])
+})
+
+ggplot(res, aes(maxit/1000, len, group = factor(sigma), color = factor(sigma))) + geom_point() + geom_line() +
+  #geom_hline(yintercept = tour_len(df, tsp_solution)) +
+  facet_wrap(~decay)

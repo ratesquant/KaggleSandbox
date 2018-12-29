@@ -83,7 +83,8 @@ starting_tour = fread(file.path(working_folder, "Santa/data/cpp.solution.tour.tx
 
 starting_dist = eval_path(df, starting_tour)
 
-mutate_tour <- function(tour)
+#to choose two cities on the tour randomly, and then reverse the portion of the tour that lies between them
+random_tour_1 <- function(tour)
 {
   m_tour <- tour
   n <- length(tour)
@@ -93,50 +94,76 @@ mutate_tour <- function(tour)
   m_tour[i:j] <- rev(tour[i:j])
   return(m_tour)
 }
+
+#to choose two cities on the tour randomly, and then swap them
+#not a complete shuffle
+random_tour_2 <- function(tour)
+{
+  m_tour <- tour
+  n <- length(tour)
+  m <- 1+sample.int(n-2, size = 2)#[2, n-1]
+  i = m[1]
+  j = m[2]
+  m_tour[i] <- tour[j]
+  m_tour[j] <- tour[i]
+  return(m_tour)
+}
+
+#to choose one city on the tour randomly, and move its position
+random_tour_3 <- function(tour)
+{
+  n <- length(tour)
+  m <- 1+sample.int(n-2, size = 2) #[2, n-1]
+  i = m[1] #i moved to j position
+  j = m[2]
+  
+  m_tour <- append(tour[-i],tour[i], after = ifelse(i<j, j-2, j-1) ) 
+  
+  return(m_tour)
+}
+
+#move random section 
+random_tour_4 <- function(tour)
+{
+  n <- length(tour)
+  m <- sort(1+sample.int(n-2, size = 2)) #[2, n-1]
+  sec_len = 1 + m[2]- m[1]
+  
+  ms = sample.int(n-sec_len-1, size = 1)
+  node_id = m[1]:m[2]
+  m_tour <- append(tour[-node_id],tour[node_id], after = ms ) 
+  
+  return(m_tour)
+}
+
 ```
 
 
 ```{r utils, echo=FALSE}
 
-maxit = 10000
+maxit = 1000
 
 #r_tour = starting_tour
 
+shifters = c('random_tour_1', 'random_tour_2', 'random_tour_3', 'random_tour_4')
+
 curr_len =  eval_path(df, starting_tour)
 best_len =  curr_len
-r_tour_best = starting_tour
+
+r_tour = starting_tour
 for(i in seq(maxit)){
-  scale = 0.01
   
-  #scale = 0.005*exp(-5.0*i/maxit)
+  shift_fun = sample(shifters, 1)
+  r_tour_next = do.call(shift_fun, list(r_tour))
   
-  r_tour_next = mutate_tour(r_tour)
-  #r_tour_next = random_tour(r_tour_next)
-  #r_tour_next = random_tour_2(r_tour_next)
-  #r_tour_next = random_tour_2(r_tour)
-  #r_tour_next = random_tour_3(r_tour)
-  
-  df_t = data.frame(X = df$X + scale*rnorm(nrow(df)), 
-                    Y = df$Y + scale*rnorm(nrow(df)), 
-                    not_prime = df$not_prime )
-  
-  r_tour_next_len_t = eval_path(df_t, r_tour_next)
   r_tour_next_len   = eval_path(df,   r_tour_next)
-  
-  if(r_tour_next_len_t<curr_len){
-    print(sprintf('%d: %f -> %f (%f)', i, curr_len, r_tour_next_len, scale))
-    curr_len = r_tour_next_len
+
+  if(r_tour_next_len<best_len){
+    print(sprintf('%6d: %f %f %s', i, best_len, r_tour_next_len, shift_fun))
+    best_len = r_tour_next_len
     r_tour = r_tour_next
   }
-  
-  if(r_tour_next_len<best_len){
-    print(sprintf('%d: %f -> %f (%f)', i, r_tour_next_len, best_len, scale))
-    best_len = r_tour_next_len
-    r_tour_best = r_tour
-  }
 }
-r_tour = r_tour_best
-
 print( best_len - starting_dist )
 ```
 

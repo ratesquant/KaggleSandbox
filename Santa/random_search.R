@@ -5,6 +5,11 @@ library(reshape2)
 library(data.table)
 library(zoo)
 library(gridExtra)
+library(ggvoronoi)
+library(deldir)
+
+working_folder = 'F:/Github/KaggleSandbox'
+source(file.path(working_folder, '/Utils/common.R'))
 
 
 gen_greedy_tour <- function(df){
@@ -56,7 +61,7 @@ modify_tour <- function(m, tour)
 }
 
 #to choose two cities on the tour randomly, and then reverse the portion of the tour that lies between them
-random_tour <- function(tour)
+random_tour_1 <- function(tour)
 {
   m_tour <- tour
   n <- length(tour)
@@ -68,17 +73,20 @@ random_tour <- function(tour)
 }
 
 #to choose two cities on the tour randomly, and then swap them
+#not a complete shuffle
 random_tour_2 <- function(tour)
 {
   m_tour <- tour
   n <- length(tour)
-  m <- sort(1+sample.int(n-2, size = 2))
+  m <- 1+sample.int(n-2, size = 2)#[2, n-1]
   i = m[1]
   j = m[2]
   m_tour[i] <- tour[j]
   m_tour[j] <- tour[i]
   return(m_tour)
 }
+#temp = ldply(seq(1024), function(i)random_tour_2(c(1,2,3,4,5,1)))
+#temp = ldply(seq(1024), function(i)random_tour_2(r_tour))
 
 #to choose one city on the tour randomly, and move its position
 random_tour_3 <- function(tour)
@@ -88,12 +96,12 @@ random_tour_3 <- function(tour)
   i = m[1] #i moved to j position
   j = m[2]
   
-  node_id = tour[i]
-  
-  m_tour <- append(tour[-i],node_id, after = j-1) 
+  m_tour <- append(tour[-i],tour[i], after = ifelse(i<j, j-2, j-1) ) 
   
   return(m_tour)
 }
+#temp = ldply(seq(1024*16), function(i)random_tour_3(c(seq(16),1)))
+#temp = ldply(seq(1024*16), function(i)random_tour_3(r_tour))
 
 #move random section 
 random_tour_4 <- function(tour)
@@ -108,15 +116,43 @@ random_tour_4 <- function(tour)
   
   return(m_tour)
 }
-random_tour_4(c(1,2,3,4,5,1))
+#random_tour_4(c(1,2,3,4,5,1))
+#temp = ldply(seq(1024*16), function(i)random_tour_4(c(seq(16),1)))
+#temp = ldply(seq(1024*16), function(i)random_tour_3(r_tour))
 
-n = 128
+
+#move a single node to neighbour (uses global nn_index)
+random_tour_5 <- function(tour)
+{
+  n <- length(tour)
+  m <- 1+sample.int(n-2, size = 1) #[2, n-1]
+  
+  close_nodes = subset(nn_index, ind1==m | ind2 == m)
+  candidate_list = unique(c(close_nodes$ind1, close_nodes$ind2)) %!in_set% c(m, n-1)
+  node_id = sample(candidate_list, 1)
+  
+  node_id = ifelse(node_id > m, node_id - 1, node_id)
+  
+  m_tour <- append(tour[-m],tour[m], after = node_id) 
+  
+  return(m_tour)
+}
+#temp = ldply(seq(1024*16), function(i)random_tour_5(c(seq(16),1)))
+#temp = ldply(seq(1024*16), function(i)random_tour_5(r_tour))
+
+n = 256
 set.seed(1234)
 
-df = expand.grid(x = seq(10), y = seq(10))
+#df = expand.grid(x = seq(10), y = seq(10))
 df = data.frame(x = runif(n), y = runif(n))
 
-ggplot(df, aes(x, y)) + geom_point()
+#compute triangulation
+dxy1 = deldir(df$x, df$y, plotit = FALSE)
+nn_index = dxy1[['delsgs']][,c('ind1', 'ind2')]
+n_len = sqrt( (df$x[nn_index$ind1] - df$x[nn_index$ind2])^2 + (df$y[nn_index$ind1] - df$y[nn_index$ind2])^2 )
+mean(n_len)
+
+ggplot(df, aes(x, y)) + geom_point() + stat_voronoi(geom="path")
 
 #----- Compute tour ----
 
@@ -132,25 +168,22 @@ tsp_solution = c(tsp_solution, tsp_solution[1])
 tour_len(df, tsp_solution)
 
 ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
-  geom_path(data = df[tsp_solution, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, tsp_solution)))
-#condor best 8.676865 (128)
+  geom_path(data = df[tsp_solution, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, tsp_solution))) + 
+  stat_voronoi(geom="path", alpha = 0.1)
+#condor best 3.244084 (16)
+#condor best 4.92227  (32)
+#condor best 12.36858  (256)
+#condor best   (1024)
 
 #----- random tour ----
-#r_tour = c(1, sample(seq(from = 2, to = nrow(df))), 1)
-#r_tour = c(seq(nrow(df)), 1)
-r_tour = gen_greedy_tour(df)
 
-#rlen = ldply(seq(1024), function(i) tour_len(df, c(1, sample(seq(from = 2, to = nrow(df))), 1)))
-
-ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
-  geom_path(data = df[r_tour, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, r_tour)))
-
-maxit = 1000
+maxit = 500
 
 tsp_solver <-function(df, r_tour, maxit, scale_0, decay){
   
-  shifters = c('random_tour', 'random_tour_2', 'random_tour_3', 'random_tour_4')
-  
+  shifters = c('random_tour_1', 'random_tour_2', 'random_tour_3', 'random_tour_4','random_tour_5')
+  #shifters = c('random_tour_5')
+
   curr_len =  tour_len(df, r_tour)
   best_len =  curr_len
   r_tour_best = r_tour
@@ -164,34 +197,48 @@ tsp_solver <-function(df, r_tour, maxit, scale_0, decay){
     r_tour_next = do.call(shift_fun, list(r_tour))
     
     df_t = data.frame(x = df$x + scale*rnorm(nrow(df)), y = df$y + scale*rnorm(nrow(df)) )
-    
     r_tour_curr_len_t = tour_len(df_t, r_tour)
     r_tour_next_len_t = tour_len(df_t, r_tour_next)
     r_tour_next_len   = tour_len(df,   r_tour_next)
+    
+    if(r_tour_next_len<best_len){
+      best_len = r_tour_next_len
+      r_tour_best = r_tour_next
+    }
     
     if(r_tour_next_len_t<r_tour_curr_len_t){
       print(sprintf('%6d: %f %f (%f) %s', i, best_len, r_tour_next_len, scale, shift_fun))
       r_tour = r_tour_next
     }
     
-    if(r_tour_next_len<best_len){
-      best_len = r_tour_next_len
-      r_tour_best = r_tour
-    }
   }
   return(r_tour_best)
 }
-
-r_tour = tsp_solver(df, r_tour, maxit, 0.1, 3)
+#r_tour = c(1, sample(seq(from = 2, to = nrow(df))), 1)
+#r_tour = c(seq(nrow(df)), 1)
+r_tour = gen_greedy_tour(df)
 
 ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
+  geom_path(data = df[r_tour, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, r_tour)))
+
+r_tour = tsp_solver(df, r_tour, maxit, 0.01, 3)
+
+ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
+  geom_point(data = df[1, ], aes(x, y), size = 2) + 
   geom_path(data = df[r_tour, ], aes(x, y), size = 1) + 
-#  geom_path(data = df[tsp_solution, ], aes(x, y), color = 'blue', alpha = 0.2, size = 2)  +
+  stat_voronoi(geom="path", alpha = 0.1)  +
+  geom_path(data = df[tsp_solution, ], aes(x, y), color = 'blue', alpha = 0.2, size = 2)  +
   ggtitle(paste('length:', tour_len(df, r_tour))) #3.517602
 
 ggplot(df, aes(x, y)) + 
   geom_point(color = 'red') + 
-  geom_path(data = df[random_tour(r_tour), ], aes(x, y), color = 'blue', size = 2, alpha = 0.4) +
+  geom_path(data = df[random_tour_2(r_tour), ], aes(x, y), color = 'blue', size = 2, alpha = 0.1) +
+  geom_path(data = df[r_tour, ], aes(x, y), color = 'black') 
+  
+#as.numeric(subset(temp, V2 == 3)[1,])
+ggplot(df, aes(x, y)) + 
+  geom_point(color = 'red') + 
+  geom_path(data = df[c(1,7,8,3,4,2,6,9,14,16,5,11,10,12,13,15,1), ], aes(x, y), color = 'blue', size = 2, alpha = 0.3) +
   geom_path(data = df[r_tour, ], aes(x, y), color = 'black')
 
 #best_len =  tour_len(df, r_tour)

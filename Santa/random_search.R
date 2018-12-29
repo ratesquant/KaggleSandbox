@@ -7,6 +7,24 @@ library(zoo)
 library(gridExtra)
 
 
+gen_greedy_tour <- function(df){
+  
+  tour = c(1)
+  
+  node_ids = seq(nrow(df))
+  
+  for(i in 1:(nrow(df)-1)){
+    s_node = tour[i]
+    
+    dx = df$x[-tour] - df$x[s_node]
+    dy = df$y[-tour] - df$y[s_node]
+    
+    temp = data.frame(id = node_ids[-tour], dist = sqrt(dx*dx + dy*dy))
+    tour = c(tour, temp$id[order(temp$dist)[1]])
+  }
+  return( c(tour,1) )
+}
+
 
 tour_len <- function(df, tour){
   
@@ -62,7 +80,7 @@ random_tour_2 <- function(tour)
   return(m_tour)
 }
 
-#to choose one citiy on the tour randomly, and move its position
+#to choose one city on the tour randomly, and move its position
 random_tour_3 <- function(tour)
 {
   n <- length(tour)
@@ -77,10 +95,26 @@ random_tour_3 <- function(tour)
   return(m_tour)
 }
 
-n = 64
+#move random section 
+random_tour_4 <- function(tour)
+{
+  n <- length(tour)
+  m <- sort(1+sample.int(n-2, size = 2)) #[2, n-1]
+  sec_len = 1 + m[2]- m[1]
+  
+  ms = sample.int(n-sec_len-1, size = 1)
+  node_id = m[1]:m[2]
+  m_tour <- append(tour[-node_id],tour[node_id], after = ms ) 
+  
+  return(m_tour)
+}
+random_tour_4(c(1,2,3,4,5,1))
+
+n = 128
 set.seed(1234)
 
-df = data.frame(x = rnorm(n), y = rnorm(n))
+df = expand.grid(x = seq(10), y = seq(10))
+df = data.frame(x = runif(n), y = runif(n))
 
 ggplot(df, aes(x, y)) + geom_point()
 
@@ -90,7 +124,7 @@ tsp <- ETSP(df)
 
 #write_TSPLIB(ETSP(data.frame(x = 1000*df$x, y = 1000*df$y )), file.path('F:/Github/KaggleSandbox','Santa/data/random.1024.tsp'), precision = 16)
 
-tour <- solve_TSP(tsp, two_opt = TRUE, repetitions = 100) #tour_length(tour)
+tour <- solve_TSP(tsp, two_opt = TRUE, repetitions = 1000) #tour_length(tour)
 
 tsp_solution = as.numeric(tour)
 tsp_solution = c(tsp_solution, tsp_solution[1])
@@ -99,11 +133,12 @@ tour_len(df, tsp_solution)
 
 ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
   geom_path(data = df[tsp_solution, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, tsp_solution)))
-#condor best 6.208191 (32)
+#condor best 8.676865 (128)
 
 #----- random tour ----
 #r_tour = c(1, sample(seq(from = 2, to = nrow(df))), 1)
-r_tour = c(seq(nrow(df)), 1)
+#r_tour = c(seq(nrow(df)), 1)
+r_tour = gen_greedy_tour(df)
 
 #rlen = ldply(seq(1024), function(i) tour_len(df, c(1, sample(seq(from = 2, to = nrow(df))), 1)))
 
@@ -114,6 +149,8 @@ maxit = 1000
 
 tsp_solver <-function(df, r_tour, maxit, scale_0, decay){
   
+  shifters = c('random_tour', 'random_tour_2', 'random_tour_3', 'random_tour_4')
+  
   curr_len =  tour_len(df, r_tour)
   best_len =  curr_len
   r_tour_best = r_tour
@@ -122,9 +159,9 @@ tsp_solver <-function(df, r_tour, maxit, scale_0, decay){
     
     scale = scale_0*exp(-decay*i/n_it)
     
-    r_tour_next = random_tour(r_tour)
-    #r_tour_next = random_tour_2(r_tour)
-    #r_tour_next = random_tour_3(r_tour)
+    shift_fun = sample(shifters, 1)
+    
+    r_tour_next = do.call(shift_fun, list(r_tour))
     
     df_t = data.frame(x = df$x + scale*rnorm(nrow(df)), y = df$y + scale*rnorm(nrow(df)) )
     
@@ -133,7 +170,7 @@ tsp_solver <-function(df, r_tour, maxit, scale_0, decay){
     r_tour_next_len   = tour_len(df,   r_tour_next)
     
     if(r_tour_next_len_t<r_tour_curr_len_t){
-      print(sprintf('%d: %f %f (%f)', i, r_tour_next_len, best_len, scale))
+      print(sprintf('%6d: %f %f (%f) %s', i, best_len, r_tour_next_len, scale, shift_fun))
       r_tour = r_tour_next
     }
     
@@ -149,7 +186,7 @@ r_tour = tsp_solver(df, r_tour, maxit, 0.1, 3)
 
 ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
   geom_path(data = df[r_tour, ], aes(x, y), size = 1) + 
-  geom_path(data = df[tsp_solution, ], aes(x, y), color = 'blue', alpha = 0.5, size = 2)  +
+#  geom_path(data = df[tsp_solution, ], aes(x, y), color = 'blue', alpha = 0.2, size = 2)  +
   ggtitle(paste('length:', tour_len(df, r_tour))) #3.517602
 
 ggplot(df, aes(x, y)) + 

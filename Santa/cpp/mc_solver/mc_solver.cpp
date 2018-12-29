@@ -91,9 +91,9 @@ int _tmain(int argc, _TCHAR* argv[])
 	MCSolver solver(nodes);
 
 	//int maxit  =  100;//000;
-	int maxit  =  800;
+	int maxit  =  100;
 	int p_size =  100;
-	int span = 100; 
+	int span = 1000; 
     //span 100   - 0.5 sec per it
 	//span 1000  - 4.0 sec per it
 	//span  5000  - 20 sec

@@ -110,16 +110,17 @@ r_tour = c(seq(nrow(df)), 1)
 ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
   geom_path(data = df[r_tour, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, r_tour)))
 
-maxit = 1000
+maxit = 100
 
 tsp_solver <-function(df, r_tour, maxit, scale_0, decay){
   
   curr_len =  tour_len(df, r_tour)
   best_len =  curr_len
   r_tour_best = r_tour
-  for(i in seq(maxit * length(r_tour))){
+  n_it = maxit * length(r_tour)
+  for(i in 1:n_it){
     
-    scale = scale_0*exp(-decay*i/maxit)
+    scale = scale_0*exp(-decay*i/n_it)
     
     r_tour_next = random_tour(r_tour)
     #r_tour_next = random_tour_2(r_tour)
@@ -127,12 +128,12 @@ tsp_solver <-function(df, r_tour, maxit, scale_0, decay){
     
     df_t = data.frame(x = df$x + scale*rnorm(nrow(df)), y = df$y + scale*rnorm(nrow(df)) )
     
+    r_tour_curr_len_t = tour_len(df_t, r_tour)
     r_tour_next_len_t = tour_len(df_t, r_tour_next)
-    r_tour_next_len   = tour_len(df, r_tour_next)
+    r_tour_next_len   = tour_len(df,   r_tour_next)
     
-    if(r_tour_next_len_t<curr_len){
-      #print(sprintf('%d: %f -> %f %f (%f)', i, curr_len, r_tour_next_len, best_len, scale))
-      curr_len = r_tour_next_len
+    if(r_tour_next_len_t<r_tour_curr_len_t){
+      print(sprintf('%d: %f %f (%f)', i, r_tour_next_len, best_len, scale))
       r_tour = r_tour_next
     }
     
@@ -144,7 +145,7 @@ tsp_solver <-function(df, r_tour, maxit, scale_0, decay){
   return(r_tour_best)
 }
 
-r_tour = tsp_solver(df, r_tour, maxit, 0.02, 3)
+r_tour = tsp_solver(df, r_tour, maxit, 0.03, 3)
 
 ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
   geom_path(data = df[r_tour, ], aes(x, y), size = 1) + 

@@ -91,7 +91,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	MCSolver solver(nodes);
 
 	//int maxit  =  100;//000;
-	int maxit  =  100;
+	int maxit  =  2;
 	int p_size =  100;
 	int span = 1000; 
     //span 100   - 0.5 sec per it
@@ -99,9 +99,9 @@ int _tmain(int argc, _TCHAR* argv[])
 	//span  5000  - 20 sec
 	//span 10000  - 40 sec
 
-	int method = 1; //reverse everything between 2 nodes (usually the best)
+    //int method = 1; //reverse everything between 2 nodes (usually the best)
 	//int method = 2; //swap two nodes
-	//int method = 3; //move a position of a single node
+	int method = 3; //move a position of a single node
 	//int method = 4; //reverse everything between 2 nodes (full span), 460 sec per it
 
   //std::vector<int> best_tour = solver.run_iterations(tour, maxit, p_size);

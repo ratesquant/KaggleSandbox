@@ -80,7 +80,7 @@ random_tour_3 <- function(tour)
 n = 64
 set.seed(1234)
 
-df = data.frame(x = runif(n), y = runif(n))
+df = data.frame(x = rnorm(n), y = rnorm(n))
 
 ggplot(df, aes(x, y)) + geom_point()
 
@@ -110,7 +110,7 @@ r_tour = c(seq(nrow(df)), 1)
 ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
   geom_path(data = df[r_tour, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, r_tour)))
 
-maxit = 100
+maxit = 1000
 
 tsp_solver <-function(df, r_tour, maxit, scale_0, decay){
   
@@ -145,7 +145,7 @@ tsp_solver <-function(df, r_tour, maxit, scale_0, decay){
   return(r_tour_best)
 }
 
-r_tour = tsp_solver(df, r_tour, maxit, 0.03, 3)
+r_tour = tsp_solver(df, r_tour, maxit, 0.1, 3)
 
 ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
   geom_path(data = df[r_tour, ], aes(x, y), size = 1) + 

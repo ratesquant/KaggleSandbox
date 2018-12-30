@@ -1,0 +1,210 @@
+---
+title: "TSP Primer"
+author: "Alex"
+date: "December 26, 2018"
+output: word_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(TSP)
+library(ggplot2)
+library(plyr)
+library(reshape2)
+library(data.table)
+library(zoo)C
+library(gridExtra)
+library(ggvoronoi)
+library(deldir)
+
+working_folder = 'F:/Github/KaggleSandbox'
+source(file.path(working_folder, '/Utils/common.R'))
+```
+
+## Random Example
+```{r example, include=FALSE}
+
+tour_len <- function(df, tour){
+  
+  x_c = df$x[tour]
+  y_c = df$y[tour]
+  
+  dx = diff(x_c)
+  dy = diff(y_c)
+  
+  dist = sum( sqrt(dx * dx + dy * dy) )
+  
+  return( dist )
+}
+
+
+n = 100
+set.seed(1234)
+
+#df = expand.grid(x = seq(10), y = seq(10))
+df = data.frame(x = runif(n), y = runif(n))
+
+ggplot(df, aes(x, y)) + geom_point() + stat_voronoi(geom="path", alpha = 0.1)
+
+#----- Compute tour ----
+
+tsp <- ETSP(df)
+
+#write_TSPLIB(tsp, file.path(working_folder,'random_example.tsp'), precision = 16)
+
+tour <- solve_TSP(tsp, two_opt = TRUE, repetitions = 100) #tour_length(tour)
+
+tsp_solution = as.numeric(tour)
+tsp_solution = c(tsp_solution, tsp_solution[1])
+
+tour_len(df, tsp_solution)
+
+ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
+  geom_path(data = df[tsp_solution, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, tsp_solution))) + 
+  stat_voronoi(geom="path", alpha = 0.1)
+```
+
+## Methods 
+```{r methods_comp, include=FALSE}
+
+#- these are not really solvers 
+#"identity" - nodes in sorted order 
+# "random" - nodes in random order
+#default: arbitrary insertion algorithm with two_opt refinement
+
+methods <- c("nearest_insertion",
+             "cheapest_insertion", "farthest_insertion", "arbitrary_insertion",
+             "nn", "repetitive_nn", "two_opt")
+
+params = expand.grid(method = methods, repetitions = c(1, 10), node_count = 100*seq(3) )
+
+method_res <- ldply(seq(nrow(params)), function(i) {
+  
+  n = params$node_count[i]
+  set.seed(1234)
+  df = data.frame(x = runif(n), y = runif(n))
+  tsp_problem <- ETSP(df)
+  
+  start_time = Sys.time()
+  
+  res = solve_TSP(tsp_problem, method =params$method[i], two_opt = TRUE, repetitions = params$repetitions[i])
+  
+  tour = as.numeric(res)
+  tour = c(tour, tour[1])
+  
+  end_timeme = Sys.time()
+  
+  cbind( data.frame(len = tour_len(df,tour), elapsed =  as.numeric(Sys.time() - start_time)), params[i,])
+})
+
+setDT(method_res)
+
+ggplot(method_res, aes(two_opt, elapsed)) + geom_point( )
+
+#two_opt - always improves the solution
+ggplot(method_res, aes(two_opt, len, group = method, color = method)) + 
+  geom_line() + geom_point( ) + facet_grid(repetitions~node_count)
+
+ggplot(method_res, aes(two_opt, elapsed, group = method, color = method)) + 
+  geom_line() + geom_point( ) + facet_grid(repetitions~node_count)
+
+#comparison
+ggplot(method_res, aes(node_count, elapsed, group = method, color = method)) + 
+  geom_line() + geom_point( ) + facet_grid(~repetitions)
+
+ggplot(method_res, aes(node_count, len, group = method, color = method)) + 
+  geom_line() + geom_point( ) + facet_grid(~repetitions)
+
+```
+
+## Methods: arbitrary_insertion vs nn
+```{r methods_comp2, include=FALSE}
+
+#arbitrary_insertion - is faster, but nn - produces better results
+
+methods <- c("arbitrary_insertion",  "nn")
+
+params = expand.grid(method = methods, repetitions = c(1, 10), node_count = 100*seq(10) )
+
+method_res <- ldply(seq(nrow(params)), function(i) {
+  
+  n = params$node_count[i]
+  set.seed(1234)
+  df = data.frame(x = runif(n), y = runif(n))
+  tsp_problem <- ETSP(df)
+  
+  start_time = Sys.time()
+  
+  res = solve_TSP(tsp_problem, method =params$method[i], two_opt = TRUE, repetitions = params$repetitions[i])
+  
+  tour = as.numeric(res)
+  tour = c(tour, tour[1])
+  
+  end_timeme = Sys.time()
+  
+  cbind( data.frame(len = tour_len(df,tour), elapsed =  as.numeric(Sys.time() - start_time)), params[i,])
+})
+
+setDT(method_res)
+
+#comparison
+ggplot(method_res, aes(node_count, elapsed, group = method, color = method)) + 
+  geom_line() + geom_point( ) + facet_grid(~repetitions)
+
+ggplot(method_res, aes(node_count, len, group = method, color = method)) + 
+  geom_line() + geom_point( ) + facet_grid(~repetitions)
+
+ggplot(method_res, aes(elapsed, len, group = method, color = method, size = node_count)) + 
+  geom_point( ) + facet_grid(~repetitions)
+
+summary( lm(elapsed ~ method + repetitions + I(node_count^3), method_res) )
+
+```
+
+## Methods: arbitrary_insertion performance
+```{r methods_perf, include=FALSE}
+
+#arbitrary_insertion - is faster, but nn - produces better results
+
+method = "arbitrary_insertion" #  "nn"
+
+params = expand.grid(node_count = 100*seq(2) )
+
+perf_res <- ldply(100*seq(50), function(node_count) {
+  
+  n = node_count
+  set.seed(1234)
+  df = data.frame(x = runif(n), y = runif(n))
+  tsp_problem <- ETSP(df)
+  
+  start_time = Sys.time()
+  
+  res = solve_TSP(tsp_problem, method =method, two_opt = TRUE, repetitions = 1)
+  
+  tour = as.numeric(res)
+  tour = c(tour, tour[1])
+  
+  end_timeme = Sys.time()
+  
+  cbind( data.frame(len = tour_len(df,tour), elapsed =  as.numeric(Sys.time() - start_time)), node_count)
+})
+
+setDT(perf_res)
+
+#comparison
+ggplot(perf_res, aes(node_count, elapsed)) + 
+  geom_line() + geom_point( ) 
+
+ggplot(perf_res, aes(node_count, len)) + 
+  geom_line() + geom_point( ) 
+
+
+timing_model = lm(elapsed ~ I(node_count^3), perf_res)
+plot(perf_res$elapsed, predict(timing_model) )
+
+```

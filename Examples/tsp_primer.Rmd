@@ -17,13 +17,12 @@ library(ggplot2)
 library(plyr)
 library(reshape2)
 library(data.table)
-library(zoo)C
+library(zoo)
 library(gridExtra)
 library(ggvoronoi)
 library(deldir)
+library(sfsmisc)
 
-working_folder = 'F:/Github/KaggleSandbox'
-source(file.path(working_folder, '/Utils/common.R'))
 ```
 
 ## Random Example
@@ -200,31 +199,63 @@ plot(perf_res$elapsed, predict(timing_model) )
 
 ```
 
-## Large Size problem
-```{r large_size, include=FALSE}
+## Asymmetric
+```{r Asym_size, include=FALSE}
 
   method = "arbitrary_insertion" #  "nn"
-  method = "nn"
+  #method = "nn"
 
-  n = 2000 # 10k with 3 reps, 
+  n = 16 # 10k with 3 reps, 
   set.seed(1234)
   df = data.frame(x = runif(n), y = runif(n))
-  tsp_problem <- ETSP(df)
   
-  start_time = Sys.time()
+  prime_ids = primes(nrow(df))
   
-  res = solve_TSP(tsp_problem, method =method, two_opt = TRUE, repetitions = 1)
+  tsp_problem <- ATSP(dist(df))
+  
+  res = solve_TSP(tsp_problem, method =method, two_opt = TRUE, repetitions = 1, start = 1)
   
   #image(tsp_problem, res)
   
   tour = as.numeric(res)
   tour = c(tour, tour[1])
   
-  print( sprintf("%s: %d %f %s", method, n, tour_len(df, tour), Sys.time() -start_time) )
+  print( sprintf("%s: %d %f", method, n, tour_len(df, tour)) )
+  
+ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
+  geom_path(data = df[tour, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, tour))) 
+ #+ stat_voronoi(geom="path", alpha = 0.1)
+
+
+```
+
+
+## Large Size problem
+```{r large_size, include=FALSE}
+
+  method = "arbitrary_insertion" #  "nn"
+  #method = "nn"
+
+  n = 8000 # 10k with 3 reps, 
+  set.seed(1234)
+  df = data.frame(x = runif(n), y = runif(n))
+  tsp_problem <- ETSP(df)
+  
+  start_time = Sys.time()
+  
+  res = solve_TSP(tsp_problem, method =method, two_opt = TRUE, repetitions = 1, start = 1)
+  
+  #image(tsp_problem, res)
+  
+  tour = as.numeric(res)
+  tour = c(tour, tour[1])
+  
+  print( sprintf("%s: %d %f", method, n, tour_len(df, tour)) )
+  print(Sys.time() -start_time)
 
 ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
-  geom_path(data = df[tour, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, tour))) + 
-  stat_voronoi(geom="path", alpha = 0.1)
+  geom_path(data = df[tour, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, tour))) 
+ #+ stat_voronoi(geom="path", alpha = 0.1)
 
 
 ```

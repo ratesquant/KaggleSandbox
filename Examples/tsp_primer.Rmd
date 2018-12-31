@@ -205,24 +205,40 @@ plot(perf_res$elapsed, predict(timing_model) )
   method = "arbitrary_insertion" #  "nn"
   #method = "nn"
 
-  n = 16 # 10k with 3 reps, 
+  n = 10 # 10k with 3 reps, 
   set.seed(1234)
   df = data.frame(x = runif(n), y = runif(n))
   
-  prime_ids = primes(nrow(df))
+  df_dist = as.matrix(dist(df))
   
-  tsp_problem <- ATSP(dist(df))
+  object.size(df_dist)
+  
+  #horribly unefficient
+  prime_nodes = primes(nrow(df))
+  for(prime_ids in prime_nodes){
+    df_dist = cbind(rbind(df_dist, (1.0/1.01)*df_dist[prime_ids,]), c(df_dist[prime_ids,], 0))
+  }
+  #length(prime_nodes)
+  
+  node_id = c(seq(nrow(df)), prime_nodes)
+  
+  tsp_problem <- ATSP(df_dist, labels = c(seq(nrow(df)),paste('p',prime_nodes, sep = '') ) )
   
   res = solve_TSP(tsp_problem, method =method, two_opt = TRUE, repetitions = 1, start = 1)
   
   #image(tsp_problem, res)
+  #abline(h = grep('p',labels(res)), col = "red")
+  #abline(v = grep('p',labels(res)), col = "red")
+  #labels(res)
   
-  tour = as.numeric(res)
+  tour = node_id[as.numeric(res)]
   tour = c(tour, tour[1])
   
   print( sprintf("%s: %d %f", method, n, tour_len(df, tour)) )
   
-ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
+ggplot(df, aes(x, y)) + 
+  geom_point(color = 'red') + 
+  geom_point(data =df[prime_nodes, ], aes(x, y), color = 'blue') +
   geom_path(data = df[tour, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, tour))) 
  #+ stat_voronoi(geom="path", alpha = 0.1)
 
@@ -236,7 +252,7 @@ ggplot(df, aes(x, y)) + geom_point(color = 'red') +
   method = "arbitrary_insertion" #  "nn"
   #method = "nn"
 
-  n = 8000 # 10k with 3 reps, 
+  n = 1000 # 10k with 3 reps, 
   set.seed(1234)
   df = data.frame(x = runif(n), y = runif(n))
   tsp_problem <- ETSP(df)
@@ -259,3 +275,4 @@ ggplot(df, aes(x, y)) + geom_point(color = 'red') +
 
 
 ```
+

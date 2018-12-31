@@ -20,6 +20,7 @@ library(ggplot2)
 library(gridExtra)
 library(zip)
 library(sfsmisc) #for prime
+library(deldir)
 
 library(GA)
 library(TSP)
@@ -83,6 +84,20 @@ starting_tour = fread(file.path(working_folder, "Santa/data/cpp.solution.tour.tx
 
 starting_dist = eval_path(df, starting_tour)
 
+#compute triangulation
+dxy1 = deldir(df$X, df$Y, plotit = FALSE)
+#saveRDS(dxy1, file.path(working_folder, "Santa/data/voronoi.Rds"))
+nn_index = dxy1[['delsgs']][,c('ind1', 'ind2')]
+n_len = sqrt( (df$X[nn_index$ind1] - df$X[nn_index$ind2])^2 + (df$X[nn_index$ind1] - df$X[nn_index$ind2])^2 )
+#mean(n_len)
+#vor_time = ldply(1000*seq(20), function(i) {
+#  pindex = sample.int(nrow(df), i)
+#  data.frame(i, elapsed = system.time(deldir(df$X[pindex], df$Y[pindex], plotit = FALSE))[3])})
+#ggplot(vor_time, aes(i, elapsed)) + geom_line() +  geom_point()
+#timing_fit = lm(elapsed ~ I(i*i), vor_time)
+#summary(timing_fit)
+#predict(timing_fit, newdata = data.frame(i = 190000))/60
+
 #to choose two cities on the tour randomly, and then reverse the portion of the tour that lies between them
 random_tour_1 <- function(tour)
 {
@@ -136,20 +151,34 @@ random_tour_4 <- function(tour)
   return(m_tour)
 }
 
+random_tour_5 <- function(tour)
+{
+  n <- length(tour)
+  m <- 1+sample.int(n-2, size = 1) #[2, n-1]
+  
+  close_nodes = subset(nn_index, ind1==m | ind2 == m)
+  candidate_list = unique(c(close_nodes$ind1, close_nodes$ind2)) %!in_set% c(m, n-1)
+  node_id = sample(candidate_list, 1)
+  
+  node_id = ifelse(node_id > m, node_id - 1, node_id)
+  
+  m_tour <- append(tour[-m],tour[m], after = node_id) 
+  
+  return(m_tour)
+}
+
 ```
 
 
 ```{r utils, echo=FALSE}
 
-maxit = 1000
+maxit = 10000
 
 #r_tour = starting_tour
 
-shifters = c('random_tour_1', 'random_tour_2', 'random_tour_3', 'random_tour_4')
+shifters = c('random_tour_1', 'random_tour_2', 'random_tour_3', 'random_tour_4','random_tour_5')
 
-curr_len =  eval_path(df, starting_tour)
-best_len =  curr_len
-
+best_len =  eval_path(df, starting_tour)
 r_tour = starting_tour
 for(i in seq(maxit)){
   
@@ -157,7 +186,7 @@ for(i in seq(maxit)){
   r_tour_next = do.call(shift_fun, list(r_tour))
   
   r_tour_next_len   = eval_path(df,   r_tour_next)
-
+  
   if(r_tour_next_len<best_len){
     print(sprintf('%6d: %f %f %s', i, best_len, r_tour_next_len, shift_fun))
     best_len = r_tour_next_len

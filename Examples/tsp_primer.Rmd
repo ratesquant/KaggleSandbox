@@ -81,7 +81,7 @@ methods <- c("nearest_insertion",
              "cheapest_insertion", "farthest_insertion", "arbitrary_insertion",
              "nn", "repetitive_nn", "two_opt")
 
-params = expand.grid(method = methods, repetitions = c(1, 10), node_count = 100*seq(3) )
+params = expand.grid(method = methods, repetitions = 1, node_count = 1000 )
 
 method_res <- ldply(seq(nrow(params)), function(i) {
   
@@ -97,28 +97,20 @@ method_res <- ldply(seq(nrow(params)), function(i) {
   tour = as.numeric(res)
   tour = c(tour, tour[1])
   
-  end_timeme = Sys.time()
-  
   cbind( data.frame(len = tour_len(df,tour), elapsed =  as.numeric(Sys.time() - start_time)), params[i,])
 })
 
 setDT(method_res)
 
-ggplot(method_res, aes(two_opt, elapsed)) + geom_point( )
-
-#two_opt - always improves the solution
-ggplot(method_res, aes(two_opt, len, group = method, color = method)) + 
-  geom_line() + geom_point( ) + facet_grid(repetitions~node_count)
-
-ggplot(method_res, aes(two_opt, elapsed, group = method, color = method)) + 
-  geom_line() + geom_point( ) + facet_grid(repetitions~node_count)
-
 #comparison
-ggplot(method_res, aes(node_count, elapsed, group = method, color = method)) + 
-  geom_line() + geom_point( ) + facet_grid(~repetitions)
+ggplot(method_res, aes(method, elapsed, group = repetitions, fill = method )) + 
+  geom_bar(stat = 'identity', position = 'dodge') + coord_flip()
 
-ggplot(method_res, aes(node_count, len, group = method, color = method)) + 
-  geom_line() + geom_point( ) + facet_grid(~repetitions)
+ggplot(method_res, aes(method, len, group = repetitions, fill = method )) + 
+  geom_bar(stat = 'identity', position = 'dodge') + coord_flip()
+
+ggplot(method_res, aes(elapsed, len, group = method, color = method, label = method)) + 
+  geom_point( ) + geom_text(hjust=0)
 
 ```
 
@@ -126,10 +118,11 @@ ggplot(method_res, aes(node_count, len, group = method, color = method)) +
 ```{r methods_comp2, include=FALSE}
 
 #arbitrary_insertion - is faster, but nn - produces better results
+#repetitive_nn - has unsteady performance
 
-methods <- c("arbitrary_insertion",  "nn")
+methods <- c("arbitrary_insertion",  "nn", "repetitive_nn")
 
-params = expand.grid(method = methods, repetitions = c(1, 10), node_count = 100*seq(10) )
+params = expand.grid(method = methods, repetitions = c(1), node_count = 100*seq(10) )
 
 method_res <- ldply(seq(nrow(params)), function(i) {
   
@@ -154,15 +147,15 @@ setDT(method_res)
 
 #comparison
 ggplot(method_res, aes(node_count, elapsed, group = method, color = method)) + 
-  geom_line() + geom_point( ) + facet_grid(~repetitions)
+  geom_line() + geom_point( )
 
 ggplot(method_res, aes(node_count, len, group = method, color = method)) + 
-  geom_line() + geom_point( ) + facet_grid(~repetitions)
+  geom_line() + geom_point( )
 
-ggplot(method_res, aes(elapsed, len, group = method, color = method, size = node_count)) + 
-  geom_point( ) + facet_grid(~repetitions)
+ggplot(method_res, aes(elapsed/node_count, len, group = method, color = method, size = node_count)) + 
+  geom_point( ) 
 
-summary( lm(elapsed ~ method + repetitions + I(node_count^3), method_res) )
+summary( lm(elapsed ~ method + I(node_count^3), method_res) )
 
 ```
 
@@ -189,8 +182,6 @@ perf_res <- ldply(100*seq(50), function(node_count) {
   tour = as.numeric(res)
   tour = c(tour, tour[1])
   
-  end_timeme = Sys.time()
-  
   cbind( data.frame(len = tour_len(df,tour), elapsed =  as.numeric(Sys.time() - start_time)), node_count)
 })
 
@@ -206,5 +197,34 @@ ggplot(perf_res, aes(node_count, len)) +
 
 timing_model = lm(elapsed ~ I(node_count^3), perf_res)
 plot(perf_res$elapsed, predict(timing_model) )
+
+```
+
+## Large Size problem
+```{r large_size, include=FALSE}
+
+  method = "arbitrary_insertion" #  "nn"
+  method = "nn"
+
+  n = 2000 # 10k with 3 reps, 
+  set.seed(1234)
+  df = data.frame(x = runif(n), y = runif(n))
+  tsp_problem <- ETSP(df)
+  
+  start_time = Sys.time()
+  
+  res = solve_TSP(tsp_problem, method =method, two_opt = TRUE, repetitions = 1)
+  
+  #image(tsp_problem, res)
+  
+  tour = as.numeric(res)
+  tour = c(tour, tour[1])
+  
+  print( sprintf("%s: %d %f %s", method, n, tour_len(df, tour), Sys.time() -start_time) )
+
+ggplot(df, aes(x, y)) + geom_point(color = 'red') + 
+  geom_path(data = df[tour, ], aes(x, y)) + ggtitle(paste('length:', tour_len(df, tour))) + 
+  stat_voronoi(geom="path", alpha = 0.1)
+
 
 ```

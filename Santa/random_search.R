@@ -3,7 +3,7 @@ library(ggplot2)
 library(plyr)
 library(reshape2)
 library(data.table)
-library(zoo)
+library(zoo)C
 library(gridExtra)
 library(ggvoronoi)
 library(deldir)

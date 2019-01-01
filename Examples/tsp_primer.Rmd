@@ -205,7 +205,7 @@ plot(perf_res$elapsed, predict(timing_model) )
   method = "arbitrary_insertion" #  "nn"
   #method = "nn"
 
-  n = 10 # 10k with 3 reps, 
+  n = 1000 # 10k with 3 reps, 
   set.seed(1234)
   df = data.frame(x = runif(n), y = runif(n))
   
@@ -223,6 +223,8 @@ plot(perf_res$elapsed, predict(timing_model) )
   node_id = c(seq(nrow(df)), prime_nodes)
   
   tsp_problem <- ATSP(df_dist, labels = c(seq(nrow(df)),paste('p',prime_nodes, sep = '') ) )
+  #write_TSPLIB(tsp_problem, file.path(working_folder,'asymm_example.tsp'))
+
   
   res = solve_TSP(tsp_problem, method =method, two_opt = TRUE, repetitions = 1, start = 1)
   

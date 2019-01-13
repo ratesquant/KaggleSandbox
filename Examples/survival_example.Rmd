@@ -1,0 +1,73 @@
+---
+title: "Survival Analysis"
+author: "Alex"
+date: "April 10, 2018"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(survival)
+```
+
+## Survfit
+
+```{r cars}
+# sort the aml data by time
+aml <- aml[order(aml$time),]
+
+aml
+# Create graph of length of time that each subject was in the study
+with(aml, plot(time, type="h"))
+
+# Create the life table survival object for aml
+aml.survfit <- survfit(Surv(time, status == 1) ~ 1, data=aml)
+
+# Plot the Kaplan-Meier curve for aml. Don't print the confidence interval.
+plot(aml.survfit, xlab = "Time (weeks)", ylab="Proportion surviving", conf.int=FALSE, main="Survival in AML")
+
+summary(aml.survfit)
+
+# Kaplan-Meier curve for aml with the confidence bounds. 
+# By default, R includes the confidence interval. 
+plot(aml.survfit, xlab = "Time", ylab="Proportion surviving")
+
+# Create aml life tables and KM plots broken out by treatment (x,  "Maintained" vs. "Not maintained")
+surv.by.aml.rx <- survfit(Surv(time, status == 1) ~ x, data = aml)
+
+summary(surv.by.aml.rx)
+
+# Plot KM 
+plot(surv.by.aml.rx, xlab = "Time", ylab="Survival",col=c("black", "red"), lty = 1:2, main="Kaplan-Meier Survival vs. Maintenance in AML")
+
+# Add legend
+legend(100, .6, c("Maintained", "Not maintained"), lty = 1:2, col=c("black", "red"))
+
+# Perform the log rank test using the R function survdiff().
+
+surv.diff.aml <- survdiff(Surv(time, status == 1) ~ x, data=aml)
+
+surv.diff.aml
+
+# Cox Proportional Hazards regression
+coxph.x <- coxph(Surv(time, status == 1) ~ x, data = aml)
+
+summary(coxph.x)
+
+# Test of proportional hazards assumption
+
+cox.zph(coxph.x)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

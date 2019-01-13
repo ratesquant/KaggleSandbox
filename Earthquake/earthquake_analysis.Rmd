@@ -73,12 +73,9 @@ low frequency build up before the failure: period [256-1024] * 128
 
 #create plot for first failure
 
-ggplot(df[label==0,], aes(t, ttf)) + geom_line()
+ggplot(df[label ==0, ], aes(t, ttf)) + geom_line()
 wave.out <- morlet(y1 = df[label==0,y], p2 = 11, dj = 0.5) #12 * 1
-
 print(wave.out$period)
-# p2=6 <=> estimate out to 2^8 = 256 months dj <=> controls the frequency
-# resolution hack the period estimate to be in years, not months
 levs <- quantile(wave.out$Power, seq(0, 1, length.out = 11))
 wavelet.plot(wave.out, wavelet.levels = levs, add.sig = FALSE, add.coi=TRUE)
 

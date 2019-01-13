@@ -14,7 +14,15 @@ library(plyr)
 library(data.table)
 library(ggplot2)
 
+library(zoo)
 library(WaveletComp)
+library(dplR)
+#library(spectral)
+library(gbm)
+library(gridExtra)
+library(stringi)
+library(foreach)
+
 #working_folder = 'C:/Dev/Kaggle/'
 working_folder = 'F:/Github/KaggleSandbox/'
 #working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
@@ -23,54 +31,229 @@ source(file.path(working_folder, '/Utils/common.R'))
 
 ```
 
-## Loan Data
-6'291'454 * 100
-```{r loan_model}
+## Load Data
+samples 6'291'454 * 100 (630M obs, 157 sec)
+timer resolution is 1e-3 sec.
+sampling rate: 2.5e-07 (250 ns) (4'000'000 samples per second, 4MHz)
+period with the most power is 8 to 64
+test samples are 150k long 
+```{r load_data}
+dt = 2.5e-07 * 1000
+  
 # read the file -----------
 # time_to_failure changes every 4000 observations
-df = fread(file.path(working_folder,'Earthquake/data/train_100.csv'),nrows = 2^23)
-df[,t:=seq(nrow(df))]
+#df = fread(file.path(working_folder,'Earthquake/data/train.csv'),nrows = 2^20)
+df = fread(file.path(working_folder,'Earthquake/data/train_1000.csv'))
+setnames(df,c('acoustic_data', 'time_to_failure'), c('y', 'ttf'))
+#df = fread(file.path(working_folder,'Earthquake/data/train_1024.csv'))
+df[, t:=dt * seq(0, nrow(df)-1)]
+#df[, u     :=rollmeanr(acoustic_data * acoustic_data, k = 1024, na.pad = TRUE)]
+#df[, u_max :=rollmaxr( acoustic_data * acoustic_data, k = 1024, na.pad = TRUE)]
 #df[,freq:=fft(acoustic_data)]
+
+f_index = which(diff(df$ttf)>1e-3)
+df[f_index,]
+df[, label := findInterval(seq(nrow(df)), f_index)]
+ 
+#freq = fft(df$acoustic_data)
+#spectral::plot(freq)
 
 gc(reset=TRUE)
 
 1e-6*nrow(df)
 
-p1 = ggplot(df[1:80000,], aes(t, acoustic_data)) + geom_line()
-p2 = ggplot(df[1:80000,], aes(t, time_to_failure)) + geom_line() 
-gridExtra::grid.arrange(p1, p2)
+pindex = sample.int(nrow(df), 1e4)
+ggplot(df[pindex,], aes(t, ttf, color = factor(label) )) + geom_line()
 
-p1 = ggplot(df[seq(1, nrow(df), 100),], aes(t, acoustic_data)) + geom_line()
-p2 = ggplot(df[seq(1, nrow(df), 100),], aes(t, time_to_failure)) + geom_line() 
-gridExtra::grid.arrange(p1, p2)
-
-library(dplR)
-wave.out <- morlet(y1 = df$acoustic_data[1:10000])#, p2 = 8, dj = 0.1, siglvl = 0.95)
-# p2=6 <=> estimate out to 2^8 = 256 months dj <=> controls the frequency
-# resolution hack the period estimate to be in years, not months
-levs <- quantile(wave.out$Power, c(0, 0.25, 0.5, 0.75, 0.95, 1))
-wavelet.plot(wave.out, wavelet.levels = levs, crn.ylim = c(22.5, 30))
 ```
 
 ## wavelet
+low frequency build up before the failure: period [256-1024] * 128
 ```{r wavelet_analysis}
-my.w <- analyze.wavelet(df_test, "acoustic_data",
-loess.span = 0,
-dt = 1, dj = 1/250,
-lowerPeriod = 16,
-upperPeriod = 128,
-make.pval = TRUE, n.sim = 10)
 
-wt.image(my.w, color.key = "quantile", n.levels = 250,
-legend.params = list(lab = "wavelet power levels", mar = 4.7))
+#create plot for first failure
+
+ggplot(df[label==0,], aes(t, ttf)) + geom_line()
+wave.out <- morlet(y1 = df[label==0,y], p2 = 11, dj = 0.5) #12 * 1
+
+print(wave.out$period)
+# p2=6 <=> estimate out to 2^8 = 256 months dj <=> controls the frequency
+# resolution hack the period estimate to be in years, not months
+levs <- quantile(wave.out$Power, seq(0, 1, length.out = 11))
+wavelet.plot(wave.out, wavelet.levels = levs, add.sig = FALSE, add.coi=TRUE)
+
+my.w <- analyze.wavelet(df[label==0,], "y",
+loess.span = 0,
+dt = 1, dj = 1.0,
+lowerPeriod = 2,
+upperPeriod = 2048,
+make.pval = FALSE, n.sim = 1, verbose = FALSE)
+
+wt.image(my.w, color.key = "quantile", n.levels = 10,
+         legend.params = list(n.ticks = 10, label.digits = 1, label.format = "e", mar = 8.0))
+#quantile(my.w$Power, seq(0, 1, length.out = 11))
+#my.w$Period
+#wave.out$period
+
+#ggplot(data.frame(t = df$t[1:50000], p1 = wave.out$Power[,9]/sqrt(length(wave.out$Power[,9])), p2 = my.w$Power[8,]), aes(t, p1)) + geom_line() + geom_line(aes(t, p2), color = 'red')
+
+#dt*10000
+
+for(label_i in unique(df$label) ){
+  png(file.path(working_folder,sprintf('Earthquake/data/test_pdf/train_wavelet_%s.png', label_i)), width=1920, height=1080)
+
+  my.w <- analyze.wavelet(df[label==label_i,], "y",
+  loess.span = 0,
+  dt = 1, dj = 0.1,
+  lowerPeriod = 2,
+  upperPeriod = 4096,
+  make.pval = FALSE, n.sim = 1, verbose = FALSE)
+  wt.image(my.w, color.key = "quantile", n.levels = 10, main = paste(label_i),
+         legend.params = list(n.ticks = 10, label.digits = 1, label.format = "e", mar = 8.0))
+
+  #my.w$Period
+  #ggplot(data.frame(p = my.w$Power[which(my.w$Period==256), ],t=df$t[index1[i]:index2[i]]), aes(t, p)) + geom_line()
+  
+  dev.off()
+}
+```
+
+## Feature Extraction
+```{r feature_extraction, eval = FALSE}
+my.w <- analyze.wavelet(df, "y",
+loess.span = 0,
+dt = 1, dj = 1,
+lowerPeriod = 2,
+upperPeriod = 4096,
+make.pval = FALSE, n.sim = 1, verbose = FALSE)
+
+print(my.w$Period)
+
+plot(my.w$Power[1,1:10000])
+
+pmax = 50000
+ggplot(data.frame(t = seq(pmax), p = my.w$Power[6,1:pmax], 
+                  pavg   = rollmeanr(my.w$Power[6,1:pmax], k = 1024*8, na.pad = TRUE),
+                  pcount = rollmeanr(as.numeric(my.w$Power[6,1:pmax] > quantile(my.w$Power[6,1:pmax], 0.99, na.rm = TRUE, names = FALSE)), k = 1024*8, na.pad = TRUE)), aes(t, pcount) )  + geom_line()
+
+for(i in seq(length(my.w$Period))){
+  df[, `:=`(sprintf('pavg_%d', i), rollmeanr(my.w$Power[i,], k = 1024*8, na.pad = TRUE))]
+  df[, `:=`(sprintf('pcount_%d', i), rollmeanr(as.numeric(my.w$Power[i,] > quantile(my.w$Power[i,], 0.99, na.rm = TRUE, names = FALSE)), k = 1024*8, na.pad = TRUE))]
+}
+
+```
+
+## Prediction Model
+```{r pred_model, eval = FALSE}
+
+ns = 1000
+
+dfs = df[sample.int(nrow(df), ns), ] 
+
+var_names = c(names(df)[grep('pavg_', names(df))], names(df)[grep('pcount_', names(df))])
+
+model.gbm = gbm(as.formula(stri_join('ttf ~ ', stri_join(var_names, collapse = '+'))), 
+                data = dfs, 
+                distribution = 'gaussian',
+                n.trees = 2000,
+                shrinkage = 0.01, #0.001
+                bag.fraction = 0.8,
+                interaction.depth = 4,
+                cv.folds = 10,
+                train.fraction = 1.0,
+                var.monotone = NULL,
+                n.cores = 2,
+                verbose = FALSE)
+#show best iteration
+plot_gbmiterations(model.gbm)
+
+best_it = gbm.perf(model.gbm, plot.it = F)
+
+pred.gbm = predict(model.gbm, n.trees = best_it, newdata = dfs)
+
+#show importance
+vars.importance = summary(model.gbm, n.trees = best_it, plotit=FALSE) # influence
+print(vars.importance)
+plot_gbminfluence(vars.importance)
+
+plots = plot_gbmpartial(model.gbm, best_it, as.character(vars.importance$var), output_type = 'link')
+marrangeGrob(plots, nrow=4, ncol=4)
+
+ggplot(cbind(dfs,ttf_pred = pred.gbm) , aes(t, ttf)) + geom_line() + geom_line(aes(t, ttf_pred), color = 'red')
+
+```
+
+## Save all test data wavelets
+```{r test_data_wavelets, echo=FALSE, eval = FALSE}
+
+test_files = list.files(file.path(working_folder,'Earthquake/data/test'), pattern = '*.csv', full.names = TRUE)
+
+for(file in test_files){
+ 
+  df_test = fread(file)
+  #df_test = df_test[seq(1, nrow(df_test), by = 1000),]
+  
+  setnames(df_test,c('acoustic_data'), c('y'))
+  
+  my.w <- analyze.wavelet(df_test, "y",
+  loess.span = 0,
+  dt = 1, dj = 1,
+  lowerPeriod = 2,
+  upperPeriod = 4096*8,
+  make.pval = FALSE, n.sim = 1, verbose = FALSE)
+  
+  png(file.path(working_folder,sprintf('Earthquake/data/test_pdf/test_wavelet_%s.png', basename(file) )), width=1920, height=1080)
+  
+  wt.image(my.w, color.key = "quantile", n.levels = 10, main = basename(file),
+           legend.params = list(n.ticks = 10, label.digits = 1, label.format = "e", mar = 8.0))
+  
+  dev.off()
+}
+
+#compute power per sample 
+avg_power = ldply( test_files, function(file){
+  temp = fread(file)
+  data.frame(avg_power = mean(temp$acoustic_data^2), n = nrow(temp), sample = tools::file_path_sans_ext(basename(file))) 
+})
+setDT(avg_power)
+setorder(avg_power, 'avg_power')
+fwrite(avg_power, file.path(working_folder,'Earthquake/data/test/avg_power.csv'))
+
+## Save test files as single file
+test_files = list.files(file.path(working_folder,'Earthquake/data/test'), pattern = '*.csv', full.names = TRUE)
+
+df_test_all = foreach(file = test_files, .combine=rbind) %do% {
+  temp = fread(file)
+  cbind(temp, sample = tools::file_path_sans_ext(basename(file)), ti = seq(nrow(temp))) 
+}
+fwrite(df_test_all)
 ```
 
 ## Test Data 
-size is 150000 (37)
+size is 150000 (0.0375 sec)
 ```{r test_data, echo=FALSE}
 
 test_files = list.files(file.path(working_folder,'Earthquake/data/test'), pattern = '*.csv', full.names = TRUE)
 
-df_test = fread(test_files[1])
-ggplot(df_test, aes(seq(nrow(df_test)), acoustic_data)) + geom_line()
+grep('seg_aa98cc',test_files)
+
+df_test = fread(test_files[1710])
+
+setnames(df_test,c('acoustic_data'), c('y'))
+
+my.w <- analyze.wavelet(df_test, "y",
+loess.span = 0,
+dt = 1, dj = 1,
+lowerPeriod = 2,
+upperPeriod = 4096,
+make.pval = FALSE, n.sim = 1, verbose = FALSE)
+
+wt.image(my.w, color.key = "quantile", n.levels = 10, main = paste(basename(test_files[1])),
+         legend.params = list(n.ticks = 10, label.digits = 1, label.format = "e", mar = 8.0))
+
+
+for(file in test_files){
+  
+}
+
 ```

@@ -1,0 +1,244 @@
+---
+title: "Santander Transaction Model"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(plyr)
+
+library(data.table)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(corrplot)
+library(forcats)
+#library(pdp)
+library(e1071)
+library(lubridate)
+
+library(gbm)
+#library(randomForestSRC)
+library(xgboost)
+#library(lightgbm)
+
+#working_folder = 'C:/Dev/Kaggle/'
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
+
+source(file.path(working_folder, '/Utils/common.R'))
+```
+
+## Load Data
+
+```{r load_data}
+
+  df_train = fread(file.path(working_folder,'santander_transaction/data/train.csv'), check.names=T)#, nrows = 10000)
+  df_test  = fread(file.path(working_folder,'santander_transaction/data/test.csv'),  check.names=T)#, nrows = 10000)
+
+  df_train[,is_train:=TRUE  ]
+  df_test[, is_train:=FALSE ]
+  df_test[, target:=NA ]
+  
+  df = rbind(df_train, df_test)
+  df = df[sample.int(nrow(df), nrow(df)),]
+  train_index = df$is_train
+  
+  gc(reset = TRUE)
+  
+  ggplot(df, aes(var_0, group = is_train)) + stat_ecdf()
+```
+
+## GBM Model
+           var   rel.inf
+var_81   var_81 3.2440259
+var_139 var_139 2.4349696
+var_12   var_12 2.1091947
+var_146 var_146 1.8890873
+var_110 var_110 1.8675672
+
+
+```{r gbm_model}
+
+tindex = df$is_train
+
+obj_var = 'target'
+actual = df[[obj_var]]
+
+#only keep several car_11 levels
+exclude_vars = c('ID_code', 'is_train', obj_var) #replaced with logs
+
+all_vars = names(df) %!in_set% c(exclude_vars)
+
+set.seed(1012356)
+
+formula.gbm = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+model_vars = all.vars(formula.gbm) %!in_set% c(obj_var)
+var.monotone = rep(0, length(model_vars))
+
+#df[1:10, ..model_vars]
+#str(df[, ..model_vars])
+
+#num_vars  = model_vars %in_set% names(which(sapply(df, is.numeric)))
+#corr_matrix = cor(df[, ..num_vars ], use="complete.obs")
+#corrplot(corr_matrix, method="number", number.cex = 0.5)
+#corrplot(corr_matrix, method="circle", order="hclust")
+
+mon_inc_vars = c()
+mon_dec_vars = c()
+
+var.monotone[model_vars %in% mon_inc_vars]  =  1
+var.monotone[model_vars %in% mon_dec_vars]  = -1
+
+cv_folds = 0
+max_it = 8000
+
+model.gbm  = gbm(formula.gbm,
+                 distribution = "bernoulli",
+                 n.trees = max_it,
+                 cv.folds = cv_folds,
+                 shrinkage = 0.01,
+                 interaction.depth=7,
+                 train.fraction = 0.7,
+                 bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
+                 n.cores = 2,
+                 var.monotone = var.monotone,
+                 data = df[tindex , all.vars(formula.gbm), with = F],
+                 verbose = TRUE)
+
+saveRDS(model.gbm, file.path(working_folder,'santander_transaction/model_gbm.rds'))
+#model.gbm = readRDS(file.path(working_folder,'santander_transaction/model_gbm.rds'))
+
+plot_gbmiterations(model.gbm) #0.03795, AUC
+
+best_it.gbm = gbm.perf(model.gbm, plot.it = FALSE)
+
+pred.gbm  = predict(model.gbm, n.trees = best_it.gbm, newdata = df, type = 'response')
+plot_binmodel_roc(actual[tindex], pred.gbm[tindex])
+plot_binmodel_cdf(actual[tindex], pred.gbm[tindex])
+plot_binmodel_percentiles(actual[tindex], pred.gbm[tindex], 100)
+gbm.roc.area(actual[tindex], pred.gbm[tindex]) #0.7474184
+
+#influence
+var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
+var_inf = subset(var_inf, rel.inf>0.1)
+#fwrite(var_inf, file = file.path(working_folder, "gstore/variables.csv"), row.names = FALSE)
+plot_gbminfluence(var_inf)
+print(var_inf)
+
+imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.1])
+#df_agg[1:100,..imp_vars]
+
+plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars, output_type = 'response')
+marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+
+gplots = lapply(plots, ggplotGrob)
+ggsave(filename = file.path(working_folder,"santander_transaction/gbm.pd.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=5), device = 'pdf', width = 11, height = 8.5, dpi = 240)
+
+
+plots = llply(as.character(var_inf$var), function(var_name) {
+  p = plot_profile(pred.gbm[tindex], actual[tindex],df[[var_name]][tindex], error_band = 'binom') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
+
+gplots = lapply(plots, ggplotGrob)
+ggsave(filename = file.path(working_folder,"santander_transaction/gbm.profiles.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=5), device = 'pdf', width = 11, height = 8.5, dpi = 240)
+
+```
+
+## XGBoost Model
+
+```{r xgboost_model}
+tindex = df$is_train
+
+obj_var = 'target'
+actual = df[[obj_var]]
+
+#only keep several car_11 levels
+exclude_vars = c('ID_code', 'is_train', obj_var) #replaced with logs
+all_vars = names(df) %!in_set% c(exclude_vars)
+
+dtrain <- xgb.DMatrix(as.matrix(df[tindex,all_vars, with = F]), label = df[[obj_var]][tindex] )
+
+param <- list(max_depth = 100, 
+              eta = 0.01, 
+              nthread = 4,
+              subsample = 0.9,
+              objective = "binary:logistic",
+              eval_metric = "auc")
+
+model.xgb <- xgb.train(param, dtrain, nrounds = 1000, verbose = 1,  watchlist=list(train_set=dtrain ) )
+
+pred.xgb <- predict(model.xgb, as.matrix(df[,all_vars, with = F]) )
+
+plot_binmodel_roc(actual[tindex], pred.xgb[tindex])
+plot_binmodel_cdf(actual[tindex], pred.xgb[tindex])
+plot_binmodel_percentiles(actual[tindex], pred.xgb[tindex], 10)
+gbm.roc.area(actual[tindex], pred.xgb[tindex]) #0.7474184
+
+importance_matrix <- xgb.importance(model = model.xgb)
+print(importance_matrix)
+xgb.ggplot.importance(importance_matrix = importance_matrix)
+xgb.ggplot.deepness(model.xgb)
+xgb.ggplot.deepness(model.xgb, which = '2x1')
+xgb.ggplot.deepness(model.xgb, which = 'max.depth')
+xgb.ggplot.deepness(model.xgb, which = 'med.depth')
+#xgb.plot.shap(as.matrix(df[tindex,all_vars, with = F]), model = model.xgb, top_n = 12, n_col = 4) #takes a very long time time to produce
+#xgb.plot.importance(importance_matrix = importance_matrix)
+
+plots = llply(as.character(importance_matrix$Feature), function(var_name) {
+  p = plot_profile(pred.xgb[tindex], actual[tindex],df[[var_name]][tindex], error_band = 'binom', bucket_count = 20) +
+    ggtitle(var_name) +  theme(title =element_text(size=6), axis.title.y = element_blank()) 
+  return( p )
+})
+#marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
+
+gplots = lapply(plots, ggplotGrob)
+ggsave(filename = file.path(working_folder,"santander_transaction/xbg.profiles.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=6), device = 'pdf', width = 11, height = 8.5, dpi = 240)
+
+
+```
+
+## LightGBM Model
+
+```{r lgbm_model}
+tindex = df$is_train
+
+obj_var = 'target'
+actual = df[[obj_var]]
+
+```
+
+## Save Results
+gbm - 0.893
+xgb - 0.869
+
+```{r save_results}
+
+#submit = df[,.(ID_code, target = pred.gbm)]
+submit = df[,.(ID_code, target = pred.xgb)]
+
+submit = submit[df$is_train==FALSE,]
+
+setorder(submit, ID_code)
+
+file = file.path(working_folder, "santander_transaction/solution.csv")
+  
+fwrite(submit, file = file, row.names = FALSE)
+
+zip(paste(file, '.zip', sep = ''), file)
+  
+print(file)
+
+#fullVisitorId,PredictedLogRevenue
+
+```

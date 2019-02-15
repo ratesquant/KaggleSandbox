@@ -91,21 +91,21 @@ var.monotone = rep(0, length(model_vars))
 #corrplot(corr_matrix, method="number", number.cex = 0.5)
 #corrplot(corr_matrix, method="circle", order="hclust")
 
-mon_inc_vars = c()
-mon_dec_vars = c()
+mon_inc_vars = stri_join('var_', c('110', '53', '26', '22', '6', '99', '2', '78'))
+mon_dec_vars = stri_join('var_', c('81', '139', '12', '146', '174', '166', '109', '80', '76', '165', '21', '198'))
 
 var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
 cv_folds = 0
-max_it = 8000
+max_it = 2000
 
 model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
                  n.trees = max_it,
                  cv.folds = cv_folds,
                  shrinkage = 0.01,
-                 interaction.depth=7,
+                 interaction.depth=20,
                  train.fraction = 0.7,
                  bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
                  n.cores = 2,
@@ -113,7 +113,7 @@ model.gbm  = gbm(formula.gbm,
                  data = df[tindex , all.vars(formula.gbm), with = F],
                  verbose = TRUE)
 
-saveRDS(model.gbm, file.path(working_folder,'santander_transaction/model_gbm.rds'))
+#saveRDS(model.gbm, file.path(working_folder,'santander_transaction/model_gbm.rds'))
 #model.gbm = readRDS(file.path(working_folder,'santander_transaction/model_gbm.rds'))
 
 plot_gbmiterations(model.gbm) #0.03795, AUC
@@ -140,10 +140,9 @@ plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars, output_type = 'respons
 marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
 
 gplots = lapply(plots, ggplotGrob)
-ggsave(filename = file.path(working_folder,"santander_transaction/gbm.pd.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=5), device = 'pdf', width = 11, height = 8.5, dpi = 240)
+ggsave(filename = file.path(working_folder,"santander_transaction/gbm.pd.d20.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=5), device = 'pdf', width = 11, height = 8.5, dpi = 240)
 
-
-plots = llply(as.character(var_inf$var), function(var_name) {
+plots = llply(as.character(var_inf$var)[1:25], function(var_name) {
   p = plot_profile(pred.gbm[tindex], actual[tindex],df[[var_name]][tindex], error_band = 'binom') +
     ggtitle(var_name) +  theme(title =element_text(size=6))
   return( p )
@@ -151,7 +150,7 @@ plots = llply(as.character(var_inf$var), function(var_name) {
 marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
 
 gplots = lapply(plots, ggplotGrob)
-ggsave(filename = file.path(working_folder,"santander_transaction/gbm.profiles.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=5), device = 'pdf', width = 11, height = 8.5, dpi = 240)
+ggsave(filename = file.path(working_folder,"santander_transaction/gbm.profiles.d20.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=5), device = 'pdf', width = 11, height = 8.5, dpi = 240)
 
 ```
 
@@ -167,22 +166,28 @@ actual = df[[obj_var]]
 exclude_vars = c('ID_code', 'is_train', obj_var) #replaced with logs
 all_vars = names(df) %!in_set% c(exclude_vars)
 
-dtrain <- xgb.DMatrix(as.matrix(df[tindex,all_vars, with = F]), label = df[[obj_var]][tindex] )
+train.fraction = 0.7
 
-param <- list(max_depth = 100, 
+dtrain <- xgb.DMatrix(as.matrix(df[tindex,all_vars, with = F]), label = actual[tindex] )
+
+train.sample = sample.int(nrow(dtrain), train.fraction * nrow(dtrain))
+eval.sample = seq(nrow(dtrain)) %!in_set% train.sample
+
+param <- list(max_depth = 10, 
               eta = 0.01, 
               nthread = 4,
               subsample = 0.9,
               objective = "binary:logistic",
-              eval_metric = "auc")
+              eval_metric = "auc",
+              base_score = mean(actual[tindex]))
 
-model.xgb <- xgb.train(param, dtrain, nrounds = 1000, verbose = 1,  watchlist=list(train_set=dtrain ) )
+model.xgb <- xgb.train(param, data = dtrain[train.sample,], nrounds = 100, verbose = 1, watchlist = list(train = dtrain[train.sample,], eval = dtrain[eval.sample,]))
 
 pred.xgb <- predict(model.xgb, as.matrix(df[,all_vars, with = F]) )
 
 plot_binmodel_roc(actual[tindex], pred.xgb[tindex])
 plot_binmodel_cdf(actual[tindex], pred.xgb[tindex])
-plot_binmodel_percentiles(actual[tindex], pred.xgb[tindex], 10)
+plot_binmodel_percentiles(actual[tindex], pred.xgb[tindex], 100)
 gbm.roc.area(actual[tindex], pred.xgb[tindex]) #0.7474184
 
 importance_matrix <- xgb.importance(model = model.xgb)
@@ -203,7 +208,7 @@ plots = llply(as.character(importance_matrix$Feature), function(var_name) {
 #marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
 
 gplots = lapply(plots, ggplotGrob)
-ggsave(filename = file.path(working_folder,"santander_transaction/xbg.profiles.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=6), device = 'pdf', width = 11, height = 8.5, dpi = 240)
+ggsave(filename = file.path(working_folder,"santander_transaction/xbg.profiles_d20.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=6), device = 'pdf', width = 11, height = 8.5, dpi = 240)
 
 
 ```
@@ -220,7 +225,7 @@ actual = df[[obj_var]]
 
 ## Save Results
 gbm - 0.893
-xgb - 0.869
+xgb - 0.892
 
 ```{r save_results}
 

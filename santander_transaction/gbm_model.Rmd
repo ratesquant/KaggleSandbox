@@ -124,7 +124,7 @@ model.gbm  = gbm(formula.gbm,
 #saveRDS(model.gbm, file.path(working_folder,'santander_transaction/model_gbm.rds'))
 #model.gbm = readRDS(file.path(working_folder,'santander_transaction/model_gbm.rds'))
 
-plot_gbmiterations(model.gbm) #0.03795, AUC
+plot_gbmiterations(model.gbm) #0.48033
 
 best_it.gbm = gbm.perf(model.gbm, plot.it = FALSE)
 
@@ -137,7 +137,6 @@ gbm.roc.area(actual[tindex], pred.gbm[tindex]) #0.7474184
 #influence
 var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
 var_inf = subset(var_inf, rel.inf>0.1)
-#fwrite(var_inf, file = file.path(working_folder, "gstore/variables.csv"), row.names = FALSE)
 plot_gbminfluence(var_inf)
 print(var_inf)
 
@@ -194,13 +193,13 @@ df_train = df[tindex , all.vars(formula.gbm), with = F]
 
 df_train = df_train[sample.int(nrow(df_train), 0.1*nrow(df_train)),]
 
-params = expand.grid(depth = c(1,2,3,4), shrinkage = c(0.02))
+params = expand.grid(depth = c(1,2,3,4,5), shrinkage = c(0.01))
 
 res = ldply(seq(nrow(params)), function(i) { 
 
 model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
-                 n.trees = 5000,
+                 n.trees = 10000,
                  cv.folds = 0,
                  shrinkage = params$shrinkage[i],
                  interaction.depth=params$depth[i],
@@ -224,6 +223,40 @@ ggplot(res, aes(depth, roc, group = shrinkage, color = factor(shrinkage) )) + ge
 
 ggplot(res, aes(depth, best_it, group = shrinkage, color = factor(shrinkage) )) + geom_point()
 
+
+# ---- Selected model
+model.gbm  = gbm(formula.gbm,
+                 distribution = "bernoulli",
+                 n.trees = 10000,
+                 cv.folds = 0,
+                 shrinkage = 0.01,
+                 interaction.depth=2,
+                 train.fraction = 0.5,
+                 bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
+                 n.cores = 4,
+                 var.monotone = var.monotone,
+                 data = df_train,
+                 verbose = FALSE)
+
+best_it.gbm = gbm.perf(model.gbm, plot.it = FALSE)
+
+plot_gbmiterations(model.gbm) #0.03795, AUC
+
+pred.gbm  = predict(model.gbm, n.trees = best_it.gbm, newdata = df, type = 'response')
+roc = gbm.roc.area(actual[tindex], pred.gbm[tindex]) #0.8664714
+
+#importance
+var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
+var_inf = subset(var_inf, rel.inf>0.1)
+plot_gbminfluence(var_inf)
+
+imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.1])
+#df_agg[1:100,..imp_vars]
+
+#interactions
+var_interaction = gbm_interactions(model.gbm, df_train, best_it.gbm, min_influence = 1, 2)
+plot_gbminteractions(subset(var_interaction, interaction_score>0.05))
+print(var_interaction)
 
 ```
 

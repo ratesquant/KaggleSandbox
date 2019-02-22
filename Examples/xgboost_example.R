@@ -1,12 +1,14 @@
 library(xgboost)
 library(data.table)
-library(ggplot2)
-library(gridExtra)
 library(Matrix)
-library(corrplot)
 library(vip)
 library(pdp)
 library(rBayesianOptimization)
+library(vtreat)
+library(ggplot2)
+library(gridExtra)
+library(corrplot)
+
 
 working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 source(file.path(working_folder, '/Utils/common.R'))
@@ -42,7 +44,7 @@ var.monotone[all_vars %in% mon_dec_vars]  = -1
 #cat_vars = which(sapply(df, is.factor))
 #df[,(cat_vars):=lapply(.SD, as.numeric), .SDcols = cat_vars]
 
-sparse_matrix <- sparse.model.matrix(price ~ ., data = df[,all_vars, with = F])[,-1]
+sparse_matrix <- sparse.model.matrix(price ~ ., data = df[,all_vars, with = F])[,-1] #stats::model.matrix
 
 #num_vars  = model_vars %in_set% names(which(sapply(df, is.numeric)))
 corr_matrix = cor(as.matrix(sparse_matrix), use="complete.obs")
@@ -56,10 +58,10 @@ xgb_cv <- xgboost::xgb.cv(
   data = sparse_matrix, label = actual, 
   verbose = 1, objective = "reg:linear",eval_metric = 'rmse',
   nrounds = 1000, 
-  max_depth = 9, 
-  subsample = 0.9,
-  eta = 0.05, 
-  monotone_constraints = var.monotone,
+  max_depth = 13, 
+  subsample = 0.7,
+  eta = 0.0335, 
+  #monotone_constraints = var.monotone,
   gamma = 0, 
   nfold = 5,  
   nthread = 4, 
@@ -73,16 +75,16 @@ ggplot(xgb_cv$evaluation_log, aes(iter, train_rmse_mean)) + geom_line() + geom_l
 ### Train Model -------------
 
 model.xgb <- xgboost(data = sparse_matrix,label = actual,
-                     nrounds = 224, 
+                     nrounds = 208, 
                      verbose = 1, 
                      print_every_n = 10,
                      early_stopping_rounds = 30,
-                     max_depth = 9, 
-                     eta = 0.05, 
+                     max_depth = 13, 
+                     eta = 0.0335, 
                      nthread = 4,
-                     subsample = 0.9,
-                     objective = "reg:linear",eval_metric = 'rmse',
-                     monotone_constraints = var.monotone)
+                     subsample = 0.7,
+                     #monotone_constraints = var.monotone,
+                     objective = "reg:linear",eval_metric = 'rmse')
 
 pred.xgb <- predict(model.xgb, sparse_matrix )
 
@@ -110,13 +112,15 @@ marrangeGrob(pd_plots, nrow = 3, ncol = 4, top = NULL)
 ### Hyper Tuning -------------
 set.seed(132140937)
 #Best Parameters Found:  Round = 29	eta = 0.1663	max_depth = 8.0000	subsample = 1.0000	Value = -522.3625 
+#Best Parameters Found:  Round = 47	eta = 0.0335	max_depth = 13.0000	subsample = 0.7085	monotone = 0.0000	Value = -518.4975 
 
-xgb_cv_bayes <- function(eta, max_depth, subsample, monotone) {
+xgb_cv_bayes <- function(eta, max_depth, subsample, monotone, min_child_weight) {
   cv <- xgb.cv(params = list(eta = eta,
                              max_depth = max_depth,
                              subsample = subsample, 
-                             lambda = 1, alpha = 0,
+                             min_child_weight = min_child_weight,
                              monotone_constraints = ifelse(rep(monotone==1,length(var.monotone)), var.monotone, var.unconst),
+                             colsample_bytree = 1.0,
                              objective = "reg:linear",
                              eval_metric = "rmse"),
                data = sparse_matrix, label = actual,
@@ -132,7 +136,8 @@ OPT_Res <- BayesianOptimization(xgb_cv_bayes,
                                   eta = c(0.001, 1.0),
                                   max_depth = c(1L, 15L),
                                   subsample = c(0.5, 1.0),
-                                  monotone = c(0L, 1L)),
+                                  monotone = c(0L, 1L),
+                                  min_child_weight = c(1L, 10L)),
                                 init_grid_dt = NULL, init_points = 10, n_iter = 50,
                                 acq = "ucb", kappa = 2.576, eps = 0.0,
                                 verbose = TRUE)

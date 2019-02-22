@@ -18,11 +18,15 @@ options(na.action='na.pass')
 ### Load and Check Data -------------
 df = data.table(diamonds)
 
+df[, price:= as.numeric(price) ]
+
 obj_var = 'price'
 actual = df[[obj_var]]
 
 df[, xy_ratio:= pmin(x,y)/pmax(x, y) ]
 df[is.na(xy_ratio), xy_ratio:= NA ]
+
+
 
 ggplot(df[1:1000,], aes(depth, 2*z/(x+y) )) + geom_point() # depth = 2*z/(y + x)
 
@@ -41,8 +45,8 @@ var.monotone[all_vars %in% mon_inc_vars]  =  1
 var.monotone[all_vars %in% mon_dec_vars]  = -1
 
 #convert strings to numerical variables, otherwise use one-hot
-#cat_vars = which(sapply(df, is.factor))
-#df[,(cat_vars):=lapply(.SD, as.numeric), .SDcols = cat_vars]
+cat_vars = which(sapply(df, is.factor))
+df[,(cat_vars):=lapply(.SD, as.numeric), .SDcols = cat_vars]
 
 sparse_matrix <- sparse.model.matrix(price ~ ., data = df[,all_vars, with = F])[,-1] #stats::model.matrix
 
@@ -87,6 +91,9 @@ model.xgb <- xgboost(data = sparse_matrix,label = actual,
                      objective = "reg:linear",eval_metric = 'rmse')
 
 pred.xgb <- predict(model.xgb, sparse_matrix )
+
+ggplot(data.frame(actual, model = pred.xgb), aes(model, actual)) + geom_point() + geom_abline(slope = 1, color = 'red')
+summary( lm(actual ~ model, data.frame(actual, model = pred.xgb)) )
 
 #feature importance
 vip(model.xgb) 

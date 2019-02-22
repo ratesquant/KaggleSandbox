@@ -1,0 +1,159 @@
+---
+title: "ggplot primer"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, echo = TRUE, fig.width = 8, fig.height = 6, dpi = 240)
+
+library(ggplot2)
+library(data.table)
+library(plyr)
+library(RColorBrewer)
+library(gridExtra)
+library(wesanderson)
+library(ggthemes)
+```
+
+## Tile plots
+
+```{r tile_plots}
+
+theme_set(theme_minimal())
+
+#sequential, diverging, and qualitative
+print(display.brewer.all())
+
+df = data.table(expand.grid(x = seq(0, 0.6, 0.01), y = seq(0, 0.6, 0.01)))
+df[, z:= sin(1/x)*sin(1/y) ]
+df[, zf:=addNA(cut(z, seq(-1, 1, 0.25), include.lowest =TRUE)) ]
+
+display.brewer.all(type="all")
+
+#plot tile plots with all available palette
+palette_names = rownames(brewer.pal.info)
+plots = llply(palette_names, function(pname){
+  p = ggplot(df, aes(x, y, fill =z))+ geom_tile() + scale_fill_distiller(palette = pname) + 
+    ggtitle(pname) + theme(axis.title.x = element_blank(), axis.title.y = element_blank())
+  return(p)
+})
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+
+#plot factor levels
+plots = llply(palette_names, function(pname){
+  p = ggplot(df, aes(x, y, fill =zf))+ geom_tile() + scale_fill_brewer(palette = pname, drop = FALSE) + 
+    ggtitle(pname) + theme(axis.title.x = element_blank(), axis.title.y = element_blank())
+  return(p)
+})
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+
+
+palette_names = names(wes_palettes)
+
+op = par(mfrow = c(2, 2))
+for(pname in palette_names) { 
+  print(wes_palette(pname))
+}
+par(op)
+
+#plot tile plots with all available palette
+plots = llply(palette_names, function(pname){
+  pvalues = wes_palette(pname, 10, type = "continuous")
+  p = ggplot(df, aes(x, y, fill =z))+ geom_tile() + 
+    scale_fill_gradientn(colors = pvalues) +
+    #scale_fill_manual(values = pvalues) + 
+    ggtitle(pname) + theme(axis.title.x = element_blank(), axis.title.y = element_blank())
+  return(p)
+})
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+
+```
+
+## Themes
+
+```{r themes_plots}
+
+df1 = data.table(mtcars)
+df1[, name:=rownames(mtcars)]
+df1[, gear:= factor(gear)]
+
+themes = c('theme_grey','theme_bw','theme_linedraw','theme_light','theme_dark','theme_minimal','theme_classic','theme_void', 'theme_test', #default
+           #from ggthemes
+           'theme_base','theme_calc','theme_economist','theme_economist_white','theme_few','theme_excel','theme_excel_new', 'theme_fivethirtyeight', 'theme_foundation', 'theme_gdocs', 'theme_igray',
+           'theme_map', 'theme_solarized','theme_solarized_2','theme_stata','theme_tufte','theme_wsj') 
+
+plots = llply(themes, function(tname){
+  print(tname)
+  theme_set(do.call(tname,list()))
+  p = ggplot(df1, aes(x = wt, y = mpg, color = gear, size = hp)) + geom_point() +  ggtitle(tname)
+  return(ggplotGrob(p) )
+})
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+
+theme_set(theme_grey())
+```
+
+
+##Custom palette
+
+```{r custom_palette}
+# drsimonj corporate colors, backticks to remove naming restrictions 
+drsimonj_colors <- c(
+  `red`        = "#d11141",
+  `green`      = "#00b159",
+  `blue`       = "#00aedb",
+  `orange`     = "#f37735",
+  `yellow`     = "#ffc425",
+  `light grey` = "#cccccc",
+  `dark grey`  = "#8c8c8c")
+drsimonj_cols <- function(...) {
+  cols <- c(...)
+  if (is.null(cols))
+    return (drsimonj_colors)
+  drsimonj_colors[cols]
+}
+drsimonj_palettes <- list(
+  `main`  = drsimonj_cols("blue", "green", "yellow"),
+  `cool`  = drsimonj_cols("blue", "green"),
+  `hot`   = drsimonj_cols("yellow", "orange", "red"),
+  `mixed` = drsimonj_cols("blue", "green", "yellow", "orange", "red"),
+  `grey`  = drsimonj_cols("light grey", "dark grey")
+  )
+drsimonj_pal <- function(palette = "main", reverse = FALSE, ...) {
+  pal <- drsimonj_palettes[[palette]]
+  if (reverse) pal <- rev(pal)
+  colorRampPalette(pal, ...)
+}
+
+scale_color_drsimonj <- function(palette = "main", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- drsimonj_pal(palette = palette, reverse = reverse)
+
+  if (discrete) {
+    discrete_scale("colour", paste0("drsimonj_", palette), palette = pal, ...)
+  } else {
+    scale_color_gradientn(colours = pal(256), ...)
+  }
+}
+scale_fill_drsimonj <- function(palette = "main", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- drsimonj_pal(palette = palette, reverse = reverse)
+
+  if (discrete) {
+    discrete_scale("fill", paste0("drsimonj_", palette), palette = pal, ...)
+  } else {
+    scale_fill_gradientn(colours = pal(256), ...)
+  }
+}
+
+ggplot(iris, aes(Sepal.Width, Sepal.Length, color = Species)) +
+    geom_point(size = 4) +
+    scale_color_drsimonj()
+
+ggplot(iris, aes(Sepal.Width, Sepal.Length, color = Sepal.Length)) +
+    geom_point(size = 4, alpha = .6) +
+    scale_color_drsimonj(discrete = FALSE, palette = "cool")
+
+ggplot(mpg, aes(manufacturer, fill = manufacturer)) +
+    geom_bar() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    scale_fill_drsimonj(palette = "mixed", guide = "none")
+```

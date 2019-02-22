@@ -1,0 +1,139 @@
+library(xgboost)
+library(data.table)
+library(ggplot2)
+library(gridExtra)
+library(Matrix)
+library(corrplot)
+library(vip)
+library(pdp)
+library(rBayesianOptimization)
+
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+source(file.path(working_folder, '/Utils/common.R'))
+
+options(na.action='na.pass')
+
+### Load and Check Data -------------
+df = data.table(diamonds)
+
+obj_var = 'price'
+actual = df[[obj_var]]
+
+df[, xy_ratio:= pmin(x,y)/pmax(x, y) ]
+df[is.na(xy_ratio), xy_ratio:= NA ]
+
+ggplot(df[1:1000,], aes(depth, 2*z/(x+y) )) + geom_point() # depth = 2*z/(y + x)
+
+### Prepare variables -------------
+
+exclude_vars = c('x', 'y', 'z') 
+all_vars = names(df) %!in_set% c(exclude_vars)
+
+mon_inc_vars = c('carat')
+mon_dec_vars = c('')
+
+
+var.monotone = rep(0, length(all_vars))
+var.unconst = var.monotone
+var.monotone[all_vars %in% mon_inc_vars]  =  1
+var.monotone[all_vars %in% mon_dec_vars]  = -1
+
+#convert strings to numerical variables, otherwise use one-hot
+#cat_vars = which(sapply(df, is.factor))
+#df[,(cat_vars):=lapply(.SD, as.numeric), .SDcols = cat_vars]
+
+sparse_matrix <- sparse.model.matrix(price ~ ., data = df[,all_vars, with = F])[,-1]
+
+#num_vars  = model_vars %in_set% names(which(sapply(df, is.numeric)))
+corr_matrix = cor(as.matrix(sparse_matrix), use="complete.obs")
+corrplot(corr_matrix, method="number", number.cex = .7)
+corrplot(corr_matrix, method="circle", order="hclust")
+
+### Do Cross Validation -------------
+set.seed(132140937)
+
+xgb_cv <- xgboost::xgb.cv(
+  data = sparse_matrix, label = actual, 
+  verbose = 1, objective = "reg:linear",eval_metric = 'rmse',
+  nrounds = 1000, 
+  max_depth = 9, 
+  subsample = 0.9,
+  eta = 0.05, 
+  monotone_constraints = var.monotone,
+  gamma = 0, 
+  nfold = 5,  
+  nthread = 4, 
+  early_stopping_rounds = 30)
+
+ggplot(xgb_cv$evaluation_log, aes(iter, train_rmse_mean)) + geom_line() + geom_line(aes(iter, test_rmse_mean), color = 'red') +
+  geom_ribbon(aes(ymin = test_rmse_mean - test_rmse_std, ymax = test_rmse_mean + test_rmse_std), fill = 'red', alpha = 0.2) + 
+  geom_vline(xintercept = xgb_cv$best_iteration) + 
+  ggtitle(sprintf('cv: %.3f (%d)',xgb_cv$evaluation_log$test_rmse_mean[xgb_cv$best_iteration], xgb_cv$best_iteration))
+
+### Train Model -------------
+
+model.xgb <- xgboost(data = sparse_matrix,label = actual,
+                     nrounds = 224, 
+                     verbose = 1, 
+                     print_every_n = 10,
+                     early_stopping_rounds = 30,
+                     max_depth = 9, 
+                     eta = 0.05, 
+                     nthread = 4,
+                     subsample = 0.9,
+                     objective = "reg:linear",eval_metric = 'rmse',
+                     monotone_constraints = var.monotone)
+
+pred.xgb <- predict(model.xgb, sparse_matrix )
+
+#feature importance
+vip(model.xgb) 
+
+importance_matrix <- xgb.importance(model = model.xgb)
+print(importance_matrix)
+xgb.ggplot.importance(importance_matrix = importance_matrix)
+xgb.ggplot.deepness(model.xgb, which = '2x1')
+xgb.ggplot.deepness(model.xgb, which = 'max.depth')
+xgb.ggplot.deepness(model.xgb, which = 'med.depth')
+xgb.ggplot.deepness(model.xgb, which = 'med.weight')
+
+#sharp profiles, takes a long time to compute
+xgb.plot.shap(sparse_matrix, model = model.xgb, top_n = 4, n_col = 2)
+
+pd_plots = llply(importance_matrix$Feature, function(vname){
+  temp = partial(model.xgb, pred.var = vname, train = sparse_matrix, prob = FALSE)
+  names(temp) = make.names(names(temp))
+  ggplot(temp, aes_string(make.names(vname), 'yhat')) + geom_line()
+})
+marrangeGrob(pd_plots, nrow = 3, ncol = 4, top = NULL)
+
+### Hyper Tuning -------------
+set.seed(132140937)
+#Best Parameters Found:  Round = 29	eta = 0.1663	max_depth = 8.0000	subsample = 1.0000	Value = -522.3625 
+
+xgb_cv_bayes <- function(eta, max_depth, subsample, monotone) {
+  cv <- xgb.cv(params = list(eta = eta,
+                             max_depth = max_depth,
+                             subsample = subsample, 
+                             lambda = 1, alpha = 0,
+                             monotone_constraints = ifelse(rep(monotone==1,length(var.monotone)), var.monotone, var.unconst),
+                             objective = "reg:linear",
+                             eval_metric = "rmse"),
+               data = sparse_matrix, label = actual,
+               nround = 1000,
+               nfold = 5,
+               early_stopping_rounds = 30,  
+               verbose = 0)
+  
+  list(Score = -cv$evaluation_log$test_rmse_mean[cv$best_iteration], Pred = 0)
+}
+OPT_Res <- BayesianOptimization(xgb_cv_bayes,
+                                bounds = list(
+                                  eta = c(0.001, 1.0),
+                                  max_depth = c(1L, 15L),
+                                  subsample = c(0.5, 1.0),
+                                  monotone = c(0L, 1L)),
+                                init_grid_dt = NULL, init_points = 10, n_iter = 50,
+                                acq = "ucb", kappa = 2.576, eps = 0.0,
+                                verbose = TRUE)
+

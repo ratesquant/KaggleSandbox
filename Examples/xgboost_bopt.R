@@ -5,6 +5,7 @@ dtrain <- xgb.DMatrix(agaricus.train$data,
                       label = agaricus.train$label)
 cv_folds <- KFold(agaricus.train$label, nfolds = 5,
                   stratified = TRUE, seed = 0)
+
 xgb_cv_bayes <- function(max.depth, min_child_weight, subsample) {
   cv <- xgb.cv(params = list(booster = "gbtree", eta = 0.01,
                              max_depth = max.depth,

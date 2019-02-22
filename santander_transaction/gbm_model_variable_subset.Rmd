@@ -32,8 +32,8 @@ library(xgboost)
 #library(lightgbm)
 
 #working_folder = 'C:/Dev/Kaggle/'
-working_folder = 'F:/Github/KaggleSandbox/'
-#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+#working_folder = 'F:/Github/KaggleSandbox/'
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 
 
 source(file.path(working_folder, '/Utils/common.R'))
@@ -56,11 +56,9 @@ source(file.path(working_folder, '/Utils/common.R'))
   
   gc(reset = TRUE)
   
-  ggplot(df, aes(var_0, group = is_train)) + stat_ecdf()
-  
-  ggplot(df_train[1:10000,], aes(var_81, var_139, color = factor(target) )) + geom_point(alpha = 0.2)
-  
-  tableplot(df[train_index,], select = c('target',stri_join('var_', seq(0, 10))), sortCol = 'var_0')
+  #ggplot(df, aes(var_0, group = is_train)) + stat_ecdf()
+  #ggplot(df_train[1:10000,], aes(var_81, var_139, color = factor(target) )) + geom_point(alpha = 0.2)
+  #tableplot(df[train_index,], select = c('target',stri_join('var_', seq(0, 10))), sortCol = 'var_0')
 ```
 
 ## GBM Model

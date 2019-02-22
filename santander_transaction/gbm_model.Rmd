@@ -32,8 +32,8 @@ library(xgboost)
 #library(lightgbm)
 
 #working_folder = 'C:/Dev/Kaggle/'
-working_folder = 'F:/Github/KaggleSandbox/'
-#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+#working_folder = 'F:/Github/KaggleSandbox/'
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 
 
 source(file.path(working_folder, '/Utils/common.R'))
@@ -60,7 +60,8 @@ source(file.path(working_folder, '/Utils/common.R'))
   
   ggplot(df_train[1:10000,], aes(var_81, var_139, color = factor(target) )) + geom_point(alpha = 0.2)
   
-  tableplot(df[train_index,], select = c('target',stri_join('var_', seq(0, 10))), sortCol = 'var_0')
+  #tableplot(df_train[1:10000,], select = c('target',stri_join('var_', seq(0, 10))), sortCol = 'var_0')
+  #tableplot(df_train[1:10000,], select = c('target','var_1'), sortCol = 'var_0')
 ```
 
 ## GBM Model
@@ -99,23 +100,33 @@ var.monotone = rep(0, length(model_vars))
 #corrplot(corr_matrix, method="number", number.cex = 0.5)
 #corrplot(corr_matrix, method="circle", order="hclust")
 
-mon_inc_vars = stri_join('var_', c('110', '53', '26', '22', '6', '99', '2', '78'))
-mon_dec_vars = stri_join('var_', c('81', '139', '12', '146', '174', '166', '109', '80', '76', '165', '21', '198'))
+mon_inc_vars = stri_join('var_', c(110, 53, 26, 22, 6, 99, 2, 78,
+                                   164,94,133,190,179,40,0,1,170,184,191,
+                                   18,147,173,91,67,118,95,
+                                   71, 52, 167, 51, 89, 180, 130, 35, 106, 
+                                   157, 128, 32, 119, 162, 49, 195, 90, 175, 24, 82,111,
+                                   155,5,145,163,125,151,137,48,135,55,196,105,144,97,
+                                   66,8,140,16,176,171,189,46,19,5,11,15,62,25,181))
+mon_dec_vars = stri_join('var_', c(81, 139, 12, 146, 174, 166, 109, 80, 76, 165, 21, 198,
+                                   44, 13, 148, 108,34, 33, 92,
+                                   9,169,121,123,115,86,122,188,75,149,127,107,56,
+                                   177, 87, 23, 172, 36, 154, 192, 141,43, 131, 186,
+                                   193,142,152,129, 197, 93, 150, 83,132,58,114,104, 102))
+
 
 var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
-cv_folds = 0
-max_it = 8000
+max_it = 10000
 
 model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
                  n.trees = max_it,
-                 cv.folds = cv_folds,
-                 shrinkage = 0.01,
-                 interaction.depth=7,
+                 cv.folds = 0,
+                 shrinkage = 0.02,
+                 interaction.depth=6,
                  train.fraction = 0.7,
-                 bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
+                 bag.fraction = 0.95,# 0.5 for small samples, 0.7 for large
                  n.cores = 4,
                  var.monotone = var.monotone,
                  data = df[tindex , all.vars(formula.gbm), with = F],
@@ -136,28 +147,45 @@ gbm.roc.area(actual[tindex], pred.gbm[tindex]) #0.7474184
 
 #influence
 var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
+fwrite(var_inf,  file.path(working_folder,"santander_transaction/gbm.var_inf.d6.csv"))
 var_inf = subset(var_inf, rel.inf>0.1)
 plot_gbminfluence(var_inf)
 print(var_inf)
+var_inf = data.table(var_inf)
+#var_inf[var %in% mon_inc_vars]
+#var_inf[var %in% mon_dec_vars]
 
-imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.1])
+ggsave(filename = file.path(working_folder,"santander_transaction/gbm.inf.d6.pdf"), plot = plot_gbminfluence(var_inf), device = 'pdf', width = 11, height = 8.5, dpi = 240)
+
+
+imp_vars = as.character(var_inf$var)
 #df_agg[1:100,..imp_vars]
 
 plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars, output_type = 'response')
-marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
+
+plots = plot_gbmpartial(model.gbm, best_it.gbm, mon_inc_vars, output_type = 'response')
+marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
+
+plots = plot_gbmpartial(model.gbm, best_it.gbm, mon_dec_vars, output_type = 'response')
+marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
+
+plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars %!in_set% c(mon_dec_vars,mon_inc_vars), output_type = 'response')
+marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
+
 
 gplots = lapply(plots, ggplotGrob)
-ggsave(filename = file.path(working_folder,"santander_transaction/gbm.pd.d3.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=5), device = 'pdf', width = 11, height = 8.5, dpi = 240)
+ggsave(filename = file.path(working_folder,"santander_transaction/gbm.pd.d6.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=7), device = 'pdf', width = 14, height = 8.5, dpi = 240)
 
-plots = llply(as.character(var_inf$var)[1:25], function(var_name) {
-  p = plot_profile(pred.gbm[tindex], actual[tindex],df[[var_name]][tindex], error_band = 'binom') +
+plots = llply(as.character(var_inf$var), function(var_name) {
+  p = plot_profile(pred.gbm[tindex], actual[tindex],df[[var_name]][tindex], error_band = 'binom', bucket_count = 30) +
     ggtitle(var_name) +  theme(title =element_text(size=6))
   return( p )
 })
-marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
+#marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
 
 gplots = lapply(plots, ggplotGrob)
-ggsave(filename = file.path(working_folder,"santander_transaction/gbm.profiles.d3.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=5), device = 'pdf', width = 11, height = 8.5, dpi = 240)
+ggsave(filename = file.path(working_folder,"santander_transaction/gbm.profiles.d6.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=7), device = 'pdf', width = 14, height = 8.5, dpi = 240)
 
 ```
 
@@ -181,33 +209,31 @@ formula.gbm = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), col
 
 model_vars = all.vars(formula.gbm) %!in_set% c(obj_var)
 var.monotone = rep(0, length(model_vars))
+var.monotone_any = rep(0, length(model_vars))
 
-mon_inc_vars = stri_join('var_', c('110', '53', '26', '22', '6', '99', '2', '78'))
-mon_dec_vars = stri_join('var_', c('81', '139', '12', '146', '174', '166', '109', '80', '76', '165', '21', '198'))
+mon_inc_vars = stri_join('var_', c(110, 53, 26, 22, 6, 99, 2, 78,
+                                   164,94,133,190,179,40,0,1,170,184,191))
+mon_dec_vars = stri_join('var_', c(81, 139, 12, 146, 174, 166, 109, 80, 76, 165, 21, 198,
+                                   44, 13, 148, 108,34, 33, 92))
 
 var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
-
-df_train = df[tindex , all.vars(formula.gbm), with = F]
-
-df_train = df_train[sample.int(nrow(df_train), 0.1*nrow(df_train)),]
-
-params = expand.grid(depth = c(1,2,3,4,5), shrinkage = c(0.01))
+params = expand.grid(depth = c(2,3,4), shrinkage = c(0.05), monotone = c(TRUE, FALSE))
 
 res = ldply(seq(nrow(params)), function(i) { 
 
 model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
-                 n.trees = 10000,
+                 n.trees = 3000,
                  cv.folds = 0,
                  shrinkage = params$shrinkage[i],
                  interaction.depth=params$depth[i],
-                 train.fraction = 0.5,
+                 train.fraction = 0.1,
                  bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
                  n.cores = 4,
-                 var.monotone = var.monotone,
-                 data = df_train,
+                 var.monotone = ifelse(rep(params$monotone[i],length(var.monotone)), var.monotone, rep(0, length(var.monotone))),
+                 data = df[tindex , all.vars(formula.gbm), with = F],
                  verbose = FALSE)
 
 best_it.gbm = gbm.perf(model.gbm, plot.it = FALSE)
@@ -215,27 +241,28 @@ best_it.gbm = gbm.perf(model.gbm, plot.it = FALSE)
 pred.gbm  = predict(model.gbm, n.trees = best_it.gbm, newdata = df, type = 'response')
 roc = gbm.roc.area(actual[tindex], pred.gbm[tindex]) #0.7474184
 
-return( data.frame(depth = params$depth[i], shrinkage = params$shrinkage[i], roc, best_it =  best_it.gbm))
-
+return( data.frame(roc, best_it =  best_it.gbm))
 })
 
-ggplot(res, aes(depth, roc, group = shrinkage, color = factor(shrinkage) )) + geom_point()
+res = cbind(res,params)
 
-ggplot(res, aes(depth, best_it, group = shrinkage, color = factor(shrinkage) )) + geom_point()
+ggplot(res, aes(depth, roc, group = monotone, color = factor(monotone) )) + geom_point()
+
+ggplot(res, aes(depth, best_it, group = monotone, color = factor(monotone) )) + geom_point()
 
 
 # ---- Selected model
 model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
-                 n.trees = 10000,
+                 n.trees = 2000,
                  cv.folds = 0,
                  shrinkage = 0.01,
                  interaction.depth=2,
-                 train.fraction = 0.5,
+                 train.fraction = 0.05,
                  bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
                  n.cores = 4,
                  var.monotone = var.monotone,
-                 data = df_train,
+                 data = df[tindex , all.vars(formula.gbm), with = F],
                  verbose = FALSE)
 
 best_it.gbm = gbm.perf(model.gbm, plot.it = FALSE)
@@ -250,85 +277,19 @@ var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
 var_inf = subset(var_inf, rel.inf>0.1)
 plot_gbminfluence(var_inf)
 
-imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.1])
+imp_vars = as.character(var_inf$var[var_inf$rel.inf>1])
 #df_agg[1:100,..imp_vars]
 
+plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars, output_type = 'response')
+marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+
 #interactions
-var_interaction = gbm_interactions(model.gbm, df_train, best_it.gbm, min_influence = 1, 2)
-plot_gbminteractions(subset(var_interaction, interaction_score>0.05))
-print(var_interaction)
+#var_interaction = gbm_interactions(model.gbm, df_train, best_it.gbm, min_influence = 1, 2)
+#plot_gbminteractions(subset(var_interaction, interaction_score>0.05))
+#print(var_interaction)
 
 ```
 
-
-## XGBoost Model
-
-```{r xgboost_model}
-tindex = df$is_train
-
-obj_var = 'target'
-actual = df[[obj_var]]
-
-#only keep several car_11 levels
-exclude_vars = c('ID_code', 'is_train', obj_var) #replaced with logs
-all_vars = names(df) %!in_set% c(exclude_vars)
-
-train.fraction = 0.7
-
-dtrain <- xgb.DMatrix(as.matrix(df[tindex,all_vars, with = F]), label = actual[tindex] )
-
-train.sample = sample.int(nrow(dtrain), train.fraction * nrow(dtrain))
-eval.sample = seq(nrow(dtrain)) %!in_set% train.sample
-
-param <- list(max_depth = 3, 
-              eta = 0.01, 
-              nthread = 4,
-              subsample = 0.9,
-              objective = "binary:logistic",
-              eval_metric = "auc",
-              base_score = mean(actual[tindex]))
-
-model.xgb <- xgb.train(param, data = dtrain[train.sample,], nrounds = 100, verbose = 1, watchlist = list(train = dtrain[train.sample,], eval = dtrain[eval.sample,]))
-
-pred.xgb <- predict(model.xgb, as.matrix(df[,all_vars, with = F]) )
-
-plot_binmodel_roc(actual[tindex], pred.xgb[tindex])
-plot_binmodel_cdf(actual[tindex], pred.xgb[tindex])
-plot_binmodel_percentiles(actual[tindex], pred.xgb[tindex], 100)
-gbm.roc.area(actual[tindex], pred.xgb[tindex]) #0.7474184
-
-importance_matrix <- xgb.importance(model = model.xgb)
-print(importance_matrix)
-xgb.ggplot.importance(importance_matrix = importance_matrix)
-xgb.ggplot.deepness(model.xgb)
-xgb.ggplot.deepness(model.xgb, which = '2x1')
-xgb.ggplot.deepness(model.xgb, which = 'max.depth')
-xgb.ggplot.deepness(model.xgb, which = 'med.depth')
-#xgb.plot.shap(as.matrix(df[tindex,all_vars, with = F]), model = model.xgb, top_n = 12, n_col = 4) #takes a very long time time to produce
-#xgb.plot.importance(importance_matrix = importance_matrix)
-
-plots = llply(as.character(importance_matrix$Feature), function(var_name) {
-  p = plot_profile(pred.xgb[tindex], actual[tindex],df[[var_name]][tindex], error_band = 'binom', bucket_count = 20) +
-    ggtitle(var_name) +  theme(title =element_text(size=6), axis.title.y = element_blank()) 
-  return( p )
-})
-#marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
-
-gplots = lapply(plots, ggplotGrob)
-ggsave(filename = file.path(working_folder,"santander_transaction/xbg.profiles_d20.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=6), device = 'pdf', width = 11, height = 8.5, dpi = 240)
-
-
-```
-
-## LightGBM Model
-
-```{r lgbm_model}
-tindex = df$is_train
-
-obj_var = 'target'
-actual = df[[obj_var]]
-
-```
 
 ## Save Results
 gbm - 0.893
@@ -336,8 +297,7 @@ xgb - 0.892
 
 ```{r save_results}
 
-#submit = df[,.(ID_code, target = pred.gbm)]
-submit = df[,.(ID_code, target = pred.xgb)]
+submit = df[,.(ID_code, target = pred.gbm)]
 
 submit = submit[df$is_train==FALSE,]
 

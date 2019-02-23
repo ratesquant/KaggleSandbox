@@ -8,9 +8,11 @@ library(vtreat)
 library(ggplot2)
 library(gridExtra)
 library(corrplot)
+library(plyr)
 
-
-working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+working_folder = 'C:/Dev/Kaggle/'
+#working_folder = 'F:/Github/KaggleSandbox/'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 source(file.path(working_folder, '/Utils/common.R'))
 
 options(na.action='na.pass')
@@ -45,13 +47,12 @@ var.monotone[all_vars %in% mon_inc_vars]  =  1
 var.monotone[all_vars %in% mon_dec_vars]  = -1
 
 #convert strings to numerical variables, otherwise use one-hot
-cat_vars = which(sapply(df, is.factor))
-df[,(cat_vars):=lapply(.SD, as.numeric), .SDcols = cat_vars]
 
-sparse_matrix <- sparse.model.matrix(price ~ ., data = df[,all_vars, with = F])[,-1] #stats::model.matrix
+df_train <- subset(data.matrix(df[,all_vars, with = F]), select = -price) #stats::model.matrix
+df_train <- sparse.model.matrix(price ~ ., data = df[,all_vars, with = F])[,-1] #stats::model.matrix
 
 #num_vars  = model_vars %in_set% names(which(sapply(df, is.numeric)))
-corr_matrix = cor(as.matrix(sparse_matrix), use="complete.obs")
+corr_matrix = cor(as.matrix(df_train), use="complete.obs")
 corrplot(corr_matrix, method="number", number.cex = .7)
 corrplot(corr_matrix, method="circle", order="hclust")
 
@@ -59,7 +60,7 @@ corrplot(corr_matrix, method="circle", order="hclust")
 set.seed(132140937)
 
 xgb_cv <- xgboost::xgb.cv(
-  data = sparse_matrix, label = actual, 
+  data = df_train, label = actual, 
   verbose = 1, objective = "reg:linear",eval_metric = 'rmse',
   nrounds = 1000, 
   max_depth = 13, 
@@ -69,6 +70,7 @@ xgb_cv <- xgboost::xgb.cv(
   gamma = 0, 
   nfold = 5,  
   nthread = 4, 
+  print_every_n = 10,
   early_stopping_rounds = 30)
 
 ggplot(xgb_cv$evaluation_log, aes(iter, train_rmse_mean)) + geom_line() + geom_line(aes(iter, test_rmse_mean), color = 'red') +
@@ -78,7 +80,7 @@ ggplot(xgb_cv$evaluation_log, aes(iter, train_rmse_mean)) + geom_line() + geom_l
 
 ### Train Model -------------
 
-model.xgb <- xgboost(data = sparse_matrix,label = actual,
+model.xgb <- xgboost(data = df_train,label = actual,
                      nrounds = 208, 
                      verbose = 1, 
                      print_every_n = 10,
@@ -90,10 +92,12 @@ model.xgb <- xgboost(data = sparse_matrix,label = actual,
                      #monotone_constraints = var.monotone,
                      objective = "reg:linear",eval_metric = 'rmse')
 
-pred.xgb <- predict(model.xgb, sparse_matrix )
+pred.xgb <- predict(model.xgb, df_train )
 
 ggplot(data.frame(actual, model = pred.xgb), aes(model, actual)) + geom_point() + geom_abline(slope = 1, color = 'red')
 summary( lm(actual ~ model, data.frame(actual, model = pred.xgb)) )
+
+ggplot(cbind(df, error = actual - pred.xgb), aes(x*z*y, error)) + geom_point()
 
 #feature importance
 vip(model.xgb) 
@@ -107,14 +111,20 @@ xgb.ggplot.deepness(model.xgb, which = 'med.depth')
 xgb.ggplot.deepness(model.xgb, which = 'med.weight')
 
 #sharp profiles, takes a long time to compute
-xgb.plot.shap(sparse_matrix, model = model.xgb, top_n = 4, n_col = 2)
+xgb.plot.shap(df_train, model = model.xgb, top_n = 4, n_col = 2)
 
 pd_plots = llply(importance_matrix$Feature, function(vname){
-  temp = partial(model.xgb, pred.var = vname, train = sparse_matrix, prob = FALSE)
+  temp = partial(model.xgb, pred.var = vname, train = df_train, prob = FALSE)
   names(temp) = make.names(names(temp))
   ggplot(temp, aes_string(make.names(vname), 'yhat')) + geom_line()
 })
 marrangeGrob(pd_plots, nrow = 3, ncol = 4, top = NULL)
+
+partial(model.xgb, pred.var = "carat", ice = TRUE, center = TRUE, 
+        plot = TRUE, rug = TRUE, alpha = 0.1, plot.engine = "ggplot2", train = df_train)
+
+partial(ames_xgb, pred.var = c("carat", "Gr_Liv_Area"),
+        plot = TRUE, chull = TRUE, plot.engine = "ggplot2", train = df_train)
 
 ### Hyper Tuning -------------
 set.seed(132140937)
@@ -130,7 +140,7 @@ xgb_cv_bayes <- function(eta, max_depth, subsample, monotone, min_child_weight) 
                              colsample_bytree = 1.0,
                              objective = "reg:linear",
                              eval_metric = "rmse"),
-               data = sparse_matrix, label = actual,
+               data = df_train, label = actual,
                nround = 1000,
                nfold = 5,
                early_stopping_rounds = 30,  
@@ -149,3 +159,29 @@ OPT_Res <- BayesianOptimization(xgb_cv_bayes,
                                 acq = "ucb", kappa = 2.576, eps = 0.0,
                                 verbose = TRUE)
 
+### TIMING Tuning -------------
+
+res = ldply(seq(10), function(n_cores) {
+  
+  set.seed(132140937)
+  
+  run_xgboost <- function(n_cores) {
+  model.xgb <- xgboost(data = df_train,label = actual,
+                       nrounds = 100, 
+                       verbose = 0, 
+                       print_every_n = 10,
+                       early_stopping_rounds = 30,
+                       max_depth = 13, 
+                       eta = 0.0335, 
+                       nthread = n_cores,
+                       subsample = 0.7,
+                       #monotone_constraints = var.monotone,
+                       objective = "reg:linear",eval_metric = 'rmse')
+  }
+  t = system.time(run_xgboost(n_cores))
+  
+  return (data.frame(n_cores, user = t[1], system = t[2], elapsed = t[3]))
+})
+
+ggplot(res, aes(n_cores, elapsed)) + geom_point()
+ggplot(res, aes(n_cores, (system + user)/elapsed )) + geom_point()

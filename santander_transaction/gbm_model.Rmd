@@ -106,25 +106,33 @@ mon_inc_vars = stri_join('var_', c(110, 53, 26, 22, 6, 99, 2, 78,
                                    71, 52, 167, 51, 89, 180, 130, 35, 106, 
                                    157, 128, 32, 119, 162, 49, 195, 90, 175, 24, 82,111,
                                    155,5,145,163,125,151,137,48,135,55,196,105,144,97,
-                                   66,8,140,16,176,171,189,46,19,5,11,15,62,25,181))
+                                   66,8,140,16,176,171,189,46,19,11,15,62,25,181,
+                                   112,70,199,47,168,134,187,69,159,61,65,84,74,3,138,4,41,
+                                   29,126,161,79,37))
 mon_dec_vars = stri_join('var_', c(81, 139, 12, 146, 174, 166, 109, 80, 76, 165, 21, 198,
                                    44, 13, 148, 108,34, 33, 92,
                                    9,169,121,123,115,86,122,188,75,149,127,107,56,
                                    177, 87, 23, 172, 36, 154, 192, 141,43, 131, 186,
-                                   193,142,152,129, 197, 93, 150, 83,132,58,114,104, 102))
+                                   193,142,152,129, 197, 93, 150, 83,132,58,114,104, 102,
+                                   28,85,31,116,101, 143,64,59,42,178,194,113,50,45,54,72,57,68,
+                                   20, 156,63,158,103,120,153,14,160,73,
+                                   88,182,39,30,17,136))
 
+#mon_dec_vars[duplicated(mon_dec_vars)]
+#mon_inc_vars[duplicated(mon_inc_vars)]
+#intersect(mon_dec_vars, mon_inc_vars)
 
 var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
-max_it = 10000
+max_it = 20000
 
 model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
                  n.trees = max_it,
                  cv.folds = 0,
-                 shrinkage = 0.02,
-                 interaction.depth=6,
+                 shrinkage = 0.05,
+                 interaction.depth=1,
                  train.fraction = 0.7,
                  bag.fraction = 0.95,# 0.5 for small samples, 0.7 for large
                  n.cores = 4,
@@ -135,7 +143,7 @@ model.gbm  = gbm(formula.gbm,
 #saveRDS(model.gbm, file.path(working_folder,'santander_transaction/model_gbm.rds'))
 #model.gbm = readRDS(file.path(working_folder,'santander_transaction/model_gbm.rds'))
 
-plot_gbmiterations(model.gbm) #0.48033
+plot_gbmiterations(model.gbm) #0.40810
 
 best_it.gbm = gbm.perf(model.gbm, plot.it = FALSE)
 
@@ -147,7 +155,7 @@ gbm.roc.area(actual[tindex], pred.gbm[tindex]) #0.7474184
 
 #influence
 var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
-fwrite(var_inf,  file.path(working_folder,"santander_transaction/gbm.var_inf.d6.csv"))
+fwrite(var_inf,  file.path(working_folder,"santander_transaction/gbm.var_inf.d1.csv"))
 var_inf = subset(var_inf, rel.inf>0.1)
 plot_gbminfluence(var_inf)
 print(var_inf)
@@ -161,7 +169,9 @@ ggsave(filename = file.path(working_folder,"santander_transaction/gbm.inf.d6.pdf
 imp_vars = as.character(var_inf$var)
 #df_agg[1:100,..imp_vars]
 
-plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars, output_type = 'response')
+#plot_gbmpartial(model.gbm, best_it.gbm, 'var_81', output_type = 'response', resolution = 200, derivative = TRUE)
+
+plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars, output_type = 'response', resolution = 200)
 marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
 
 plots = plot_gbmpartial(model.gbm, best_it.gbm, mon_inc_vars, output_type = 'response')
@@ -170,12 +180,11 @@ marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
 plots = plot_gbmpartial(model.gbm, best_it.gbm, mon_dec_vars, output_type = 'response')
 marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
 
-plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars %!in_set% c(mon_dec_vars,mon_inc_vars), output_type = 'response')
-marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
-
+plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars %!in_set% c(mon_dec_vars,mon_inc_vars), output_type = 'response', resolution = 200, max_rug_points = 5000,derivative = FALSE)
+marrangeGrob(plots, nrow = 5, ncol = 4, top = NULL)
 
 gplots = lapply(plots, ggplotGrob)
-ggsave(filename = file.path(working_folder,"santander_transaction/gbm.pd.d6.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=7), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+ggsave(filename = file.path(working_folder,"santander_transaction/gbm.pd.d1a.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=7), device = 'pdf', width = 14, height = 8.5, dpi = 240)
 
 plots = llply(as.character(var_inf$var), function(var_name) {
   p = plot_profile(pred.gbm[tindex], actual[tindex],df[[var_name]][tindex], error_band = 'binom', bucket_count = 30) +
@@ -185,7 +194,7 @@ plots = llply(as.character(var_inf$var), function(var_name) {
 #marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
 
 gplots = lapply(plots, ggplotGrob)
-ggsave(filename = file.path(working_folder,"santander_transaction/gbm.profiles.d6.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=7), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+ggsave(filename = file.path(working_folder,"santander_transaction/gbm.profiles.d1.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=7), device = 'pdf', width = 14, height = 8.5, dpi = 240)
 
 ```
 

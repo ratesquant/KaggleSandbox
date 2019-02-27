@@ -32,6 +32,8 @@ library(xgboost)
 library(pdp) 
 library(vip) 
 
+library(rBayesianOptimization)
+
 #library(lightgbm)
 
 #working_folder = 'C:/Dev/Kaggle/'
@@ -79,24 +81,44 @@ actual = df[[obj_var]]
 exclude_vars = c('ID_code', 'is_train', obj_var) #replaced with logs
 all_vars = names(df) %!in_set% c(exclude_vars)
 
-train.fraction = 0.7
+mon_inc_vars = stri_join('var_', c(110, 53, 26, 22, 6, 99, 2, 78,
+                                   164,94,133,190,179,40,0,1,170,184,191,
+                                   18,147,173,91,67,118,95,
+                                   71, 52, 167, 51, 89, 180, 130, 35, 106, 
+                                   157, 128, 32, 119, 162, 49, 195, 90, 175, 24, 82,111,
+                                   155,5,145,163,125,151,137,48,135,55,196,105,144,97,
+                                   66,8,140,16,176,171,189,46,19,5,11,15,62,25,181))
+mon_dec_vars = stri_join('var_', c(81, 139, 12, 146, 174, 166, 109, 80, 76, 165, 21, 198,
+                                   44, 13, 148, 108,34, 33, 92,
+                                   9,169,121,123,115,86,122,188,75,149,127,107,56,
+                                   177, 87, 23, 172, 36, 154, 192, 141,43, 131, 186,
+                                   193,142,152,129, 197, 93, 150, 83,132,58,114,104, 102))
 
-dtrain <- xgb.DMatrix(as.matrix(df[tindex,all_vars, with = F]), label = actual[tindex] )
 
-train.sample = sample.int(nrow(dtrain), train.fraction * nrow(dtrain))
-eval.sample = seq(nrow(dtrain)) %!in_set% train.sample
+var.monotone = rep(0, length(all_vars))
+var.monotone[all_vars %in% mon_inc_vars]  =  1
+var.monotone[all_vars %in% mon_dec_vars]  = -1
 
-param <- list(max_depth = 3, 
-              eta = 0.01, 
-              nthread = 4,
-              subsample = 0.9,
-              objective = "binary:logistic",
-              eval_metric = "auc",
-              base_score = mean(actual[tindex]))
+dtrain = data.matrix(df[tindex,all_vars, with = F])
+#Round = 98	eta = 0.2366	max_depth = 1.0000	subsample = 1.0000	monotone = 1.0000	min_child_weight = 6.0000	Value = 0.8965 
 
-model.xgb <- xgb.train(param, data = dtrain[train.sample,], nrounds = 100, verbose = 1, watchlist = list(train = dtrain[train.sample,], eval = dtrain[eval.sample,]))
+model.xgb <- xgboost(
+  max_depth = 1, 
+  eta = 0.2366, 
+  nthread = 4,
+  subsample = 1.0,
+  min_child_weight = 6.0,
+  objective = "binary:logistic",
+  eval_metric = "auc",
+  monotone_constraints = var.monotone,
+  data = dtrain, label = actual[tindex],
+  print_every_n = 100,
+  nrounds = 3000, verbose = 1)
 
-pred.xgb <- predict(model.xgb, as.matrix(df[,all_vars, with = F]) )
+ggplot(model.xgb$evaluation_log, aes(iter, train_auc)) + geom_line()
+
+
+pred.xgb <- predict(model.xgb, data.matrix(df[,all_vars, with = F]) )
 
 plot_binmodel_roc(actual[tindex], pred.xgb[tindex])
 plot_binmodel_cdf(actual[tindex], pred.xgb[tindex])
@@ -122,6 +144,15 @@ plots = llply(as.character(importance_matrix$Feature), function(var_name) {
 
 gplots = lapply(plots, ggplotGrob)
 ggsave(filename = file.path(working_folder,"santander_transaction/xbg.profiles_d20.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=6), device = 'pdf', width = 11, height = 8.5, dpi = 240)
+
+#PD plots -------------
+pd_plots = llply(as.character(importance_matrix$Feature), function(vname){
+  temp = partial(model.xgb, pred.var = vname, train = dtrain, prob = TRUE)
+  ggplot(temp, aes_string(vname, 'yhat')) + geom_line()
+})
+marrangeGrob(pd_plots, nrow = 5, ncol = 5, top = NULL)
+gplots = lapply(pd_plots, ggplotGrob)
+ggsave(filename = file.path(working_folder,"santander_transaction/xbg.pd.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=6), device = 'pdf', width = 14, height = 8.5, dpi = 240)
 
 ```
 
@@ -240,6 +271,7 @@ param_res = ldply(seq(nrow(my_params)), function(run_index){
     gamma = 0, 
     nfold = 5,  
     nthread = 4, 
+    print_every_n = 100,
     early_stopping_rounds = 30)
   return ( data.frame(best_it = xgb_cv$best_iteration, xgb_cv$evaluation_log[xgb_cv$best_iteration,]) ) 
 })
@@ -255,11 +287,55 @@ ggplot(param_res, aes(depth, train_auc_mean/test_auc_mean, group = eta, color = 
 
 ggplot(param_res, aes(depth,  best_it, group = eta)) + geom_point() + facet_grid(mono ~ subsample)
 
+### Param optimization ----------------
+set.seed(132140937)
+#Best Parameters Found:  Round = 29	eta = 0.1663	max_depth = 8.0000	subsample = 1.0000	Value = -522.3625 
+#Best Parameters Found:  Round = 47	eta = 0.0335	max_depth = 13.0000	subsample = 0.7085	monotone = 0.0000	Value = -518.4975 
+#Round = 98	eta = 0.2366	max_depth = 1.0000	subsample = 1.0000	monotone = 1.0000	min_child_weight = 6.0000	Value = 0.8965 
+
+xgb_cv_bayes <- function(eta, max_depth, subsample, monotone, min_child_weight) {
+  cv <- xgb.cv(params = list(eta = eta,
+                             max_depth = max_depth,
+                             subsample = subsample, 
+                             min_child_weight = min_child_weight,
+                             monotone_constraints = ifelse(rep(monotone==1,length(var.monotone)), var.monotone, rep(0, length(var.monotone))),
+                             colsample_bytree = 1.0,
+                             oobjective = "binary:logistic", eval_metric = "auc"),
+               data = df_train_set, label = actual[tindex],
+               nround = 2000, #2000
+               nfold = 5,
+               gamma = 0, 
+               early_stopping_rounds = 30,  
+               verbose = 0)
+  gc(reset = TRUE)
+  
+  list(Score = cv$evaluation_log$test_auc_mean[cv$best_iteration], Pred = cv$best_iteration)
+}
+sink(file.path(working_folder,'santander_transaction/log.txt'), append=FALSE, split=TRUE)
+OPT_Res <- BayesianOptimization(xgb_cv_bayes,
+                                bounds = list(
+                                  eta = c(0.001, 1.0),
+                                  max_depth = c(1L, 10L),
+                                  subsample = c(0.5, 1.0),
+                                  monotone = c(0L, 1L),
+                                  min_child_weight = c(1L, 10L)),
+                                init_grid_dt = NULL, 
+                                init_points = 10, #10
+                                n_iter = 100,     #50
+                                acq = "ucb", kappa = 2.576, eps = 0.0,
+                                verbose = TRUE)
+sink()
+
+ggplot(OPT_Res$History, aes(eta, Value, size = min_child_weight)) + geom_point(alpha = 0.6) + geom_smooth() + facet_wrap(~monotone)
+ggplot(OPT_Res$History, aes(subsample, Value, size = min_child_weight)) + geom_point(alpha = 0.6) + geom_smooth() + facet_wrap(~monotone)
+ggplot(OPT_Res$History, aes(max_depth, Value, size = min_child_weight)) + geom_point(alpha = 0.3) + geom_smooth() + facet_wrap(~monotone)
+
+
 ```
 
 ## Save Results
 gbm - 0.895
-xgb - 0.890
+xgb - 0.898
 
 ```{r save_results}
 

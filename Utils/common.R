@@ -163,7 +163,7 @@ plot_gbmiterations <- function(gbm_model) {
 }
 
 
-plot_gbmpartial <- function(gbm_model, iter, variables, resolution = 100, output_type = 'response', add_rug = TRUE, max_rug_points = 1000){
+plot_gbmpartial <- function(gbm_model, iter, variables, resolution = 100, output_type = 'response', add_rug = TRUE, max_rug_points = 1000, derivative = FALSE){
   plots <- llply(variables, function(vname){
     plot_data = plot(gbm_model, i.var = vname, n.trees = iter, type = output_type, continuous.resolution = resolution, return.grid = TRUE)
    
@@ -180,8 +180,13 @@ plot_gbmpartial <- function(gbm_model, iter, variables, resolution = 100, output
         theme(legend.position = 'none', axis.text.x = element_text(angle = 90, hjust = 1), axis.title.y = element_blank(), axis.title.x = element_blank()) + 
         ggtitle(vname)
     }else{
-      plot_result = ggplot(plot_data, aes(x, y)) + geom_line(color = 'black', size = 1) +
-        theme(legend.position = 'none', axis.title.y = element_blank(), axis.title.x = element_blank()) + ggtitle(vname)
+      if(derivative){
+        plot_result = ggplot(plot_data, aes(x, c(0, diff(y) ))) + geom_line(color = 'black', size = 1) +  
+          theme(legend.position = 'none', axis.title.y = element_blank(), axis.title.x = element_blank()) + ggtitle(vname)
+      }else{
+        plot_result = ggplot(plot_data, aes(x, y)) + geom_line(color = 'black', size = 1) +  
+          theme(legend.position = 'none', axis.title.y = element_blank(), axis.title.x = element_blank()) + ggtitle(vname)
+      }
       
     }
     

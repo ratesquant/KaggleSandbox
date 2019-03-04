@@ -27,6 +27,7 @@ library(wesanderson)
 df <- data.table(expand.grid(x = seq(-2,2, by = 0.05), y = seq(-2,2, by =0.05)))
 df[, z:=  y * sin(x) * exp(-x*x - y*y)]
 
+
 div_palettes = c('BrBG', 'PiYG', 'PRGn', 'PuOr', 'RdBu', 'RdGy', 'RdYlBu', 'RdYlGn', 'Spectral')
 qul_palettes = c('Accent', 'Dark2', 'Paired', 'Pastel1', 'Pastel2', 'Set1', 'Set2', 'Set3')
 seq_palettes = c('Blues', 'BuGn', 'BuPu', 'GnBu', 'Greens', 'Greys', 'Oranges', 'OrRd', 'PuBu', 'PuBuGn', 'PuRd', 'Purples', 'RdPu', 'Reds', 'YlGn', 'YlGnBu', 'YlOrBr', 'YlOrRd')
@@ -41,6 +42,12 @@ plots = llply(palettes, function(palette_name) {
 })
 
 marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+
+ggplot(df, aes(x, y, fill = x)) + geom_raster() + scale_fill_custom('jet', discrete= FALSE)
+ggplot(df, aes(x, y, fill = x)) + geom_raster() + scale_fill_custom('mixed', discrete= FALSE)
+ggplot(df, aes(x, y, fill = x)) + geom_raster() + scale_fill_custom('hot', discrete= FALSE)
+ggplot(df, aes(x, y, fill = x)) + geom_raster() + scale_fill_custom('main', discrete= FALSE)
+
 
 # gs <- lapply(1:9, function(ii) 
 #   grobTree(rectGrob(gp=gpar(fill=ii, alpha=0.5)), textGrob(ii)))

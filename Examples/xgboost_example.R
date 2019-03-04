@@ -10,8 +10,8 @@ library(gridExtra)
 library(corrplot)
 library(plyr)
 
-working_folder = 'C:/Dev/Kaggle/'
-#working_folder = 'F:/Github/KaggleSandbox/'
+#working_folder = 'C:/Dev/Kaggle/'
+working_folder = 'F:/Github/KaggleSandbox/'
 #working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 source(file.path(working_folder, '/Utils/common.R'))
 

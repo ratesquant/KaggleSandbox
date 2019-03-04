@@ -53,6 +53,62 @@ cutq <- function(x, probs = seq(0, 1, 0.1), na.rm = TRUE, include.lowest = TRUE)
   return(res)
 }
 
+## GGPLOT Colors ----------
+custom_colors <- c(
+  `red`        = "#d11141",
+  `green`      = "#00b159",
+  `blue`       = "#00aedb",
+  `orange`     = "#f37735",
+  `yellow`     = "#ffc425",
+  `light grey` = "#cccccc",
+  `dark grey`  = "#8c8c8c")
+
+custom_cols <- function(...) {
+  cols <- c(...)
+  
+  if (is.null(cols))
+    return (custom_colors)
+  
+  custom_colors[cols]
+}
+
+custom_palettes <- list(
+  `main`  = custom_cols("blue", "green", "yellow"),
+  `cool`  = custom_cols("blue", "green"),
+  `hot`   = custom_cols("yellow", "orange", "red"),
+  `mixed` = custom_cols("blue", "green", "yellow", "orange", "red"),
+  `grey`  = custom_cols("light grey", "dark grey"),
+  `jet`   = c("#0000ff","#0080ff", "#00ffff", "#00ff80", "#00ff00","#80ff00", "#ffff00","#ff8000","#ff0000")
+)
+
+custom_pal <- function(palette = "main", reverse = FALSE, ...) {
+  pal <- custom_palettes[[palette]]
+  
+  if (reverse) pal <- rev(pal)
+  
+  colorRampPalette(pal, ...)
+}
+
+scale_color_custom <- function(palette = "main", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- custom_pal(palette = palette, reverse = reverse)
+  
+  if (discrete) {
+    discrete_scale("colour", paste0("drsimonj_", palette), palette = pal, ...)
+  } else {
+    scale_color_gradientn(colours = pal(256), ...)
+  }
+}
+
+scale_fill_custom <- function(palette = "main", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- custom_pal(palette = palette, reverse = reverse)
+  
+  if (discrete) {
+    discrete_scale("fill", paste0("custom_", palette), palette = pal, ...)
+  } else {
+    scale_fill_gradientn(colours = pal(256), ...)
+  }
+}
+
 ## GBM plotting functions ----------
 
 gbm_interactions <- function(gbm_model, data, iter, min_influence = 1, degree = 2){

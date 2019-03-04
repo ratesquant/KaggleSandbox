@@ -80,15 +80,22 @@ eval_path<-function(nodes, path){
 
 ```{r utils, echo=FALSE}
 
-starting_tour = fread(file.path(working_folder, "Santa/data/cpp.solution.tour.txt"), header = FALSE)$V1
+starting_tour = fread(file.path(working_folder, "Santa/data/cpp.solution.tour.txt"),         header = FALSE)$V1
+starting_tour = fread(file.path(working_folder, "Santa/data/cpp.solution.tour.1516669.txt"), header = TRUE)$Path
 
 starting_dist = eval_path(df, starting_tour)
 
+starting_dist/1516669.487072
+
+ggplot(cbind(df[starting_tour[1:20000]+1,],segment=factor(floor(seq(length(starting_tour)) / 10000)) ), aes(X, Y, color = segment)) + 
+  geom_path() + 
+  geom_point(data = df[1,], aes(X, Y), color = 'red')
+
 #compute triangulation
-dxy1 = deldir(df$X, df$Y, plotit = FALSE)
+#dxy1 = deldir(df$X, df$Y, plotit = FALSE)
 #saveRDS(dxy1, file.path(working_folder, "Santa/data/voronoi.Rds"))
-nn_index = dxy1[['delsgs']][,c('ind1', 'ind2')]
-n_len = sqrt( (df$X[nn_index$ind1] - df$X[nn_index$ind2])^2 + (df$X[nn_index$ind1] - df$X[nn_index$ind2])^2 )
+#nn_index = dxy1[['delsgs']][,c('ind1', 'ind2')]
+#n_len = sqrt( (df$X[nn_index$ind1] - df$X[nn_index$ind2])^2 + (df$X[nn_index$ind1] - df$X[nn_index$ind2])^2 )
 #mean(n_len)
 #vor_time = ldply(1000*seq(20), function(i) {
 #  pindex = sample.int(nrow(df), i)
@@ -151,21 +158,6 @@ random_tour_4 <- function(tour)
   return(m_tour)
 }
 
-random_tour_5 <- function(tour)
-{
-  n <- length(tour)
-  m <- 1+sample.int(n-2, size = 1) #[2, n-1]
-  
-  close_nodes = subset(nn_index, ind1==m | ind2 == m)
-  candidate_list = unique(c(close_nodes$ind1, close_nodes$ind2)) %!in_set% c(m, n-1)
-  node_id = sample(candidate_list, 1)
-  
-  node_id = ifelse(node_id > m, node_id - 1, node_id)
-  
-  m_tour <- append(tour[-m],tour[m], after = node_id) 
-  
-  return(m_tour)
-}
 
 ```
 
@@ -176,7 +168,7 @@ maxit = 10000
 
 #r_tour = starting_tour
 
-shifters = c('random_tour_1', 'random_tour_2', 'random_tour_3', 'random_tour_4','random_tour_5')
+shifters = c('random_tour_1', 'random_tour_2', 'random_tour_3', 'random_tour_4')
 
 best_len =  eval_path(df, starting_tour)
 r_tour = starting_tour

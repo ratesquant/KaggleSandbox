@@ -37,8 +37,8 @@ library(rBayesianOptimization)
 #library(lightgbm)
 
 #working_folder = 'C:/Dev/Kaggle/'
-#working_folder = 'F:/Github/KaggleSandbox/'
-working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+working_folder = 'F:/Github/KaggleSandbox/'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 
 
 source(file.path(working_folder, '/Utils/common.R'))
@@ -113,7 +113,7 @@ model.xgb <- xgboost(
   monotone_constraints = var.monotone,
   data = dtrain, label = actual[tindex],
   print_every_n = 100,
-  nrounds = 3000, verbose = 1)
+  nrounds = 1000, verbose = 1)
 
 ggplot(model.xgb$evaluation_log, aes(iter, train_auc)) + geom_line()
 
@@ -127,6 +127,8 @@ gbm.roc.area(actual[tindex], pred.xgb[tindex]) #0.7474184
 
 importance_matrix <- xgb.importance(model = model.xgb)
 print(importance_matrix)
+fwrite( importance_matrix, file.path(working_folder,'santander_transaction/var.imp.csv'))
+
 xgb.ggplot.importance(importance_matrix = importance_matrix)
 xgb.ggplot.deepness(model.xgb)
 xgb.ggplot.deepness(model.xgb, which = '2x1')
@@ -325,6 +327,49 @@ OPT_Res <- BayesianOptimization(xgb_cv_bayes,
                                 acq = "ucb", kappa = 2.576, eps = 0.0,
                                 verbose = TRUE)
 sink()
+
+ggplot(OPT_Res$History, aes(eta, Value, size = min_child_weight)) + geom_point(alpha = 0.6) + geom_smooth() + facet_wrap(~monotone)
+ggplot(OPT_Res$History, aes(subsample, Value, size = min_child_weight)) + geom_point(alpha = 0.6) + geom_smooth() + facet_wrap(~monotone)
+ggplot(OPT_Res$History, aes(max_depth, Value, size = min_child_weight)) + geom_point(alpha = 0.3) + geom_smooth() + facet_wrap(~monotone)
+
+### Param optimization top 20 features ----------------
+set.seed(132140937)
+#top 20 depth = 1, eta = 0.2,subsample = 0.9, min_child_weight = 10
+
+importance_matrix = fread( file.path(working_folder,'santander_transaction/var.imp.csv'))
+
+df_train_set = data.matrix(df[tindex,importance_matrix$Feature[1:20], with = F])
+
+xgb_cv_bayes <- function(eta, max_depth, subsample, min_child_weight) {
+  cv <- xgb.cv(params = list(eta = eta,
+                             max_depth = max_depth,
+                             subsample = subsample, 
+                             min_child_weight = min_child_weight,
+                             colsample_bytree = 1.0,
+                             oobjective = "binary:logistic", eval_metric = "auc", nthread = 4),
+               data = df_train_set, label = actual[tindex],
+               nround = 5000, #2000
+               nfold = 5,
+               gamma = 0, 
+               early_stopping_rounds = 30,  
+               verbose = 0)
+  gc(reset = TRUE)
+  
+  list(Score = cv$evaluation_log$test_auc_mean[cv$best_iteration], Pred = cv$best_iteration)
+}
+#sink(file.path(working_folder,'santander_transaction/log.top20.txt'), append=FALSE, split=TRUE)
+OPT_Res <- BayesianOptimization(xgb_cv_bayes,
+                                bounds = list(
+                                eta = c(0.001, 1.0),
+                                max_depth = c(1L, 7L),
+                                subsample = c(0.5, 1.0),
+                                min_child_weight = c(1L, 20L)),
+                                init_grid_dt = NULL, 
+                                init_points = 10, #10
+                                n_iter = 100,     #50
+                                acq = "ucb", kappa = 2.576, eps = 0.0,
+                                verbose = TRUE)
+#sink()
 
 ggplot(OPT_Res$History, aes(eta, Value, size = min_child_weight)) + geom_point(alpha = 0.6) + geom_smooth() + facet_wrap(~monotone)
 ggplot(OPT_Res$History, aes(subsample, Value, size = min_child_weight)) + geom_point(alpha = 0.6) + geom_smooth() + facet_wrap(~monotone)

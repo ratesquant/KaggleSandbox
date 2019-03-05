@@ -108,7 +108,7 @@ mon_inc_vars = stri_join('var_', c(110, 53, 26, 22, 6, 99, 2, 78,
                                    155,5,145,163,125,151,137,48,135,55,196,105,144,97,
                                    66,8,140,16,176,171,189,46,19,11,15,62,25,181,
                                    112,70,199,47,168,134,187,69,159,61,65,84,74,3,138,4,41,
-                                   29,126,161,79,37))
+                                   29,126,161,79,37, 96, 7, 100, 124))
 mon_dec_vars = stri_join('var_', c(81, 139, 12, 146, 174, 166, 109, 80, 76, 165, 21, 198,
                                    44, 13, 148, 108,34, 33, 92,
                                    9,169,121,123,115,86,122,188,75,149,127,107,56,
@@ -116,7 +116,7 @@ mon_dec_vars = stri_join('var_', c(81, 139, 12, 146, 174, 166, 109, 80, 76, 165,
                                    193,142,152,129, 197, 93, 150, 83,132,58,114,104, 102,
                                    28,85,31,116,101, 143,64,59,42,178,194,113,50,45,54,72,57,68,
                                    20, 156,63,158,103,120,153,14,160,73,
-                                   88,182,39,30,17,136))
+                                   88,182,39,30,17,136, 77, 183, 27))
 
 #mon_dec_vars[duplicated(mon_dec_vars)]
 #mon_inc_vars[duplicated(mon_inc_vars)]
@@ -125,15 +125,15 @@ mon_dec_vars = stri_join('var_', c(81, 139, 12, 146, 174, 166, 109, 80, 76, 165,
 var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
-max_it = 20000
+max_it = 50000
 
 model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
                  n.trees = max_it,
                  cv.folds = 0,
-                 shrinkage = 0.05,
+                 shrinkage = 0.01, #0.05 - 15k, 0.02 - 35k
                  interaction.depth=1,
-                 train.fraction = 0.7,
+                 train.fraction = 1.0,
                  bag.fraction = 0.95,# 0.5 for small samples, 0.7 for large
                  n.cores = 4,
                  var.monotone = var.monotone,
@@ -143,9 +143,10 @@ model.gbm  = gbm(formula.gbm,
 #saveRDS(model.gbm, file.path(working_folder,'santander_transaction/model_gbm.rds'))
 #model.gbm = readRDS(file.path(working_folder,'santander_transaction/model_gbm.rds'))
 
-plot_gbmiterations(model.gbm) #0.40810
+plot_gbmiterations(model.gbm) #0.40764
 
 best_it.gbm = gbm.perf(model.gbm, plot.it = FALSE)
+best_it.gbm = max_it
 
 pred.gbm  = predict(model.gbm, n.trees = best_it.gbm, newdata = df, type = 'response')
 plot_binmodel_roc(actual[tindex], pred.gbm[tindex])
@@ -192,6 +193,13 @@ plots = llply(as.character(var_inf$var), function(var_name) {
   return( p )
 })
 #marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
+
+plots = llply(imp_vars %!in_set% c(mon_dec_vars,mon_inc_vars), function(var_name) {
+  p = plot_profile(pred.gbm[tindex], actual[tindex],df[[var_name]][tindex], error_band = 'binom', bucket_count = 10) +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 5, ncol = 4, top = NULL)
 
 gplots = lapply(plots, ggplotGrob)
 ggsave(filename = file.path(working_folder,"santander_transaction/gbm.profiles.d1.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=7), device = 'pdf', width = 14, height = 8.5, dpi = 240)
@@ -301,8 +309,8 @@ marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
 
 
 ## Save Results
-gbm - 0.893
-xgb - 0.892
+gbm - 0.898
+xgb - 0.898
 
 ```{r save_results}
 

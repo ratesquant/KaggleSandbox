@@ -345,14 +345,16 @@ ggplot(OPT_Res$History, aes(max_depth, Value, size = min_child_weight)) + geom_p
 #top 10(22%) Round = 2	eta = 0.0533	max_depth = 2.0000	subsample = 0.8258	min_child_weight = 4.0000	Value = 0.7135476 
 #top 20(37%) Round = 14	eta = 0.1215	max_depth = 1.0000	subsample = 1.0000	min_child_weight = 6.0000	Value = 0.7708 ()
 #top 40(60%) Round = 23	eta = 0.0559	max_depth = 1.0000	subsample = 1.0000	min_child_weight = 8.0000	gamma = 0.1289	Value = 0.8301 
+#top 50(60%) Round = 16	eta = 0.0205	max_depth = 1.0000	subsample = 0.9875	min_child_weight = 20.0000	gamma = 0.1031	Value = 0.8473
 
 importance_matrix = fread( file.path(working_folder,'santander_transaction/gbm.var_inf.d1.csv'))
 
 #plot(cumsum(importance_matrix$rel.inf))
 
-df_train_set = data.matrix(df[tindex,importance_matrix$var[1:50], with = F])
+#df_train_set = data.matrix(df[tindex,importance_matrix$var[1:50], with = F])
+df_train_set = data.matrix(df[tindex,all_vars, with = F])
 
-xgb_cv_bayes <- function(eta, max_depth, subsample, min_child_weight, gamma) {
+xgb_cv_bayes <- function(eta, max_depth, subsample, min_child_weight, gamma,monotone) {
     set.seed(132140937) # to remove random noise from the parameters
   
     cv <- xgb.cv(params = list(eta = eta,
@@ -360,10 +362,11 @@ xgb_cv_bayes <- function(eta, max_depth, subsample, min_child_weight, gamma) {
                              subsample = subsample, 
                              min_child_weight = min_child_weight,
                              gamma = gamma, 
+                             monotone_constraints = ifelse(rep(monotone==1,length(var.monotone)), var.monotone, rep(0, length(var.monotone))),
                              colsample_bytree = 1.0,
                              oobjective = "binary:logistic", eval_metric = "auc", nthread = 4),
                data = df_train_set, label = actual[tindex],
-               nround = 15000, #2000
+               nround = 20000, #2000
                nfold = 5,
                early_stopping_rounds = 50,  
                verbose = 0)
@@ -371,24 +374,26 @@ xgb_cv_bayes <- function(eta, max_depth, subsample, min_child_weight, gamma) {
   
   list(Score = cv$evaluation_log$test_auc_mean[cv$best_iteration], Pred = cv$best_iteration)
 }
-#sink(file.path(working_folder,'santander_transaction/log.top20.txt'), append=FALSE, split=TRUE)
+sink(file.path(working_folder,'santander_transaction/log.txt'), append=FALSE, split=TRUE)
 OPT_Res <- BayesianOptimization(xgb_cv_bayes,
                                 bounds = list(
                                 eta = c(0.01, 0.1), #0.1215
                                 max_depth = c(1L, 2L), #1
                                 subsample = c(0.8, 1.0), #1.0
                                 min_child_weight = c(4L, 20L), #6.0000
-                                gamma = c(0, 1)), #0.1289
+                                gamma = c(0, 0.5),#0.1289
+                                monotone = c(0L, 1L)), 
                                 init_grid_dt = NULL, 
                                 init_points = 10, #10
-                                n_iter = 30,     #50
+                                n_iter = 40,     #50
                                 acq = "ucb", kappa = 2.576, eps = 0.0,
                                 verbose = TRUE)
-#sink()
+sink()
 opt_res = data.table(OPT_Res$History, it_count=as.numeric(OPT_Res$Pred))
 #setorder(opt_res, Value)
 
 tableplot(opt_res, sortCol = 'Value')
+tableplot(opt_res, sortCol = 'Round')
 
 ggplot(opt_res, aes(eta, Value)) + geom_point(alpha = 0.6) + geom_smooth()
 ggplot(opt_res, aes(subsample, Value, size = max_depth, color =min_child_weight)) + geom_point(alpha = 0.6) + geom_smooth()
@@ -407,8 +412,10 @@ param.model  = gbm(param.formula,
                  data = opt_res[, all.vars(param.formula), with = FALSE],
                  verbose = TRUE)
 plot_gbmiterations(param.model)
-var_inf = summary(param.model, n.trees = 1000, plotit = F)
-plots = plot_gbmpartial(param.model, 1000,all.vars(param.formula) %!in_set% c('Value'), output_type = 'link')
+best_it.gbm = gbm.perf(param.model, plot.it = FALSE)
+
+var_inf = summary(param.model, n.trees = best_it.gbm, plotit = F)
+plots = plot_gbmpartial(param.model, best_it.gbm,all.vars(param.formula) %!in_set% c('Value'), output_type = 'link')
 marrangeGrob(plots, nrow = 2, ncol = 3, top = NULL)
 
 ```

@@ -103,19 +103,21 @@ var.monotone[all_vars %in% mon_dec_vars]  = -1
 
 dtrain = data.matrix(df[tindex,all_vars, with = F])
 #Round = 98	eta = 0.2366	max_depth = 1.0000	subsample = 1.0000	monotone = 1.0000	min_child_weight = 6.0000	Value = 0.8965 
+#eta = 0.0387	max_depth = 1.0000	subsample = 0.9067	min_child_weight = 8.0000	gamma = 0.3154	monotone = 1.0000	Value = 0.8974 (12352)
 
 model.xgb <- xgboost(
   max_depth = 1, 
-  eta = 0.2366, 
+  eta = 0.0387, 
   nthread = 4,
-  subsample = 1.0,
-  min_child_weight = 6.0,
+  subsample = 0.9,
+  min_child_weight = 8.0,
+  gamma = 0.3,
   objective = "binary:logistic",
   eval_metric = "auc",
   monotone_constraints = var.monotone,
   data = dtrain, label = actual[tindex],
   print_every_n = 100,
-  nrounds = 1000, verbose = 1)
+  nrounds = 13000, verbose = 1)
 
 ggplot(model.xgb$evaluation_log, aes(iter, train_auc)) + geom_line()
 
@@ -202,10 +204,14 @@ dtrain <- xgb.DMatrix(as.matrix(df[tindex,all_vars, with = F]), label = actual[t
 train.sample = sample.int(nrow(dtrain), train.fraction * nrow(dtrain))
 eval.sample = seq(nrow(dtrain)) %!in_set% train.sample
 
-param <- list(max_depth = 6, 
-              eta = 0.02, 
+#eta = 0.0387	max_depth = 1.0000	subsample = 0.9067	min_child_weight = 8.0000	gamma = 0.3154	monotone = 1.0000	Value = 0.8974 (12352)
+
+param <- list(max_depth = 1, 
+              eta = 0.03, 
               nthread = 4,
               subsample = 0.9,
+              min_child_weight = 8,
+              gamma = 0.3,
               objective = "binary:logistic",
               eval_metric = "auc",
               base_score = mean(actual[tindex]),
@@ -213,7 +219,7 @@ param <- list(max_depth = 6,
 
 model.xgb <- xgb.train(param, data = dtrain[train.sample,], 
                        watchlist = list(train = dtrain[train.sample,], eval = dtrain[eval.sample,]),
-                       nrounds = 4000, 
+                       nrounds = 13000, 
                        verbose = 1, 
                        print_every_n = 10,
                        early_stopping_rounds = 30)
@@ -260,7 +266,7 @@ plots = llply(stri_join('var_',as.character(importance_matrix$Feature))[1:40], f
 #marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
 
 ### CV Grid Search ----------------
-my_params = expand.grid(depth =c(1,2), eta = c(0.02, 0.05), subsample = c(0.9, 1.0), gamma = c(0, 0.1), mono =c(TRUE, FALSE))
+my_params = expand.grid(depth =c(1), eta = c(0.02, 0.03), subsample = c(0.9, 0.8), gamma = c(0.2, 0.3), mono =c(TRUE, FALSE))
 
 df_train_set = data.matrix(df[tindex,all_vars, with = F])
 
@@ -278,11 +284,12 @@ param_res = ldply(seq(nrow(my_params)), function(run_index){
     eta = my_params$eta[run_index], 
     monotone_constraints = ifelse(rep(my_params$mono[run_index],length(var.monotone)), var.monotone, rep(0, length(var.monotone))),
     gamma = my_params$gamma[run_index], 
-    min_child_weight = 5,
-    nfold = 10,  
+    min_child_weight = 8,
+    nfold = 5,  
     nthread = 4, 
-    print_every_n = 100,
+    print_every_n = 1000,
     early_stopping_rounds = 50)
+  gc(reset = TRUE)
   return ( data.frame(best_it = xgb_cv$best_iteration, xgb_cv$evaluation_log[xgb_cv$best_iteration,]) ) 
 })
 param_res = cbind(param_res, my_params)
@@ -346,6 +353,7 @@ ggplot(OPT_Res$History, aes(max_depth, Value, size = min_child_weight)) + geom_p
 #top 20(37%) Round = 14	eta = 0.1215	max_depth = 1.0000	subsample = 1.0000	min_child_weight = 6.0000	Value = 0.7708 ()
 #top 40(60%) Round = 23	eta = 0.0559	max_depth = 1.0000	subsample = 1.0000	min_child_weight = 8.0000	gamma = 0.1289	Value = 0.8301 
 #top 50(60%) Round = 16	eta = 0.0205	max_depth = 1.0000	subsample = 0.9875	min_child_weight = 20.0000	gamma = 0.1031	Value = 0.8473
+#           Round = 12	eta = 0.0387	max_depth = 1.0000	subsample = 0.9067	min_child_weight = 8.0000	gamma = 0.3154	monotone = 1.0000	Value = 0.8974 (12352)
 
 importance_matrix = fread( file.path(working_folder,'santander_transaction/gbm.var_inf.d1.csv'))
 
@@ -366,7 +374,7 @@ xgb_cv_bayes <- function(eta, max_depth, subsample, min_child_weight, gamma,mono
                              colsample_bytree = 1.0,
                              oobjective = "binary:logistic", eval_metric = "auc", nthread = 4),
                data = df_train_set, label = actual[tindex],
-               nround = 20000, #2000
+               nround = 50000, #2000
                nfold = 5,
                early_stopping_rounds = 50,  
                verbose = 0)
@@ -422,7 +430,7 @@ marrangeGrob(plots, nrow = 2, ncol = 3, top = NULL)
 
 ## Save Results
 gbm - 0.895
-xgb - 0.898
+xgb - 0.899
 
 ```{r save_results}
 

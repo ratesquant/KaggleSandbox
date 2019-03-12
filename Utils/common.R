@@ -231,16 +231,16 @@ plot_gbmpartial <- function(gbm_model, iter, variables, resolution = 100, output
     
     if(is.factor(plot_data$x)){
       plot_result = ggplot(plot_data, aes(reorder(x, y), y, group = 1)) + 
-        geom_line(color = 'black', size = 1) +
+        geom_line(color = 'black') +
         geom_point() +
         theme(legend.position = 'none', axis.text.x = element_text(angle = 90, hjust = 1), axis.title.y = element_blank(), axis.title.x = element_blank()) + 
         ggtitle(vname)
     }else{
       if(derivative){
-        plot_result = ggplot(plot_data, aes(x, c(0, diff(y) ))) + geom_line(color = 'black', size = 1) +  
+        plot_result = ggplot(plot_data, aes(x, c(0, diff(y) ))) + geom_line(color = 'black') +  
           theme(legend.position = 'none', axis.title.y = element_blank(), axis.title.x = element_blank()) + ggtitle(vname)
       }else{
-        plot_result = ggplot(plot_data, aes(x, y)) + geom_line(color = 'black', size = 1) +  
+        plot_result = ggplot(plot_data, aes(x, y)) + geom_line(color = 'black') +  
           theme(legend.position = 'none', axis.title.y = element_blank(), axis.title.x = element_blank()) + ggtitle(vname)
       }
       

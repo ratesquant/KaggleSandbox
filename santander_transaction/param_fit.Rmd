@@ -1,5 +1,5 @@
 ---
-title: "Parametric Fit"
+title: "Parametric Fit  "
 output: html_document
 ---
 

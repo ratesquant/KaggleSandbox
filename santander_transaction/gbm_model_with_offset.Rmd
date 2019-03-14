@@ -58,7 +58,23 @@ source(file.path(working_folder, '/Utils/common.R'))
   
   #ggplot(df, aes(var_0, group = is_train)) + stat_ecdf()
   
-  #ggplot(df_train[1:10000,], aes(var_81, var_139, color = factor(target) )) + geom_point(alpha = 0.2)
+  #ggplot(df_train[1:30000,], aes(var_80, var_139)) + geom_point(alpha = 0.2) + geom_rug(alpha = 0.01) + facet_wrap(~target)
+  ggplot(df_train, aes(var_80, var_139)) + geom_bin2d() + facet_wrap(~target) + scale_fill_custom('jet', discrete = FALSE)
+  ggplot(df_train, aes(var_81, var_139, z = target)) + stat_summary_2d(fun = function(x) mean(x)) + scale_fill_custom('jet', discrete = FALSE)
+  #ggplot(df_train, aes(var_81, var_139, z = target)) + stat_summary_hex(fun = function(x) mean(x)) +  scale_fill_custom('jet', discrete = FALSE)
+  
+  imp_vars = c('var_81','var_53','var_164','var_109','var_139','var_166','var_78','var_12','var_177','var_80')
+  all_combinations = t(combn(imp_vars, 2))
+  plots = llply(seq(nrow(all_combinations)), function(i){
+    ggplot(df_train, aes_string(all_combinations[i,1], all_combinations[i,2])) + geom_bin2d() + facet_wrap(~target) + scale_fill_custom('jet', discrete = FALSE) + theme(legend.position = 'none')
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 9, top = NULL)
+  
+  plots = llply(seq(nrow(all_combinations)), function(i){
+    ggplot(df_train, aes_string(all_combinations[i,1], all_combinations[i,2], z = 'target')) + stat_summary_2d(fun = function(x) ifelse(length(x)<8, NA, mean(x))) + scale_fill_custom('jet', discrete = FALSE)+ theme(legend.position = 'none')
+    #ggplot(df_train, aes_string(all_combinations[i,1], all_combinations[i,2], z = 'target')) + stat_summary_hex(fun = function(x) mean(x)) + scale_fill_custom('jet', discrete = FALSE)+ theme(legend.position = 'none')
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 9, top = NULL)
   
   #tableplot(df_train[1:10000,], select = c('target',stri_join('var_', seq(0, 10))), sortCol = 'var_0')
   #tableplot(df_train[1:10000,], select = c('target','var_1'), sortCol = 'var_0')

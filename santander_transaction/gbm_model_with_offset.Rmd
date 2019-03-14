@@ -56,49 +56,61 @@ source(file.path(working_folder, '/Utils/common.R'))
   
   gc(reset = TRUE)
   
-  ggplot(df, aes(var_0, group = is_train)) + stat_ecdf()
+  #ggplot(df, aes(var_0, group = is_train)) + stat_ecdf()
   
-  ggplot(df_train[1:10000,], aes(var_81, var_139, color = factor(target) )) + geom_point(alpha = 0.2)
+  #ggplot(df_train[1:10000,], aes(var_81, var_139, color = factor(target) )) + geom_point(alpha = 0.2)
   
   #tableplot(df_train[1:10000,], select = c('target',stri_join('var_', seq(0, 10))), sortCol = 'var_0')
   #tableplot(df_train[1:10000,], select = c('target','var_1'), sortCol = 'var_0')
 ```
 
-## GBM Model
-           var   rel.inf
-var_81   var_81 3.2440259
-var_139 var_139 2.4349696
-var_12   var_12 2.1091947
-var_146 var_146 1.8890873
-var_110 var_110 1.8675672
+## Logistic regression
 
-
-```{r gbm_model}
-
+```{r logreg_model}
 tindex = df$is_train
 
 obj_var = 'target'
 actual = df[[obj_var]]
 
-#only keep several car_11 levels
-exclude_vars = c('ID_code', 'is_train', obj_var) #replaced with logs
-
+exclude_vars = c('ID_code', 'is_train', obj_var)
 all_vars = names(df) %!in_set% c(exclude_vars)
+
+formula.glm = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+model.glm = glm(formula.glm, df[tindex,], family = binomial(link = "logit"))
+summary(model.glm)
+
+#could be dec: var_41, var_7, var_98        var_10       var_185
+#could be inc:        var_38       var_117        var_60 
+
+pred.glm          = predict(model.glm, newdata = df, type = 'response')
+pred.glm.logodds  = predict(model.glm, newdata = df, type = 'link')
+plot_binmodel_roc(actual[tindex], pred.glm[tindex])
+plot_binmodel_cdf(actual[tindex], pred.glm[tindex])
+plot_binmodel_percentiles(actual[tindex], pred.glm[tindex], 100)
+gbm.roc.area(actual[tindex], pred.glm[tindex]) #0.861283
+
+plots = llply(all_vars[1:30], function(var_name) {
+  p = plot_profile(pred.glm[tindex], actual[tindex],df[[var_name]][tindex], error_band = 'binom', bucket_count = 20) +
+    ggtitle(var_name) +  theme(title =element_text(size=6), axis.title.y = element_blank()) 
+  return( p )
+})
+marrangeGrob(plots, nrow = 5, ncol = 6, top = NULL)
+
+```
+
+## GBM Model: with offset
+
+```{r gbm_model}
+
+loglink <-function(x) { 1.0/(1.0+exp(-x))}
 
 set.seed(1012356)
 
-formula.gbm = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+formula.gbm = formula(stri_join( obj_var, ' ~ ', 'offset(logreg) +', stri_join(unique(all_vars), collapse = ' + ')))
 
 model_vars = all.vars(formula.gbm) %!in_set% c(obj_var)
 var.monotone = rep(0, length(model_vars))
-
-#df[1:10, ..model_vars]
-#str(df[, ..model_vars])
-
-#num_vars  = model_vars %in_set% names(which(sapply(df, is.numeric)))
-#corr_matrix = cor(df[, ..num_vars ], use="complete.obs")
-#corrplot(corr_matrix, method="number", number.cex = 0.5)
-#corrplot(corr_matrix, method="circle", order="hclust")
 
 #var_7 - could be dec
 mon_inc_vars = stri_join('var_', c(110, 53, 26, 22, 6, 99, 2, 78,
@@ -132,13 +144,13 @@ model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
                  n.trees = max_it,
                  cv.folds = 0,
-                 shrinkage = 0.01, #0.05 - 15k, 0.02 - 35k
+                 shrinkage = 0.02, #0.05 - 15k, 0.02 - 35k
                  interaction.depth=1,
                  train.fraction = 1.0,
                  bag.fraction = 0.95,# 0.5 for small samples, 0.7 for large
                  n.cores = 4,
-                 var.monotone = var.monotone,
-                 data = df[tindex , all.vars(formula.gbm), with = F],
+                 var.monotone = NULL,
+                 data = cbind(df[tindex, ], logreg = pred.glm.logodds[tindex])[,all.vars(formula.gbm), with = F],
                  verbose = TRUE)
 
 #saveRDS(model.gbm, file.path(working_folder,'santander_transaction/model_gbm.rds'))
@@ -149,7 +161,7 @@ plot_gbmiterations(model.gbm) #0.40764
 best_it.gbm = gbm.perf(model.gbm, plot.it = FALSE)
 best_it.gbm = max_it
 
-pred.gbm  = predict(model.gbm, n.trees = best_it.gbm, newdata = df, type = 'response')
+pred.gbm  = loglink(predict(model.gbm, n.trees = best_it.gbm, newdata = df, type = 'link') + pred.glm.logodds)
 plot_binmodel_roc(actual[tindex], pred.gbm[tindex])
 plot_binmodel_cdf(actual[tindex], pred.gbm[tindex])
 plot_binmodel_percentiles(actual[tindex], pred.gbm[tindex], 100)
@@ -157,16 +169,12 @@ gbm.roc.area(actual[tindex], pred.gbm[tindex]) #0.7474184
 
 #influence
 var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
-fwrite(var_inf,  file.path(working_folder,"santander_transaction/gbm.var_inf.d1.csv"))
 var_inf = subset(var_inf, rel.inf>0.1)
 plot_gbminfluence(var_inf)
 print(var_inf)
 var_inf = data.table(var_inf)
 #var_inf[var %in% mon_inc_vars]
 #var_inf[var %in% mon_dec_vars]
-
-ggsave(filename = file.path(working_folder,"santander_transaction/gbm.inf.d6.pdf"), plot = plot_gbminfluence(var_inf), device = 'pdf', width = 11, height = 8.5, dpi = 240)
-
 
 imp_vars = as.character(var_inf$var)
 #df_agg[1:100,..imp_vars]
@@ -193,124 +201,13 @@ plots = llply(as.character(var_inf$var), function(var_name) {
     ggtitle(var_name) +  theme(title =element_text(size=6))
   return( p )
 })
-#marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
-
-plots = llply(imp_vars %!in_set% c(mon_dec_vars,mon_inc_vars), function(var_name) {
-  p = plot_profile(pred.gbm[tindex], actual[tindex],df[[var_name]][tindex], error_band = 'binom', bucket_count = 10) +
-    ggtitle(var_name) +  theme(title =element_text(size=6))
-  return( p )
-})
-marrangeGrob(plots, nrow = 5, ncol = 4, top = NULL)
-
-gplots = lapply(plots, ggplotGrob)
-ggsave(filename = file.path(working_folder,"santander_transaction/gbm.profiles.d1.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=7), device = 'pdf', width = 14, height = 8.5, dpi = 240)
-
-```
-
-## Params Search
-
-```{r gbm_model_params, eval =FALSE}
-
-tindex = df$is_train
-
-obj_var = 'target'
-actual = df[[obj_var]]
-
-#only keep several car_11 levels
-exclude_vars = c('ID_code', 'is_train', obj_var) #replaced with logs
-
-all_vars = names(df) %!in_set% c(exclude_vars)
-
-set.seed(1012356)
-
-formula.gbm = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
-
-model_vars = all.vars(formula.gbm) %!in_set% c(obj_var)
-var.monotone = rep(0, length(model_vars))
-var.monotone_any = rep(0, length(model_vars))
-
-mon_inc_vars = stri_join('var_', c(110, 53, 26, 22, 6, 99, 2, 78,
-                                   164,94,133,190,179,40,0,1,170,184,191))
-mon_dec_vars = stri_join('var_', c(81, 139, 12, 146, 174, 166, 109, 80, 76, 165, 21, 198,
-                                   44, 13, 148, 108,34, 33, 92))
-
-var.monotone[model_vars %in% mon_inc_vars]  =  1
-var.monotone[model_vars %in% mon_dec_vars]  = -1
-
-params = expand.grid(depth = c(2,3,4), shrinkage = c(0.05), monotone = c(TRUE, FALSE))
-
-res = ldply(seq(nrow(params)), function(i) { 
-
-model.gbm  = gbm(formula.gbm,
-                 distribution = "bernoulli",
-                 n.trees = 3000,
-                 cv.folds = 0,
-                 shrinkage = params$shrinkage[i],
-                 interaction.depth=params$depth[i],
-                 train.fraction = 0.1,
-                 bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
-                 n.cores = 4,
-                 var.monotone = ifelse(rep(params$monotone[i],length(var.monotone)), var.monotone, rep(0, length(var.monotone))),
-                 data = df[tindex , all.vars(formula.gbm), with = F],
-                 verbose = FALSE)
-
-best_it.gbm = gbm.perf(model.gbm, plot.it = FALSE)
-
-pred.gbm  = predict(model.gbm, n.trees = best_it.gbm, newdata = df, type = 'response')
-roc = gbm.roc.area(actual[tindex], pred.gbm[tindex]) #0.7474184
-
-return( data.frame(roc, best_it =  best_it.gbm))
-})
-
-res = cbind(res,params)
-
-ggplot(res, aes(depth, roc, group = monotone, color = factor(monotone) )) + geom_point()
-
-ggplot(res, aes(depth, best_it, group = monotone, color = factor(monotone) )) + geom_point()
-
-
-# ---- Selected model
-model.gbm  = gbm(formula.gbm,
-                 distribution = "bernoulli",
-                 n.trees = 2000,
-                 cv.folds = 0,
-                 shrinkage = 0.01,
-                 interaction.depth=2,
-                 train.fraction = 0.05,
-                 bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
-                 n.cores = 4,
-                 var.monotone = var.monotone,
-                 data = df[tindex , all.vars(formula.gbm), with = F],
-                 verbose = FALSE)
-
-best_it.gbm = gbm.perf(model.gbm, plot.it = FALSE)
-
-plot_gbmiterations(model.gbm) #0.03795, AUC
-
-pred.gbm  = predict(model.gbm, n.trees = best_it.gbm, newdata = df, type = 'response')
-roc = gbm.roc.area(actual[tindex], pred.gbm[tindex]) #0.8664714
-
-#importance
-var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
-var_inf = subset(var_inf, rel.inf>0.1)
-plot_gbminfluence(var_inf)
-
-imp_vars = as.character(var_inf$var[var_inf$rel.inf>1])
-#df_agg[1:100,..imp_vars]
-
-plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars, output_type = 'response')
-marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
-
-#interactions
-#var_interaction = gbm_interactions(model.gbm, df_train, best_it.gbm, min_influence = 1, 2)
-#plot_gbminteractions(subset(var_interaction, interaction_score>0.05))
-#print(var_interaction)
+marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
 
 ```
 
 
 ## Save Results
-gbm - 0.898
+gbm - 0.898 (0.884)
 xgb - 0.898
 
 ```{r save_results}

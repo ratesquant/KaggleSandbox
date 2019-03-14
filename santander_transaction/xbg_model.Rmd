@@ -68,6 +68,35 @@ source(file.path(working_folder, '/Utils/common.R'))
   #tableplot(df_train[1:10000,], select = c('target','var_1'), sortCol = 'var_0')
 ```
 
+## Logistic regression
+
+```{r logreg_model}
+tindex = df$is_train
+
+obj_var = 'target'
+actual = df[[obj_var]]
+
+exclude_vars = c('ID_code', 'is_train', obj_var)
+all_vars = names(df) %!in_set% c(exclude_vars)
+
+formula.glm = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+model.glm = glm(formula.glm, df[tindex,], family = binomial(link = "logit"))
+summary(model.glm)
+
+#could be dec: var_41, var_7, var_98        var_10       var_185
+#could be inc:        var_38       var_117        var_60 
+
+pred.glm          = predict(model.glm, newdata = df, type = 'response')
+pred.glm.logodds  = predict(model.glm, newdata = df, type = 'link')
+plot_binmodel_roc(actual[tindex], pred.glm[tindex])
+plot_binmodel_cdf(actual[tindex], pred.glm[tindex])
+plot_binmodel_percentiles(actual[tindex], pred.glm[tindex], 100)
+gbm.roc.area(actual[tindex], pred.glm[tindex]) #0.861283
+
+
+```
+
 ## XGBoost Model
 
 ```{r xgboost_model}
@@ -159,6 +188,88 @@ pd_plots = llply(as.character(importance_matrix$Feature), function(vname){
 marrangeGrob(pd_plots, nrow = 5, ncol = 5, top = NULL)
 gplots = lapply(pd_plots, ggplotGrob)
 ggsave(filename = file.path(working_folder,"santander_transaction/xbg.pd.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=6), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+
+```
+
+## XGBoost Model with offset
+
+```{r xgboost_model}
+tindex = df$is_train
+
+obj_var = 'target'
+actual = df[[obj_var]]
+
+#only keep several car_11 levels
+exclude_vars = c('ID_code', 'is_train', obj_var) #replaced with logs
+all_vars = names(df) %!in_set% c(exclude_vars)
+
+var.monotone = rep(0, length(all_vars))
+var.monotone[all_vars %in% mon_inc_vars]  =  1
+var.monotone[all_vars %in% mon_dec_vars]  = -1
+
+dtrain = data.matrix(df[tindex,all_vars, with = F])
+#Round = 98	eta = 0.2366	max_depth = 1.0000	subsample = 1.0000	monotone = 1.0000	min_child_weight = 6.0000	Value = 0.8965 
+#eta = 0.0387	max_depth = 1.0000	subsample = 0.9067	min_child_weight = 8.0000	gamma = 0.3154	monotone = 1.0000	Value = 0.8974 (12352)
+
+params = list(max_depth = 1, 
+  eta = 0.03, 
+  nthread = 4,
+  subsample = 0.9,
+  min_child_weight = 8.0,
+  gamma = 0.3,
+  verbose = 1,
+  objective = "binary:logistic",
+  eval_metric = "auc",
+  base_score = mean(actual[tindex]))
+
+dtrain <- xgb.DMatrix(data.matrix(df[tindex,all_vars, with = F]), label =  actual[tindex])
+setinfo(dtrain, "base_margin", pred.glm.logodds[tindex])
+
+dtest <- xgb.DMatrix(data.matrix(df[,all_vars, with = F]), label =  actual)
+setinfo(dtest, "base_margin", pred.glm.logodds)
+
+model.xgb <- xgb.train(params,
+  #monotone_constraints = var.monotone,
+  data = dtrain,
+  print_every_n = 100,
+  early_stopping_rounds = 50,
+  nrounds = 13852, 
+  watchlist <- list(train = dtrain))
+
+ggplot(model.xgb$evaluation_log, aes(iter, train_auc)) + geom_line()
+
+pred.xgb <- predict(model.xgb,dtest)
+
+plot_binmodel_roc(actual[tindex], pred.xgb[tindex])
+plot_binmodel_cdf(actual[tindex], pred.xgb[tindex])
+plot_binmodel_percentiles(actual[tindex], pred.xgb[tindex], 100)
+gbm.roc.area(actual[tindex], pred.xgb[tindex]) #0.7474184
+
+importance_matrix <- xgb.importance(model = model.xgb)
+print(importance_matrix)
+fwrite( importance_matrix, file.path(working_folder,'santander_transaction/var.imp.with_margin.csv'))
+
+xgb.ggplot.importance(importance_matrix = importance_matrix)
+
+plots = llply(as.character(importance_matrix$Feature), function(var_name) {
+  p = plot_profile(pred.xgb[tindex], actual[tindex],df[[var_name]][tindex], error_band = 'binom', bucket_count = 20) +
+    ggtitle(var_name) +  theme(title =element_text(size=6), axis.title.y = element_blank()) 
+  return( p )
+})
+marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
+
+##  CV -------------------
+set.seed(132140937)
+  
+  xgb_cv <- xgboost::xgb.cv(params,
+    data = dtrain,
+    nrounds = 20000, 
+    nfold = 5,  
+    print_every_n = 1000,
+    early_stopping_rounds = 50)
+  
+data.frame(best_it = xgb_cv$best_iteration, xgb_cv$evaluation_log[xgb_cv$best_iteration,]) 
+
 
 ```
 
@@ -278,7 +389,7 @@ param_res = ldply(seq(nrow(my_params)), function(run_index){
   xgb_cv <- xgboost::xgb.cv(
     data = df_train_set, label = actual[tindex], 
     verbose = 1, objective = "binary:logistic", eval_metric = "auc",
-    nrounds = 15000, 
+    nrounds = 50000, 
     max_depth = my_params$depth[run_index], 
     subsample = my_params$subsample[run_index],
     eta = my_params$eta[run_index], 

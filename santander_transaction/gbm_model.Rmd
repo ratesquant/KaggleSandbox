@@ -100,7 +100,8 @@ var.monotone = rep(0, length(model_vars))
 #corrplot(corr_matrix, method="number", number.cex = 0.5)
 #corrplot(corr_matrix, method="circle", order="hclust")
 
-#var_7 - could be dec
+#could be dec: var_41, var_7, var_98        var_10       var_185
+#could be inc:        var_38       var_117        var_60 
 mon_inc_vars = stri_join('var_', c(110, 53, 26, 22, 6, 99, 2, 78,
                                    164,94,133,190,179,40,0,1,170,184,191,
                                    18,147,173,91,67,118,95,

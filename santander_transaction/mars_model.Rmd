@@ -141,7 +141,14 @@ actual = df[[obj_var]]
 exclude_vars = c('ID_code', 'is_train', obj_var) #replaced with logs
 all_vars = names(df) %!in_set% c(exclude_vars)
 
-formula.mars = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+formula.mars    = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+formula.mars_wo = formula(stri_join( obj_var, ' ~ ', 'logreg +', stri_join(unique(all_vars), collapse = ' + ')))
+
+model.mars <- earth(formula.mars_wo, 
+                    data = cbind(df[tindex, all.vars(formula.mars), with = FALSE], logreg = pred.glm.logodds[tindex]), 
+                    degree = 1, nfold = 5, trace = 3, glm=list(family=binomial),
+                    nk = 1000,
+                    pmethod="cv")
 
 model.mars <- earth(formula.mars, 
                     data = df[tindex, all.vars(formula.mars), with = FALSE], 
@@ -151,12 +158,13 @@ model.mars <- earth(formula.mars,
                     thresh = 0.0001#default is 0.001,
                     )
 
-plotmo(model.mars)
+#plotmo(model.mars)
 evimp(model.mars)
 summary(model.mars)
 summary(model.mars, digits = 2, style = "pmax")
 
 pred.mars = as.vector(predict(model.mars, type = 'response', newdata = df))
+pred.mars = as.vector(predict(model.mars, type = 'response', newdata = cbind(df, logreg = pred.glm.logodds)))
 
 plot_binmodel_roc(actual[tindex], pred.mars[tindex])
 plot_binmodel_cdf(actual[tindex], pred.mars[tindex])
@@ -164,17 +172,29 @@ plot_binmodel_percentiles(actual[tindex], pred.mars[tindex], 100)
 gbm.roc.area(actual[tindex], pred.mars[tindex]) #0.7474184
 
 
-plots = llply(as.character(importance_matrix$Feature)[1:10], function(var_name) {
+plots = llply(rownames(evimp(model.mars)), function(var_name) {
   p = plot_profile(pred.mars[tindex], actual[tindex],df[[var_name]][tindex], error_band = 'binom', bucket_count = 20) +
     ggtitle(var_name) +  theme(title =element_text(size=6), axis.title.y = element_blank()) 
   return( p )
 })
-#marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
+marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
 
 
 ```
 
+## KNN Model
 
+```{r knn_model}
+tindex = df$is_train
+
+formula.knn    = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+model1 <- train(formula.knn, data = df[tindex, all.vars(formula.mars), with = FALSE], method = “knn”,
+               preProcess = c(“center”,”scale”),
+               trControl = x,
+               metric = “ROC”,
+               tuneLength = tunel)
+```
 
 ## Save Results
 gbm - 0.897

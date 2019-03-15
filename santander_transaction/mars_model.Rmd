@@ -24,6 +24,7 @@ library(corrplot)
 library(forcats)
 library(e1071)
 library(lubridate)
+library(caret)
 
 #library(gbm)
 library(earth)
@@ -187,13 +188,21 @@ marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
 ```{r knn_model}
 tindex = df$is_train
 
-formula.knn    = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+formula.knn    = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars)[1:2], collapse = ' + ')))
 
-model1 <- train(formula.knn, data = df[tindex, all.vars(formula.mars), with = FALSE], method = “knn”,
-               preProcess = c(“center”,”scale”),
-               trControl = x,
-               metric = “ROC”,
-               tuneLength = tunel)
+set.seed(1234)
+control = trainControl(method = "repeatedcv",
+                 number = 10,
+                 repeats = 3,
+                 classProbs = TRUE,
+                 summaryFunction = caret::twoClassSummary)
+
+model.knn <- train(formula.knn, data = df[tindex, all.vars(formula.mars), with = FALSE], method = "knn",
+               trControl = trainControl(method = "repeatedcv"),
+               #metric = "ROC",
+               tuneLength = 10)
+model.knn
+plot(model.knn)
 ```
 
 ## Save Results

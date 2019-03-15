@@ -59,14 +59,51 @@ source(file.path(working_folder, '/Utils/common.R'))
   train_index = df$is_train
   
   gc(reset = TRUE)
-  
+
+```
+
+## Plot data
+
+```{r plot_data}
   ggplot(df, aes(var_0, group = is_train)) + stat_ecdf()
   
   ggplot(df_train[1:10000,], aes(var_81, var_139, color = factor(target) )) + geom_point(alpha = 0.2)
   
-  #tableplot(df_train[1:10000,], select = c('target',stri_join('var_', seq(0, 10))), sortCol = 'var_0')
+    #ggplot(df_train[1:30000,], aes(var_80, var_139)) + geom_point(alpha = 0.2) + geom_rug(alpha = 0.01) + facet_wrap(~target)
+  ggplot(df_train, aes(var_80, var_139)) + geom_bin2d() + facet_wrap(~target) + scale_fill_custom('jet', discrete = FALSE)
+  ggplot(df_train, aes(var_81, var_139, z = target)) + stat_summary_2d(fun = function(x) mean(x)) + scale_fill_custom('jet', discrete = FALSE)
+  #ggplot(df_train, aes(var_81, var_139, z = target)) + stat_summary_hex(fun = function(x) mean(x)) +  scale_fill_custom('jet', discrete = FALSE)
+  
+  imp_vars = c('var_81','var_53','var_164','var_109','var_139','var_166','var_78','var_12','var_177','var_80','var_110','var_26','var_6')
+  all_combinations = t(combn(imp_vars, 2))
+  plots = llply(seq(nrow(all_combinations)), function(i){
+    ggplot(df_train, aes_string(all_combinations[i,1], all_combinations[i,2])) + geom_bin2d() + facet_wrap(~target) + scale_fill_custom('jet', discrete = FALSE) + theme(legend.position = 'none')
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 9, top = NULL)
+  
+  plots = llply(seq(nrow(all_combinations)), function(i){
+    ggplot(df_train, aes_string(all_combinations[i,1], all_combinations[i,2], z = 'target')) + stat_summary_2d(fun = function(x) ifelse(length(x)<8, NA, mean(x))) + scale_fill_custom('jet', discrete = FALSE)+ theme(legend.position = 'none')
+    #ggplot(df_train, aes_string(all_combinations[i,1], all_combinations[i,2], z = 'target')) + stat_summary_hex(fun = function(x) mean(x)) + scale_fill_custom('jet', discrete = FALSE)+ theme(legend.position = 'none')
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 9, top = NULL)
+
+  #plot model prediction
+  df_train_wm = cbind(df[tindex,], mdl=pred.xgb[tindex], actual=actual[tindex])
+  plots = llply(seq(nrow(all_combinations)), function(i){
+    ggplot(df_train_wm, aes_string(all_combinations[i,1], all_combinations[i,2], z = 'mdl')) + stat_summary_2d(bins =100, fun = function(x) mean(x)) + scale_fill_custom('jet', discrete = FALSE)+ theme(legend.position = 'none')
+    #ggplot(df_train, aes_string(all_combinations[i,1], all_combinations[i,2], z = 'target')) + stat_summary_hex(fun = function(x) mean(x)) + scale_fill_custom('jet', discrete = FALSE)+ theme(legend.position = 'none')
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 9, top = NULL)
+
+   p1 = ggplot(df_train_wm, aes(var_81, var_139, z = mdl))    + stat_summary_2d(bins =100, fun = function(x) mean(x)) + scale_fill_custom('jet', discrete = FALSE)#+ theme(legend.position = 'none')
+   p2 = ggplot(df_train_wm, aes(var_81, var_139, z = target)) + stat_summary_2d(bins =100, fun = function(x) ifelse(length(x)<4, NA, mean(x))) + scale_fill_custom('jet', discrete = FALSE)#+ theme(legend.position = 'none')
+   grid.arrange(p1, p2, nrow = 1)
+  
+    #tableplot(df_train[1:10000,], select = c('target',stri_join('var_', seq(0, 10))), sortCol = 'var_0')
   #tableplot(df_train[1:10000,], select = c('target','var_1'), sortCol = 'var_0')
+
 ```
+
 
 ## Logistic regression
 
@@ -146,7 +183,8 @@ model.xgb <- xgboost(
   monotone_constraints = var.monotone,
   data = dtrain, label = actual[tindex],
   print_every_n = 100,
-  nrounds = 13000, verbose = 1)
+  nrounds = 13000, #13000
+  verbose = 1)
 
 ggplot(model.xgb$evaluation_log, aes(iter, train_auc)) + geom_line()
 
@@ -170,7 +208,7 @@ xgb.ggplot.deepness(model.xgb, which = 'med.depth')
 #xgb.plot.shap(as.matrix(df[tindex,all_vars, with = F]), model = model.xgb, top_n = 12, n_col = 4) #takes a very long time time to produce
 #xgb.plot.importance(importance_matrix = importance_matrix)
 
-plots = llply(as.character(importance_matrix$Feature), function(var_name) {
+plots = llply(as.character(importance_matrix$Feature)[1:10], function(var_name) {
   p = plot_profile(pred.xgb[tindex], actual[tindex],df[[var_name]][tindex], error_band = 'binom', bucket_count = 20) +
     ggtitle(var_name) +  theme(title =element_text(size=6), axis.title.y = element_blank()) 
   return( p )

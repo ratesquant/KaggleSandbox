@@ -149,7 +149,8 @@ plot_gbminfluence <- function(x){
   ggplot(x, aes(x = reorder(var, rel.inf), y = rel.inf, fill = cut(rel.inf, c(0, 0.01, 0.1, 1, 10, 100), include.lowest = TRUE,ordered_result = TRUE )))  + 
     geom_bar(stat = 'identity') + coord_flip() + 
     geom_hline(yintercept = 1.0, color = 'red', linetype="dashed") +
-    scale_fill_brewer(palette = 'Spectral', drop = FALSE) +
+    #scale_fill_brewer(palette = 'Spectral', drop = FALSE) +
+    scale_fill_custom('mixed', drop = FALSE) +
     theme(axis.text.x = element_text(angle = 90, hjust = 1), axis.title.x = element_blank(), legend.position = 'none')
 }
 

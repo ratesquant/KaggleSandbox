@@ -26,7 +26,7 @@ library(e1071)
 library(lubridate)
 library(caret)
 
-#library(gbm)
+library(gbm)
 library(earth)
 
 library(rBayesianOptimization)
@@ -34,8 +34,8 @@ library(rBayesianOptimization)
 #library(lightgbm)
 
 #working_folder = 'C:/Dev/Kaggle/'
-#working_folder = 'F:/Github/KaggleSandbox/'
-working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+working_folder = 'F:/Github/KaggleSandbox/'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 
 source(file.path(working_folder, '/Utils/common.R'))
 ```
@@ -188,7 +188,9 @@ marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
 ```{r knn_model}
 tindex = df$is_train
 
-formula.knn    = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars)[1:2], collapse = ' + ')))
+df[, ]
+
+formula.knn    = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars)[1:10], collapse = ' + ')))
 
 set.seed(1234)
 control = trainControl(method = "repeatedcv",
@@ -197,12 +199,14 @@ control = trainControl(method = "repeatedcv",
                  classProbs = TRUE,
                  summaryFunction = caret::twoClassSummary)
 
-model.knn <- train(formula.knn, data = df[tindex, all.vars(formula.mars), with = FALSE], method = "knn",
+model.knn <- train(formula.knn, data = df[tindex, all.vars(formula.knn), with = FALSE], method = "knn",
                trControl = trainControl(method = "repeatedcv"),
                #metric = "ROC",
                tuneLength = 10)
 model.knn
 plot(model.knn)
+
+pred.knn = predict(model.knn, df)
 ```
 
 ## Save Results

@@ -132,7 +132,13 @@ gbm.roc.area(actual[tindex], pred.glm[tindex]) #0.861283
 
 
 ## KNN Model: caret
+kknn - 
+kmax (Max. #Neighbors)
+distance (Distance)
+kernel (Kernel)
 
+knn - 
+k (#Neighbors)
 ```{r knn_model}
 tindex = df$is_train
 
@@ -147,15 +153,16 @@ control = trainControl(method = "repeatedcv",
                  classProbs = TRUE,
                  summaryFunction = caret::twoClassSummary)
 
-system.time(model.knn <- train(formula.knn, data = df[tindex, all.vars(formula.knn), with = FALSE], method = "knn",
+system.time(model.knn <- train(formula.knn, data = df[tindex, all.vars(formula.knn), with = FALSE], 
+               method = "knn", #kknn
                trControl = control,
                metric = "ROC",
-               tuneGrid = data.frame(k = seq(7,21,2)),
+               tuneGrid = data.frame(k = seq(7,33,2)),
                tuneLength = 10 ))
 model.knn
 plot(model.knn)
 
-pred.knn = predict(model.knn, df[1:100,], type = 'prob')$x1
+pred.knn = predict(model.knn, df, type = 'prob')$x1
 
 plot_binmodel_percentiles(actual[tindex], pred.knn[tindex], 100)
 ```

@@ -1,0 +1,186 @@
+---
+title: "Santander Transaction Model: MARS"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(plyr)
+
+library(data.table)
+library(stringi)
+library(ggplot2)
+library(tabplot)
+library(gridExtra)
+library(zip)
+library(corrplot)
+library(forcats)
+library(e1071)
+library(lubridate)
+library(caret)
+
+library(gbm)
+library(earth)
+
+library(rBayesianOptimization)
+
+#library(lightgbm)
+
+#working_folder = 'C:/Dev/Kaggle/'
+#working_folder = 'F:/Github/KaggleSandbox/'
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
+source(file.path(working_folder, '/Utils/common.R'))
+```
+
+## Load Data
+
+```{r load_data}
+
+  df_train = fread(file.path(working_folder,'santander_transaction/data/train.csv'), check.names=T)#, nrows = 10000)
+  df_test  = fread(file.path(working_folder,'santander_transaction/data/test.csv'),  check.names=T)#, nrows = 10000)
+
+  df_train[,is_train:=TRUE  ]
+  df_test[, is_train:=FALSE ]
+  df_test[, target:=NA ]
+  
+  df = rbind(df_train, df_test)
+  df = df[sample.int(nrow(df), nrow(df)),]
+  train_index = df$is_train
+  
+  gc(reset = TRUE)
+
+```
+
+## Plot data
+
+```{r plot_data}
+  ggplot(df, aes(var_0, group = is_train)) + stat_ecdf()
+  
+  ggplot(df_train[1:10000,], aes(var_81, var_139, color = factor(target) )) + geom_point(alpha = 0.2)
+  
+    #ggplot(df_train[1:30000,], aes(var_80, var_139)) + geom_point(alpha = 0.2) + geom_rug(alpha = 0.01) + facet_wrap(~target)
+  ggplot(df_train, aes(var_80, var_139)) + geom_bin2d() + facet_wrap(~target) + scale_fill_custom('jet', discrete = FALSE)
+  ggplot(df_train, aes(var_81, var_139, z = target)) + stat_summary_2d(fun = function(x) mean(x)) + scale_fill_custom('jet', discrete = FALSE)
+  #ggplot(df_train, aes(var_81, var_139, z = target)) + stat_summary_hex(fun = function(x) mean(x)) +  scale_fill_custom('jet', discrete = FALSE)
+  
+  imp_vars = c('var_81','var_53','var_164','var_109','var_139','var_166','var_78','var_12','var_177','var_80','var_110','var_26','var_6')
+  all_combinations = t(combn(imp_vars, 2))
+  plots = llply(seq(nrow(all_combinations)), function(i){
+    ggplot(df_train, aes_string(all_combinations[i,1], all_combinations[i,2])) + geom_bin2d() + facet_wrap(~target) + scale_fill_custom('jet', discrete = FALSE) + theme(legend.position = 'none')
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 9, top = NULL)
+  
+  plots = llply(seq(nrow(all_combinations)), function(i){
+    ggplot(df_train, aes_string(all_combinations[i,1], all_combinations[i,2], z = 'target')) + stat_summary_2d(fun = function(x) ifelse(length(x)<8, NA, mean(x))) + scale_fill_custom('jet', discrete = FALSE)+ theme(legend.position = 'none')
+    #ggplot(df_train, aes_string(all_combinations[i,1], all_combinations[i,2], z = 'target')) + stat_summary_hex(fun = function(x) mean(x)) + scale_fill_custom('jet', discrete = FALSE)+ theme(legend.position = 'none')
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 9, top = NULL)
+
+  #plot model prediction
+  df_train_wm = cbind(df[tindex,], mdl=pred.mars[tindex], actual=actual[tindex])
+  plots = llply(seq(nrow(all_combinations)), function(i){
+    ggplot(df_train_wm, aes_string(all_combinations[i,1], all_combinations[i,2], z = 'mdl')) + stat_summary_2d(bins =100, fun = function(x) mean(x)) + scale_fill_custom('jet', discrete = FALSE)+ theme(legend.position = 'none')
+    #ggplot(df_train, aes_string(all_combinations[i,1], all_combinations[i,2], z = 'target')) + stat_summary_hex(fun = function(x) mean(x)) + scale_fill_custom('jet', discrete = FALSE)+ theme(legend.position = 'none')
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 9, top = NULL)
+
+   p1 = ggplot(df_train_wm, aes(var_81, var_139, z = mdl))    + stat_summary_2d(bins =100, fun = function(x) mean(x)) + scale_fill_custom('jet', discrete = FALSE)#+ theme(legend.position = 'none')
+   p2 = ggplot(df_train_wm, aes(var_81, var_139, z = target)) + stat_summary_2d(bins =100, fun = function(x) ifelse(length(x)<4, NA, mean(x))) + scale_fill_custom('jet', discrete = FALSE)#+ theme(legend.position = 'none')
+   grid.arrange(p1, p2, nrow = 1)
+  
+    #tableplot(df_train[1:10000,], select = c('target',stri_join('var_', seq(0, 10))), sortCol = 'var_0')
+  #tableplot(df_train[1:10000,], select = c('target','var_1'), sortCol = 'var_0')
+
+```
+
+
+## Logistic regression
+
+```{r logreg_model}
+tindex = df$is_train
+
+obj_var = 'target'
+actual = df[[obj_var]]
+
+exclude_vars = c('ID_code', 'is_train', obj_var)
+all_vars = names(df) %!in_set% c(exclude_vars)
+
+formula.glm = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+model.glm = glm(formula.glm, df[tindex,], family = binomial(link = "logit"))
+summary(model.glm)
+
+#could be dec: var_41, var_7, var_98        var_10       var_185
+#could be inc:        var_38       var_117        var_60 
+
+pred.glm          = predict(model.glm, newdata = df, type = 'response')
+pred.glm.logodds  = predict(model.glm, newdata = df, type = 'link')
+plot_binmodel_roc(actual[tindex], pred.glm[tindex])
+plot_binmodel_cdf(actual[tindex], pred.glm[tindex])
+plot_binmodel_percentiles(actual[tindex], pred.glm[tindex], 100)
+gbm.roc.area(actual[tindex], pred.glm[tindex]) #0.861283
+
+```
+
+
+## KNN Model: caret
+
+```{r knn_model}
+tindex = df$is_train
+
+df[, target_ex:=factor(target, labels = c('x0', 'x1'))]
+
+formula.knn    = formula(stri_join( 'target_ex', ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+set.seed(1234)
+control = trainControl(method = "repeatedcv",
+                 number = 10,
+                 repeats = 3,
+                 classProbs = TRUE,
+                 summaryFunction = caret::twoClassSummary)
+
+system.time(model.knn <- train(formula.knn, data = df[tindex, all.vars(formula.knn), with = FALSE], method = "knn",
+               trControl = control,
+               metric = "ROC",
+               tuneGrid = data.frame(k = seq(7,21,2)),
+               tuneLength = 10 ))
+model.knn
+plot(model.knn)
+
+pred.knn = predict(model.knn, df[1:100,], type = 'prob')$x1
+
+plot_binmodel_percentiles(actual[tindex], pred.knn[tindex], 100)
+```
+
+## Save Results
+gbm - 0.897
+xgb - 0.899
+mars 
+
+```{r save_results}
+
+submit = df[,.(ID_code, target = pred.mars)]
+
+submit = submit[df$is_train==FALSE,]
+
+setorder(submit, ID_code)
+
+file = file.path(working_folder, "santander_transaction/solution_mars.csv")
+  
+fwrite(submit, file = file, row.names = FALSE)
+
+zip(paste(file, '.zip', sep = ''), file)
+  
+print(file)
+
+#fullVisitorId,PredictedLogRevenue
+
+```

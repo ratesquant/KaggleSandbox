@@ -1,0 +1,197 @@
+---
+title: "Regression Example 2D"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(randomForest)
+library(rpart)
+library(gbm)
+library(gam)
+library(earth)
+library(caret)
+library(FNN)
+library(nnet)
+library(neuralnet)
+
+library(data.table)
+library(ggplot2)
+library(imager)
+
+#working_folder = 'C:/Dev/Kaggle/'
+#working_folder = 'F:/Github/KaggleSandbox/'
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
+source(file.path(working_folder, '/Utils/common.R'))
+
+my_palette = 'jet'
+```
+
+## Load Data
+
+```{r load_data}
+#test_image <- load.example("parrots")
+
+test_image = load.image(file.path(working_folder, 'data/rstudio_logo.png'))
+#test_image = load.image(file.path(working_folder, 'data/lena.png'))
+test_image = resize(grayscale(rm.alpha(test_image)), size_x = 256, size_y = 256)
+plot(test_image)
+
+df = data.table(as.data.frame(test_image))
+df[, y:=max(y) - y]
+
+ggplot(df, aes(x, y, fill = value))  + geom_tile() + scale_fill_custom(my_palette, discrete = FALSE)
+
+my_formula = formula(value ~ x + y)
+
+```
+
+## Linear Regression 
+
+```{r linear_model, echo=FALSE}
+
+model.lm = lm(my_formula, df)
+
+summary(model.lm)
+
+pred.lm = predict(model.lm, df)
+
+ggplot(cbind(df, model = pred.lm), aes(x, y, fill = model))  + geom_tile() + 
+  scale_fill_custom(my_palette, discrete = FALSE)
+
+```
+
+## Projection Pursuit Regression
+
+```{r ppr_model, echo=FALSE}
+
+model.ppr = ppr(my_formula, df, nterm = 10, max.term = 15)
+
+#model.ppr$gofn
+
+summary(model.ppr)
+
+pred.ppr = predict(model.ppr, df)
+
+ggplot(cbind(df, model = pred.ppr), aes(x, y, fill = model))  + geom_tile() + 
+  scale_fill_custom(my_palette, discrete = FALSE)
+
+```
+
+## Random Forest
+
+```{r rf_model, echo=FALSE}
+
+model.rf = randomForest(my_formula, df, ntree = 20)
+
+pred.rf = predict(model.rf, df)
+
+ggplot(cbind(df, model = pred.rf), aes(x, y, fill = model))  + geom_tile() + 
+  scale_fill_custom(my_palette, discrete = FALSE)
+
+```
+
+## Rpart
+
+```{r rp_model, echo=FALSE}
+
+model.rp = rpart(my_formula, df, control = rpart.control(cp = 0.00001, minsplit = 10))
+
+printcp(model.rp)
+
+pred.rp = predict(model.rp, df)
+
+ggplot(cbind(df, model = pred.rp), aes(x, y, fill = model))  + geom_tile() + 
+  scale_fill_custom(my_palette, discrete = FALSE)
+
+```
+
+
+## KNN [FNN]
+
+```{r knn_model, echo=FALSE}
+
+model.knn = knn.reg(df[,.(x, y)], y = df$value, k = 11)
+
+ggplot(cbind(df, model = model.knn$pred), aes(x, y, fill = model))  + geom_tile() + 
+  scale_fill_custom(my_palette, discrete = FALSE)
+
+```
+
+## KNN [CARET]
+
+```{r knn_model2, echo=FALSE}
+
+control = trainControl(method = "repeatedcv",
+                       number = 10,
+                       repeats = 3)
+
+system.time(model.knn2 <- train(my_formula, data = df, 
+                               method = "knn", #kknn
+                               trControl = control,
+                               #tuneGrid = data.frame(k = seq(1,13,2)), #use instead of tuneLength
+                               tuneLength = 3,
+                               metric = "Rsquared"))
+model.knn2
+plot(model.knn2)
+
+pred.knn2 = predict(model.knn2, df, type = 'raw')
+
+ggplot(cbind(df, model = pred.knn2), aes(x, y, fill = model))  + geom_tile() + 
+  scale_fill_custom(my_palette, discrete = FALSE)
+
+```
+
+
+## MARS
+
+```{r mars_model, echo=FALSE}
+
+model.mars <- earth(my_formula, data = df, degree = 2,nk = 100, thresh = 0.000001)
+
+summary(model.mars)
+
+pred.mars = as.numeric(predict(model.mars, df))
+
+ggplot(cbind(df, model = pred.mars), aes(x, y, fill = model))  + geom_tile() + 
+  scale_fill_custom(my_palette, discrete = FALSE)
+
+```
+
+## NNET
+
+```{r nnet_model, echo=FALSE}
+
+model.nnet <- nnet(my_formula, data = df, size=10, maxit = 1000, trace=FALSE, decay = 1e-4, linout = FALSE)
+
+pred.nnet <- as.numeric(predict(model.nnet, df))
+
+print(model.nnet)
+
+ggplot(cbind(df, model = pred.nnet), aes(x, y, fill = model))  + geom_tile() + 
+  scale_fill_custom(my_palette, discrete = FALSE)
+
+```
+
+## NNET: Multi-Layer
+
+```{r nnet2_model, echo=FALSE}
+
+model.nnet2 <- neuralnet(my_formula, data = df, hidden=10)#, stepmax = 10, linear.output = FALSE)
+
+compute(model.nnet2, df[,.(x, y)]) 
+
+pred.nnet2 =  as.numeric(model.nnet2$response)
+
+pred.nnet2 <- as.numeric(compute(model.nnet2, df[,.(x, y)]) )
+
+plot(model.nnet2)
+
+ggplot(cbind(df, model = pred.nnet2 ), aes(x, y, fill = model))  + geom_tile() + 
+  scale_fill_custom(my_palette, discrete = FALSE)
+
+
+```
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

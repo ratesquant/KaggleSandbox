@@ -29,6 +29,9 @@ library(caret)
 library(lightgbm)
 library(gbm)
 library(earth)
+library(car)
+library(umap)
+library(MASS)
 
 library(rBayesianOptimization)
 
@@ -56,14 +59,16 @@ source(file.path(working_folder, '/Utils/common.R'))
   df = df[sample.int(nrow(df), nrow(df)),]
   train_index = df$is_train
   
-  df_train = NULL
   df_test = NULL
   gc(reset = TRUE)
   
   #normalize data
-  var_names = names(df)[grep('var', names(df))]
-  df[, (var_names):=lapply(.SD, function(x) ecdf(x)(x)), .SDcols = var_names]
+  #var_names = names(df)[grep('var', names(df))]
+  #df[, (var_names):=lapply(.SD, function(x) ecdf(x)(x)), .SDcols = var_names]
 
+  #add noise
+  var_names = names(df)[grep('var', names(df))]
+  df[is_train==TRUE, (var_names):=lapply(.SD, function(x) x + 0.05*rnorm(length(x)) ), .SDcols = var_names]
 
 ```
 
@@ -71,9 +76,20 @@ source(file.path(working_folder, '/Utils/common.R'))
 
 ```{r plot_data}
 
+  var_inf = fread(file.path(working_folder,"santander_transaction/gbm.var_inf.d1.csv"))
+
   ggplot(df, aes(var_0, group = is_train)) + stat_ecdf()
   
-  ggplot(df[1:10000,], aes(var_81, var_139, color = factor(target) )) + geom_point(alpha = 0.2)
+  
+  ggplot(df_train[1:10000,], aes(seq(target), target )) + geom_point(alpha = 0.2) + geom_jitter()+geom_smooth()
+  
+  ggplot(df, aes(var_81, var_139)) + geom_point(alpha = 0.2, size = 0.2) + facet_wrap(~is_train) + scale_color_manual(values = c('red', 'black'))
+  
+  plots = llply(var_inf$var[1:50], function(var_name){
+    p = ggplot(df[train_index,][1:10000,], aes_string(seq(10000), var_name, color = 'target') ) + geom_point(size = 0.5) + scale_colour_gradient(low ='black', high = 'red') + theme(legend.position = 'none')
+    return(ggplotGrob(p))
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 10, top = NULL)
   
     #ggplot(df_train[1:30000,], aes(var_80, var_139)) + geom_point(alpha = 0.2) + geom_rug(alpha = 0.01) + facet_wrap(~target)
   ggplot(df[is_train==TRUE,], aes(var_80, var_139)) + geom_bin2d() + facet_wrap(~target) + scale_fill_custom('jet', discrete = FALSE)
@@ -83,7 +99,8 @@ source(file.path(working_folder, '/Utils/common.R'))
   imp_vars = c('var_81','var_53','var_164','var_109','var_139','var_166','var_78','var_12','var_177','var_80','var_110','var_26','var_6')
   all_combinations = t(combn(imp_vars, 2))
   plots = llply(seq(nrow(all_combinations)), function(i){
-    ggplot(df[is_train == TRUE,], aes_string(all_combinations[i,1], all_combinations[i,2])) + geom_bin2d() + facet_wrap(~target) + scale_fill_custom('jet', discrete = FALSE) + theme(legend.position = 'none')
+    p = ggplot(df[is_train == TRUE,], aes_string(all_combinations[i,1], all_combinations[i,2])) + geom_bin2d() + facet_wrap(~target) + scale_fill_custom('jet', discrete = FALSE) + theme(legend.position = 'none')
+    return(ggplotGrob(p))
   })
   marrangeGrob(plots, nrow = 5, ncol = 9, top = NULL)
   
@@ -107,6 +124,28 @@ source(file.path(working_folder, '/Utils/common.R'))
   
     #tableplot(df_train[1:10000,], select = c('target',stri_join('var_', seq(0, 10))), sortCol = 'var_0')
   #tableplot(df_train[1:10000,], select = c('target','var_1'), sortCol = 'var_0')
+   
+   num_vars  = names(which(sapply(df, is.numeric))) %!in_set% c('target')
+   corr_matrix = cor(df[, ..num_vars ], use="complete.obs")
+   corrplot(corr_matrix, method="number", number.cex = 0.5)
+   corrplot(corr_matrix, method="circle", order="hclust")
+   
+   ggplot(data = melt(corr_matrix), aes(x=Var1, y=Var2, fill=value)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+   ggplot(data = melt(corr_matrix-diag(rep(1,nrow(corr_matrix)))), aes(x=Var1, y=Var2, fill=value)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+   
+
+  # ----------- UMAP    -------------------
+  m_data = df_train[,var_inf$var, with = FALSE]
+ 
+  data_map = umap(m_data)
+  
+  ggplot(data.frame(data_map$layout, label = factor( df_train[['target']] )), aes(X1, X2, group = label, color = label)) + 
+    geom_point(size = 0.1) + scale_color_manual(values = c('black', 'red'))
+
+  #sammon #MASS
+  sammon_map = sammon(dist(m_data[1:2000,]), tol = 1e-6)
+  ggplot(data.frame(sammon_map$points, label = factor( df_train[['target']][1:2000] )), aes(X1, X2, group = label, color = label)) + 
+    geom_point(size = 0.1) + scale_color_manual(values = c('black', 'red'))
 
 ```
 
@@ -126,6 +165,7 @@ formula.glm = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), col
 
 model.glm = glm(formula.glm, df[tindex,], family = binomial(link = "logit"))
 summary(model.glm)
+vif(model.glm)
 
 #could be dec: var_41, var_7, var_98        var_10       var_185
 #could be inc:        var_38       var_117        var_60 
@@ -136,6 +176,27 @@ plot_binmodel_roc(actual[tindex], pred.glm[tindex])
 plot_binmodel_cdf(actual[tindex], pred.glm[tindex])
 plot_binmodel_percentiles(actual[tindex], pred.glm[tindex], 100)
 gbm.roc.area(actual[tindex], pred.glm[tindex]) #0.861283
+
+```
+
+
+## Projection Pursuit Regression
+
+```{r ppr_model}
+tindex = df$is_train
+
+obj_var = 'target'
+actual = df[[obj_var]]
+
+exclude_vars = c('ID_code', 'is_train', obj_var)
+all_vars = names(df) %!in_set% c(exclude_vars)
+
+formula.glm = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+model.ppr = ppr(formula.glm, df[tindex,], nterms = 3)
+summary(model.ppr)
+
+pred.ppr         = predict(model.ppr, newdata = df, type = 'response')
 
 ```
 
@@ -177,7 +238,7 @@ lgb.model.cv = lgb.cv(params = lgb.grid, data = lgb.train,
                       learning_rate = 0.01,
                       num_threads = 4, 
                       nrounds = 20000, 
-                      early_stopping_rounds = 50, eval_freq = 50, eval = lgb.auc, 
+                      early_stopping_rounds = 100, eval_freq = 100, eval = lgb.auc, 
                       nfold = 5, 
                       boost_from_average = TRUE)
 
@@ -199,6 +260,7 @@ pred.lgb = predict(model.lgb, data.matrix(df[,all_vars, with=F]) )
 plot_binmodel_percentiles(actual[tindex], pred.lgb[tindex], 100)
 plot_binmodel_roc(actual[tindex], pred.lgb[tindex])
 ```
+
 
 ## LightGBM: Param Tune
 

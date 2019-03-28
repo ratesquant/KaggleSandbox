@@ -27,6 +27,35 @@ normalize_data <- function(x){
 }
 
 
+.ls.objects <- function (pos = 1, pattern, order.by,
+                         decreasing=FALSE, head=FALSE, n=5) {
+  napply <- function(names, fn) sapply(names, function(x)
+    fn(get(x, pos = pos)))
+  names <- ls(pos = pos, pattern = pattern)
+  obj.class <- napply(names, function(x) as.character(class(x))[1])
+  obj.mode <- napply(names, mode)
+  obj.type <- ifelse(is.na(obj.class), obj.mode, obj.class)
+  obj.prettysize <- napply(names, function(x) {
+    format(utils::object.size(x), units = "auto") })
+  obj.size <- napply(names, object.size)
+  obj.dim <- t(napply(names, function(x)
+    as.numeric(dim(x))[1:2]))
+  vec <- is.na(obj.dim)[, 1] & (obj.type != "function")
+  obj.dim[vec, 1] <- napply(names, length)[vec]
+  out <- data.frame(obj.type, obj.size, obj.prettysize, obj.dim)
+  names(out) <- c("Type", "Size", "PrettySize", "Length/Rows", "Columns")
+  if (!missing(order.by))
+    out <- out[order(out[[order.by]], decreasing=decreasing), ]
+  if (head)
+    out <- head(out, n)
+  out
+}
+
+# shorthand
+lsos <- function(..., n=10) {
+  .ls.objects(..., order.by="Size", decreasing=TRUE, head=TRUE, n=n)
+}
+
 
 #res2 <- cor.mtest(mtcars,0.99)
 #corrplot(M, p.mat = res1[[1]], sig.level=0.2)
@@ -78,7 +107,7 @@ custom_palettes <- list(
   `hot`   = custom_cols("yellow", "orange", "red"),
   `mixed` = custom_cols("blue", "green", "yellow", "orange", "red"),
   `grey`  = custom_cols("light grey", "dark grey"),
-  `jet`   = c("#0000ff","#0080ff", "#00ffff", "#00ff80", "#00ff00","#80ff00", "#ffff00","#ff8000","#ff0000")
+  `jet`   = c("#000080","#0000ff","#0080ff", "#00ffff", "#80ff80", "#ffff00","#ff8000","#ff0000", "#800000")
 )
 
 custom_pal <- function(palette = "main", reverse = FALSE, ...) {

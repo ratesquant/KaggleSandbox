@@ -26,13 +26,13 @@ library(e1071)
 library(lubridate)
 library(caret)
 
-library(lightgbm)
 library(gbm)
 library(earth)
 library(car)
 library(umap)
 library(MASS)
 library(randomForest)
+library(randomForestExplainer)
 
 library(rBayesianOptimization)
 
@@ -75,7 +75,7 @@ source(file.path(working_folder, '/Utils/common.R'))
 
 ## Plot data
 
-```{r plot_data}
+```{r plot_data, eval = FALSE}
 
   var_inf = fread(file.path(working_folder,"santander_transaction/gbm.var_inf.d1.csv"))
 
@@ -199,9 +199,9 @@ gbm.roc.area(actual[tindex], pred.glm[tindex]) #0.861283
 ```
 
 
-## Projection Pursuit Regression
+## Random Forest
 
-```{r ppr_model}
+```{r rf_model}
 tindex = df$is_train
 
 obj_var = 'target'
@@ -210,122 +210,22 @@ actual = df[[obj_var]]
 exclude_vars = c('ID_code', 'is_train', obj_var)
 all_vars = names(df) %!in_set% c(exclude_vars)
 
-formula.glm = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+formula.rf = formula(stri_join('factor(',obj_var, ') ~ ', stri_join(unique(all_vars), collapse = ' + ')))
 
-model.ppr = ppr(formula.glm, df[tindex,], nterms = 3)
-summary(model.ppr)
+model.rf = randomForest(formula.rf,  df[tindex,][1:10000,], ntree = 10, importance=TRUE)
 
-pred.ppr         = predict(model.ppr, newdata = df, type = 'response')
+plot(model.rf)
 
-```
+importance(model.rf)
 
-## LightGBM
+varImpPlot(model.rf)
 
-```{r lgbm_model}
-tindex = df$is_train
+pred.rf = as.numeric(predict(model.rf, df, type = 'prob')[,2])
 
-obj_var = 'target'
-actual = df[[obj_var]]
+gbm.roc.area(actual[tindex], pred.rf[tindex]) #0.861283
 
-exclude_vars = c('ID_code', 'is_train', obj_var) #replaced with logs
-
-all_vars = names(df) %!in_set% c(exclude_vars)
-
-set.seed(1234)
-
-lgb.train = lgb.Dataset(data=data.matrix(df[is_train == TRUE , all_vars, with=F]), 
-                        label=df[is_train == TRUE, ][[obj_var]], 
-                        colnames = all_vars,
-                        categorical_feature = NULL)
-
-lgb.grid = list(objective = "binary",
-                metric = "auc",
-                min_sum_hessian_in_leaf = 10,
-                feature_fraction = 1.0,
-                bagging_fraction = 0.95,
-                is_unbalance = FALSE)
-
-lgb.auc = function(preds, dtrain){
-  actual = getinfo(dtrain, "label")
-  score  = gbm.roc.area(actual, preds)
-  return(list(name = "auc", value = score, higher_better = TRUE))
-}
-
-#cross validation
-lgb.model.cv = lgb.cv(params = lgb.grid, data = lgb.train, 
-                      learning_rate = 0.01,
-                      num_threads = 4, 
-                      nrounds = 20000, 
-                      early_stopping_rounds = 100, eval_freq = 100, eval = lgb.auc, 
-                      nfold = 5, 
-                      boost_from_average = TRUE)
-
-best.iter = lgb.model.cv$best_iter #
-lgb.model.cv$best_score
-#best.iter = 603
-
-model.lgb = lgb.train(params = lgb.grid, data = lgb.train, learning_rate = 0.01,
-                      num_threads = 4, nrounds = best.iter,
-                      eval_freq = 20, eval = lgb.auc,
-                      boost_from_average = TRUE, verbose = 1)
-
-var_imp   = lgb.importance(model.lgb, percentage = TRUE)
-lgb.plot.importance(var_imp, top_n = 20, measure = "Gain")
-#var_contr = lgb.interprete(lgb.model, lgb.train, 1:5)
-
-pred.lgb = predict(model.lgb, data.matrix(df[,all_vars, with=F]) )
-
-plot_binmodel_percentiles(actual[tindex], pred.lgb[tindex], 100)
-plot_binmodel_roc(actual[tindex], pred.lgb[tindex])
-```
-
-
-## LightGBM: Param Tune
-
-```{r lgbm_model}
-lgb_cv_bayes <- function(learning_rate, min_sum_hessian_in_leaf, num_leaves) {
-    set.seed(132140937) # to remove random noise from the parameters
-  
-    cv <- lgb.cv(params = list(objective = "binary",
-                metric = "auc",
-                learning_rate = learning_rate, #0.1
-                min_sum_hessian_in_leaf = min_sum_hessian_in_leaf, #10
-                num_leaves = num_leaves, #31
-                bagging_fraction = 0.95,
-                boost_from_average = TRUE,
-                is_unbalance = FALSE), 
-                data = lgb.train, 
-                      num_threads = 4, 
-                      nrounds = 20000, 
-                      early_stopping_rounds = 50, eval_freq = 50, eval = lgb.auc, 
-                      nfold = 5, 
-                      boost_from_average = TRUE,
-                verbose = -1)
-  gc(reset = TRUE)
-  
-  list(Score = cv$best_score, Pred = cv$best_iter)
-}
-
-OPT_Res <- BayesianOptimization(lgb_cv_bayes,
-                                bounds = list(
-                                learning_rate = c(0.01, 0.1),
-                                min_sum_hessian_in_leaf = c(0, 10),
-                                num_leaves = c(1L, 256L)), #127
-                                init_grid_dt = NULL, 
-                                init_points = 10, #10
-                                n_iter = 10,     #50
-                                acq = "ucb", kappa = 2.576, eps = 0.0,
-                                verbose = TRUE)
-opt_res = data.table(OPT_Res$History, it_count=as.numeric(OPT_Res$Pred))
-#setorder(opt_res, Value)
-
-tableplot(opt_res, sortCol = 'Value')
-tableplot(opt_res, sortCol = 'Round')
-
-ggplot(opt_res, aes(eta, Value)) + geom_point(alpha = 0.6) + geom_smooth()
-ggplot(opt_res, aes(subsample, Value, size = max_depth, color =min_child_weight)) + geom_point(alpha = 0.6) + geom_smooth()
-ggplot(opt_res, aes(max_depth, Value, size = min_child_weight)) + geom_point(alpha = 0.3) + geom_smooth()
-
+plot_binmodel_percentiles(actual[tindex], pred.rf[tindex], 100)
+plot_binmodel_roc(actual[tindex], pred.rf[tindex])
 
 ```
 

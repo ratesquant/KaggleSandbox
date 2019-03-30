@@ -103,6 +103,12 @@ marrangeGrob(plots, nrow = 2, ncol = 3, top = NULL)
 
 model.rf = randomForest(my_formula, df, ntree = 20)
 
+plot(model.rf)
+
+importance(model.rf)
+
+varImpPlot(model.rf)
+
 pred.rf = predict(model.rf, df)
 
 ggplot(cbind(df, model = pred.rf), aes(x, y, fill = model))  + geom_tile() + 

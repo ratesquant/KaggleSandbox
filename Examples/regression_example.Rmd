@@ -24,7 +24,7 @@ library(ggplot2)
 library(imager)
 library(gridExtra)
 
-#working_folder = 'C:/Dev/Kaggle/'
+working_folder = 'C:/Dev/Kaggle/'
 working_folder = 'F:/Github/KaggleSandbox/'
 #working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 

@@ -28,8 +28,6 @@ actual = df[[obj_var]]
 df[, xy_ratio:= pmin(x,y)/pmax(x, y) ]
 df[is.na(xy_ratio), xy_ratio:= NA ]
 
-
-
 ggplot(df[1:1000,], aes(depth, 2*z/(x+y) )) + geom_point() # depth = 2*z/(y + x)
 
 ### Prepare variables -------------
@@ -120,11 +118,11 @@ pd_plots = llply(importance_matrix$Feature, function(vname){
 })
 marrangeGrob(pd_plots, nrow = 3, ncol = 4, top = NULL)
 
-partial(model.xgb, pred.var = "carat", ice = TRUE, center = TRUE, 
-        plot = TRUE, rug = TRUE, alpha = 0.1, plot.engine = "ggplot2", train = df_train)
+#partial(model.xgb, pred.var = "carat", ice = TRUE, center = TRUE, 
+#        plot = TRUE, rug = TRUE, alpha = 0.1, plot.engine = "ggplot2", train = df_train)
 
-partial(ames_xgb, pred.var = c("carat", "Gr_Liv_Area"),
-        plot = TRUE, chull = TRUE, plot.engine = "ggplot2", train = df_train)
+#partial(ames_xgb, pred.var = c("carat", "Gr_Liv_Area"),
+#        plot = TRUE, chull = TRUE, plot.engine = "ggplot2", train = df_train)
 
 ### Hyper Tuning -------------
 set.seed(132140937)

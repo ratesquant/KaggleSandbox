@@ -31,13 +31,14 @@ library(gbm)
 library(xgboost)
 library(pdp) 
 library(vip) 
+library(car)
 
 library(rBayesianOptimization)
 
 #library(lightgbm)
 
-working_folder = 'C:/Dev/Kaggle/'
-#working_folder = 'F:/Github/KaggleSandbox/'
+#working_folder = 'C:/Dev/Kaggle/'
+working_folder = 'F:/Github/KaggleSandbox/'
 #working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 
 source(file.path(working_folder, '/Utils/common.R'))
@@ -58,14 +59,26 @@ source(file.path(working_folder, '/Utils/common.R'))
   df = df[sample.int(nrow(df), nrow(df)),]
   train_index = df$is_train
   
+  df_test = NULL
+  
   gc(reset = TRUE)
+  
+  #normalize data
+  var_names = names(df)[grep('var', names(df))]
+  df[, (var_names):=lapply(.SD, function(x) {ecdf(x)(x) - 0.5/length(x)} ), .SDcols = var_names]
+  df[, (var_names):=lapply(.SD, qnorm), .SDcols = var_names] #convert to normal
 
 ```
 
 ## Plot data
 
 ```{r plot_data}
-  ggplot(df, aes(var_0, group = is_train)) + stat_ecdf()
+  
+
+  ggplot(df, aes(var_89, group = is_train, color = is_train)) + stat_ecdf()
+
+  ggplot(df[var_89>12,], aes(var_139, group = is_train, color = is_train)) + stat_ecdf()
+  ggplot(df[1:1000,], aes(sample=var_89, group = is_train, color = is_train)) + stat_qq()
   
   ggplot(df_train[1:10000,], aes(var_81, var_139, color = factor(target) )) + geom_point(alpha = 0.2)
   
@@ -129,7 +142,7 @@ pred.glm.logodds  = predict(model.glm, newdata = df, type = 'link')
 plot_binmodel_roc(actual[tindex], pred.glm[tindex])
 plot_binmodel_cdf(actual[tindex], pred.glm[tindex])
 plot_binmodel_percentiles(actual[tindex], pred.glm[tindex], 100)
-gbm.roc.area(actual[tindex], pred.glm[tindex]) #0.861283
+gbm.roc.area(actual[tindex], pred.glm[tindex]) #0.8601852
 
 
 ```

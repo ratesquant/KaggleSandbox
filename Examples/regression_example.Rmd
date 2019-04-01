@@ -101,6 +101,15 @@ marrangeGrob(plots, nrow = 2, ncol = 3, top = NULL)
 
 ```{r rf_model, echo=FALSE}
 
+#run in parallel 
+cl <- makeCluster(4)
+registerDoParallel(cl)
+model.rf <- foreach(ntree=rep(10, 6), .combine=randomForest::combine,  .multicombine=TRUE, .packages='randomForest') %dopar% {
+    randomForest(x, y, ntree=ntree)
+}
+
+plot(model.rf)
+
 model.rf = randomForest(my_formula, df, ntree = 20)
 
 plot(model.rf)

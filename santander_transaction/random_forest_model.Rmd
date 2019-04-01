@@ -26,6 +26,8 @@ library(e1071)
 library(lubridate)
 library(caret)
 
+library(doParallel)
+
 library(gbm)
 library(earth)
 library(car)
@@ -212,13 +214,21 @@ all_vars = names(df) %!in_set% c(exclude_vars)
 
 formula.rf = formula(stri_join('factor(',obj_var, ') ~ ', stri_join(unique(all_vars), collapse = ' + ')))
 
-model.rf = randomForest(formula.rf,  df[tindex,][1:10000,], ntree = 10, importance=TRUE)
+model.rf = randomForest(formula.rf,  df[tindex,], ntree = 100, importance=TRUE)
+
+#run in parallel 
+cl <- makeCluster(4)
+registerDoParallel(cl)
+model.rf <- foreach(ntree=rep(10, 4), .combine=randomForest::combine,  .multicombine=TRUE, .packages='randomForest') %dopar% {
+    randomForest(formula.rf,  df[tindex,], ntree = ntree, importance=TRUE)
+}
+stopCluster(cl)
 
 plot(model.rf)
 
-importance(model.rf)
-
-varImpPlot(model.rf)
+#importance(model.rf)
+#varImpPlot(model.rf)
+#plot_predict_interaction(model.rf, Boston, "rm", "lstat")
 
 pred.rf = as.numeric(predict(model.rf, df, type = 'prob')[,2])
 
@@ -236,13 +246,13 @@ lgb - 0.895
 
 ```{r save_results}
 
-submit = df[,.(ID_code, target = pred.lgb)]
+submit = df[,.(ID_code, target = pred.rf)]
 
 submit = submit[df$is_train==FALSE,]
 
 setorder(submit, ID_code)
 
-file = file.path(working_folder, "santander_transaction/solution_lgb.csv")
+file = file.path(working_folder, "santander_transaction/solution_rf.csv")
   
 fwrite(submit, file = file, row.names = FALSE)
 

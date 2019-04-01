@@ -79,7 +79,11 @@ int _tmain(int argc, _TCHAR* argv[])
     // read sample tour
 	vector<int> tour;
 	read_tour(tour_filename, tour);
-	
+	/*
+	for(int i=0; i<tour.size(); i++)
+		tour[i] = i;
+	tour[tour.size()-1] = 0;
+	*/
 	clock_t start = clock();	
 
 	double starting_distance = nodes.tour_distance(tour);
@@ -90,10 +94,10 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	MCSolver solver(nodes);
 
-	//int maxit  =  100;//000;
-	int maxit  =  10;
+	int maxit  =  1000;//000;
+	//int maxit  =  50;
 	int p_size =  100;
-	int span = 100000; 
+	int span = 2000; 
     //span 100   - 0.5 sec per it
 	//span 1000  - 4.0 sec per it
 	//span  5000  - 20 sec
@@ -109,7 +113,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	//cout<<"Final tour distance: "<<std::fixed << std::setprecision( 6 ) << nodes.tour_distance(tour)<<", ";
 	//cout<<"Final tour distance: "<<std::fixed << std::setprecision( 6 ) << nodes.tour_distance(tour, 0, tour.size())<<", ";
 	
-	
+    //best 1516669.487072
 	std::vector<int> best_tour = solver.random_search(tour, method, maxit, span);
 
 	double final_distance = nodes.tour_distance(best_tour);

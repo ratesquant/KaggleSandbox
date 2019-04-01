@@ -351,7 +351,7 @@ const std::vector<int> MCSolver::random_search(const std::vector<int>& input_tou
 				}				
 			}//end of method 4
 
-			if(jt == (n_tour_size-1) | improved_tour)
+			if(jt == (n_tour_size-1))
 			{
 				clock_t clock_end = clock();
 

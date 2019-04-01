@@ -87,7 +87,7 @@ source(file.path(working_folder, '/Utils/common.R'))
   ggplot(df_train, aes(var_81, var_139, z = target)) + stat_summary_2d(fun = function(x) mean(x)) + scale_fill_custom('jet', discrete = FALSE)
   #ggplot(df_train, aes(var_81, var_139, z = target)) + stat_summary_hex(fun = function(x) mean(x)) +  scale_fill_custom('jet', discrete = FALSE)
   
-  imp_vars = c('var_81','var_53','var_164','var_109','var_139','var_166','var_78','var_12','var_177','var_80','var_110','var_26','var_6')
+  imp_vars = c("var_81", "var_139", "var_12",  "var_53",  "var_110", "var_26",  "var_6",   "var_146", "var_174", "var_22" )
   all_combinations = t(combn(imp_vars, 2))
   plots = llply(seq(nrow(all_combinations)), function(i){
     ggplot(df_train, aes_string(all_combinations[i,1], all_combinations[i,2])) + geom_bin2d() + facet_wrap(~target) + scale_fill_custom('jet', discrete = FALSE) + theme(legend.position = 'none')
@@ -200,7 +200,6 @@ model.xgb <- xgboost(
   verbose = 1)
 
 ggplot(model.xgb$evaluation_log, aes(iter, train_auc)) + geom_line()
-
 
 pred.xgb <- predict(model.xgb, data.matrix(df[,all_vars, with = F]) )
 
@@ -602,7 +601,7 @@ submit = submit[df$is_train==FALSE,]
 
 setorder(submit, ID_code)
 
-file = file.path(working_folder, "santander_transaction/solution.csv")
+file = file.path(working_folder, "santander_transaction/solution.xgb.csv")
   
 fwrite(submit, file = file, row.names = FALSE)
 

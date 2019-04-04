@@ -26,6 +26,26 @@ normalize_data <- function(x){
   
 }
 
+#Platt calibration
+platt_scaling <- function(actual, model, model_pred) {
+  
+  n_event0 = sum(actual==0)
+  n_event1 = length(actual) - n_event0
+  
+  target = actual
+  target[target != 0] = (n_event1 + 1)/(n_event1 + 2)
+  target[target == 0] = 1/(n_event0 + 2)
+  
+  platt_obj <- function(x) {
+    prob = 1.0 / (1.0 + exp(x[1] * model + x[2]))
+    return ( -sum(target * log(prob) + (1-target) * log(1-prob)) )
+  }
+  
+  res = optim(c(-1,log((n_event0+1)/(n_event1+1))), platt_obj)
+  
+  return (1.0 / (1.0 + exp(res$par[1] * model_pred + res$par[2])))
+}
+
 
 .ls.objects <- function (pos = 1, pattern, order.by,
                          decreasing=FALSE, head=FALSE, n=5) {

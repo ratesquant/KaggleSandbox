@@ -38,8 +38,8 @@ library(rBayesianOptimization)
 #library(lightgbm)
 
 #working_folder = 'C:/Dev/Kaggle/'
-working_folder = 'F:/Github/KaggleSandbox/'
-#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+#working_folder = 'F:/Github/KaggleSandbox/'
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 
 source(file.path(working_folder, '/Utils/common.R'))
 ```
@@ -67,14 +67,12 @@ source(file.path(working_folder, '/Utils/common.R'))
   var_names = names(df)[grep('var', names(df))]
   df[, (var_names):=lapply(.SD, function(x) {ecdf(x)(x) - 0.5/length(x)} ), .SDcols = var_names]
   df[, (var_names):=lapply(.SD, qnorm), .SDcols = var_names] #convert to normal
-
+  
 ```
 
 ## Plot data
 
 ```{r plot_data}
-  
-
   ggplot(df, aes(var_89, group = is_train, color = is_train)) + stat_ecdf()
 
   ggplot(df[var_89>12,], aes(var_139, group = is_train, color = is_train)) + stat_ecdf()
@@ -87,35 +85,83 @@ source(file.path(working_folder, '/Utils/common.R'))
   ggplot(df_train, aes(var_81, var_139, z = target)) + stat_summary_2d(fun = function(x) mean(x)) + scale_fill_custom('jet', discrete = FALSE)
   #ggplot(df_train, aes(var_81, var_139, z = target)) + stat_summary_hex(fun = function(x) mean(x)) +  scale_fill_custom('jet', discrete = FALSE)
   
-  imp_vars = c("var_81", "var_139", "var_12",  "var_53",  "var_110", "var_26",  "var_6",   "var_146", "var_174", "var_22" )
+  #imp_vars = c('var_sum_diff','var_sum_dec','var_sum_inc',"var_81", "var_139",'var_12','var_53', 'var_9')
+  imp_vars = c('var_80', 'var_13', 'var_9', 'var_108')
   all_combinations = t(combn(imp_vars, 2))
   plots = llply(seq(nrow(all_combinations)), function(i){
-    ggplot(df_train, aes_string(all_combinations[i,1], all_combinations[i,2])) + geom_bin2d() + facet_wrap(~target) + scale_fill_custom('jet', discrete = FALSE) + theme(legend.position = 'none')
+    p = ggplot(df[tindex,], aes_string(all_combinations[i,1], all_combinations[i,2])) + geom_bin2d() + facet_wrap(~target) + scale_fill_custom('jet', discrete = FALSE) + theme(legend.position = 'none')
+    return ( ggplotGrob(p) )
   })
-  marrangeGrob(plots, nrow = 5, ncol = 9, top = NULL)
+  marrangeGrob(plots, nrow = 5, ncol = 3, top = NULL)
   
   plots = llply(seq(nrow(all_combinations)), function(i){
-    ggplot(df_train, aes_string(all_combinations[i,1], all_combinations[i,2], z = 'target')) + stat_summary_2d(fun = function(x) ifelse(length(x)<8, NA, mean(x))) + scale_fill_custom('jet', discrete = FALSE)+ theme(legend.position = 'none')
+    p = ggplot(df[tindex,], aes_string(all_combinations[i,1], all_combinations[i,2], z = 'target')) + stat_summary_2d(fun = function(x) ifelse(length(x)<3, NA, mean(x))) + scale_fill_custom('jet', discrete = FALSE)+ theme(legend.position = 'none')
     #ggplot(df_train, aes_string(all_combinations[i,1], all_combinations[i,2], z = 'target')) + stat_summary_hex(fun = function(x) mean(x)) + scale_fill_custom('jet', discrete = FALSE)+ theme(legend.position = 'none')
+    return ( ggplotGrob(p) )
   })
-  marrangeGrob(plots, nrow = 5, ncol = 9, top = NULL)
+  marrangeGrob(plots, nrow = 5, ncol = 3, top = NULL)
 
   #plot model prediction
   df_train_wm = cbind(df[tindex,], mdl=pred.xgb[tindex], actual=actual[tindex])
   plots = llply(seq(nrow(all_combinations)), function(i){
-    ggplot(df_train_wm, aes_string(all_combinations[i,1], all_combinations[i,2], z = 'mdl')) + stat_summary_2d(bins =100, fun = function(x) mean(x)) + scale_fill_custom('jet', discrete = FALSE)+ theme(legend.position = 'none')
+    p = ggplot(df_train_wm, aes_string(all_combinations[i,1], all_combinations[i,2], z = 'mdl')) + stat_summary_2d(bins =50, fun = function(x) mean(x)) + scale_fill_custom('jet', discrete = FALSE)+ theme(legend.position = 'none')
+     return ( ggplotGrob(p) )
     #ggplot(df_train, aes_string(all_combinations[i,1], all_combinations[i,2], z = 'target')) + stat_summary_hex(fun = function(x) mean(x)) + scale_fill_custom('jet', discrete = FALSE)+ theme(legend.position = 'none')
   })
-  marrangeGrob(plots, nrow = 5, ncol = 9, top = NULL)
+  marrangeGrob(plots, nrow = 5, ncol = 4, top = NULL)
 
-   p1 = ggplot(df_train_wm, aes(var_81, var_139, z = mdl))    + stat_summary_2d(bins =100, fun = function(x) mean(x)) + scale_fill_custom('jet', discrete = FALSE)#+ theme(legend.position = 'none')
-   p2 = ggplot(df_train_wm, aes(var_81, var_139, z = target)) + stat_summary_2d(bins =100, fun = function(x) ifelse(length(x)<4, NA, mean(x))) + scale_fill_custom('jet', discrete = FALSE)#+ theme(legend.position = 'none')
+  df_train_wm = cbind(df[tindex,], model=pred.xgb[tindex], actual=actual[tindex], error = actual[tindex] - pred.xgb[tindex])
+  plots = llply(seq(nrow(all_combinations)), function(i){
+    p = ggplot(df_train_wm, aes_string(all_combinations[i,1], all_combinations[i,2], z = 'error')) + stat_summary_2d(bins =50, fun = function(x) mean(x)^2) + 
+      scale_fill_custom('jet', discrete = FALSE)#+ theme(legend.position = 'none')
+     return ( ggplotGrob(p) )
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 4, top = NULL)
+  
+   p1 = ggplot(df_train_wm, aes(var_81, var_139, z = mdl))    + stat_summary_2d(bins =50, fun = function(x) ifelse(length(x)<4, NA, mean(x))) + scale_fill_custom('jet', discrete = FALSE)#+ theme(legend.position = 'none')
+   p2 = ggplot(df_train_wm, aes(var_81, var_139, z = target)) + stat_summary_2d(bins =50, fun = function(x) ifelse(length(x)<4, NA, mean(x))) + scale_fill_custom('jet', discrete = FALSE)#+ theme(legend.position = 'none')
    grid.arrange(p1, p2, nrow = 1)
   
     #tableplot(df_train[1:10000,], select = c('target',stri_join('var_', seq(0, 10))), sortCol = 'var_0')
   #tableplot(df_train[1:10000,], select = c('target','var_1'), sortCol = 'var_0')
 
 ```
+
+## Param Model
+
+```{r opt_model}
+tindex = df$is_train
+
+obj_var = 'target'
+actual = df[[obj_var]]
+
+fr <- function(x) {
+  
+   prob = 1 / (1 + exp(-(x[1] + x[2] * df[['var_81']][tindex])))
+   return ( -sum(actual[tindex] * log(prob) + (1-actual[tindex]) * log(1-prob)) )
+}
+optim(c(-1.2,1), fr)
+
+glm('target ~ var_81', df[tindex,], family = binomial(link = "logit")) #-2.2184      -0.2556  
+
+formula.glm = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+model.glm = glm(formula.glm, df[tindex,], family = binomial(link = "logit"))
+summary(model.glm)
+
+#could be dec: var_41, var_7, var_98        var_10       var_185
+#could be inc:        var_38       var_117        var_60 
+
+pred.glm          = predict(model.glm, newdata = df, type = 'response')
+pred.glm.logodds  = predict(model.glm, newdata = df, type = 'link')
+plot_binmodel_roc(actual[tindex], pred.glm[tindex])
+plot_binmodel_cdf(actual[tindex], pred.glm[tindex])
+plot_binmodel_percentiles(actual[tindex], pred.glm[tindex], 100)
+gbm.roc.area(actual[tindex], pred.glm[tindex]) #0.8601852
+
+
+```
+
 
 
 ## Logistic regression
@@ -180,37 +226,57 @@ var.monotone = rep(0, length(all_vars))
 var.monotone[all_vars %in% mon_inc_vars]  =  1
 var.monotone[all_vars %in% mon_dec_vars]  = -1
 
+df[, var_sum_inc:=rowSums(.SD), .SDcols = mon_inc_vars] #add vars
+df[, var_sum_dec:=rowSums(.SD), .SDcols = mon_dec_vars] #add vars 
+df[, var_sum_diff:=var_sum_inc - var_sum_dec]
+all_vars = c(all_vars, 'var_sum_inc', 'var_sum_dec')
+
 dtrain = data.matrix(df[tindex,all_vars, with = F])
 #Round = 98	eta = 0.2366	max_depth = 1.0000	subsample = 1.0000	monotone = 1.0000	min_child_weight = 6.0000	Value = 0.8965 
 #eta = 0.0387	max_depth = 1.0000	subsample = 0.9067	min_child_weight = 8.0000	gamma = 0.3154	monotone = 1.0000	Value = 0.8974 (12352)
 
 model.xgb <- xgboost(
-  max_depth = 1, 
-  eta = 0.0387, 
+  max_depth = 2, 
+  eta = 0.03, 
   nthread = 4,
-  subsample = 0.9,
+  subsample = 0.95,
   min_child_weight = 8.0,
   gamma = 0.3,
   objective = "binary:logistic",
   eval_metric = "auc",
-  monotone_constraints = var.monotone,
+  base_score = mean(actual[tindex]),
+#  monotone_constraints = var.monotone,
   data = dtrain, label = actual[tindex],
   print_every_n = 100,
-  nrounds = 13000, #13000
+  nrounds = 10000, #13000
   verbose = 1)
+
 
 ggplot(model.xgb$evaluation_log, aes(iter, train_auc)) + geom_line()
 
 pred.xgb <- predict(model.xgb, data.matrix(df[,all_vars, with = F]) )
 
+#platt scaling
+#pred.xgb_adj1 = platt_scaling(actual[tindex], pred.xgb[tindex], pred.xgb)
+#pred.xgb_adj2 = predict(glm(actual ~ model, data.frame(actual = actual[tindex], model = pred.xgb[tindex]), family = binomial(link = "logit")), data.frame(model = pred.xgb), type='response')
+#pred.xgb_adj3 = predict(glm(actual ~ model + model2, data.frame(actual = actual[tindex], model = pred.xgb[tindex], model2 = pred.xgb[tindex]^2), family = binomial(link = "logit")), data.frame(model = pred.xgb, model2 = pred.xgb^2), type='response')
+
+plot_binmodel_percentiles(actual[tindex], pred.xgb[tindex], 100)
+plot_binmodel_percentiles(actual[tindex], pred.xgb_adj1[tindex], 100)
+plot_binmodel_percentiles(actual[tindex], pred.xgb_adj2[tindex], 100)
+plot_binmodel_percentiles(actual[tindex], pred.xgb_adj3[tindex], 100)
+
 plot_binmodel_roc(actual[tindex], pred.xgb[tindex])
 plot_binmodel_cdf(actual[tindex], pred.xgb[tindex])
 plot_binmodel_percentiles(actual[tindex], pred.xgb[tindex], 100)
-gbm.roc.area(actual[tindex], pred.xgb[tindex]) #0.7474184
+gbm.roc.area(actual[tindex], pred.xgb[tindex]) #0.9367795
+
+plot_binmodel_percentiles(actual[tindex], pred.xgb_adj[tindex], 100)
+plot_binmodel_percentiles(actual[tindex], pred.xgb[tindex], 100)
 
 importance_matrix <- xgb.importance(model = model.xgb)
 print(importance_matrix)
-fwrite( importance_matrix, file.path(working_folder,'santander_transaction/var.imp.csv'))
+fwrite( importance_matrix, file.path(working_folder,'santander_transaction/var.imp.xgb.csv'))
 
 xgb.ggplot.importance(importance_matrix = importance_matrix)
 xgb.ggplot.deepness(model.xgb)
@@ -220,12 +286,26 @@ xgb.ggplot.deepness(model.xgb, which = 'med.depth')
 #xgb.plot.shap(as.matrix(df[tindex,all_vars, with = F]), model = model.xgb, top_n = 12, n_col = 4) #takes a very long time time to produce
 #xgb.plot.importance(importance_matrix = importance_matrix)
 
-plots = llply(as.character(importance_matrix$Feature)[1:10], function(var_name) {
-  p = plot_profile(pred.xgb[tindex], actual[tindex],df[[var_name]][tindex], error_band = 'binom', bucket_count = 20) +
+plots = llply(as.character(importance_matrix$Feature)[1:40], function(var_name) {
+  p = plot_profile(pred.xgb[tindex], actual[tindex],df[[var_name]][tindex], error_band = 'binom', bucket_count = 30) +
     ggtitle(var_name) +  theme(title =element_text(size=6), axis.title.y = element_blank()) 
-  return( p )
+  return( ggplotGrob(p) )
 })
-#marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
+marrangeGrob(plots, nrow = 5, ncol = 8, top = NULL)
+
+all_combinations = t(combn(as.character(importance_matrix$Feature)[1:15], 2))
+all_combinations = t(combn(c('var_80', 'var_13', 'var_9', 'var_108'), 2))
+plots = llply(seq(nrow(all_combinations)), function(var_id) {
+  p = plot_profile(pred.xgb[tindex], actual[tindex],df[[ all_combinations[var_id, 1] ]][tindex] / (abs(df[[ all_combinations[var_id, 2] ]][tindex]) + 0.1), error_band = 'binom', bucket_count = 20) +
+    ggtitle(stri_join(all_combinations[var_id, ], collapse = '-')) +  theme(title =element_text(size=6), axis.title.y = element_blank()) 
+  return( ggplotGrob(p) )
+})
+marrangeGrob(plots, nrow = 5, ncol = 8, top = NULL)
+
+#var_81, var_139, var_12, var_sum_inc - var_sum_dec
+extract_part <- function(x) {x}
+#plot_profile(pred.xgb[tindex], actual[tindex], df[[ 'var_139' ]][tindex], error_band = 'binom', bucket_count = 30)
+plot_profile(pred.xgb[tindex], actual[tindex], extract_part( df[[ 'var_81' ]][tindex] ) , error_band = 'binom', bucket_count = 30)
 
 gplots = lapply(plots, ggplotGrob)
 ggsave(filename = file.path(working_folder,"santander_transaction/xbg.profiles_d20.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=6), device = 'pdf', width = 11, height = 8.5, dpi = 240)
@@ -238,6 +318,33 @@ pd_plots = llply(as.character(importance_matrix$Feature), function(vname){
 marrangeGrob(pd_plots, nrow = 5, ncol = 5, top = NULL)
 gplots = lapply(pd_plots, ggplotGrob)
 ggsave(filename = file.path(working_folder,"santander_transaction/xbg.pd.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=6), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+
+
+
+##  CV -------------------
+set.seed(132140937)
+
+params = list(
+  max_depth = 2, 
+  eta = 0.03, 
+  nthread = 4,
+  subsample = 0.95,
+  min_child_weight = 8.0,
+  gamma = 0.3,
+  objective = "binary:logistic",
+  eval_metric = "auc",
+#  monotone_constraints = var.monotone,
+  verbose = 1,
+  base_score = mean(actual[tindex]))
+  
+  xgb_cv <- xgboost::xgb.cv(params,
+    data = data.matrix(df[tindex,all_vars, with = F]), label = actual[tindex],
+    nrounds = 50000, #10000
+    nfold = 5,  
+    print_every_n = 200,
+    early_stopping_rounds = 100)
+  
+data.frame(best_it = xgb_cv$best_iteration, xgb_cv$evaluation_log[xgb_cv$best_iteration,]) 
 
 ```
 
@@ -261,10 +368,10 @@ dtrain = data.matrix(df[tindex,all_vars, with = F])
 #Round = 98	eta = 0.2366	max_depth = 1.0000	subsample = 1.0000	monotone = 1.0000	min_child_weight = 6.0000	Value = 0.8965 
 #eta = 0.0387	max_depth = 1.0000	subsample = 0.9067	min_child_weight = 8.0000	gamma = 0.3154	monotone = 1.0000	Value = 0.8974 (12352)
 
-params = list(max_depth = 1, 
+params = list(max_depth = 2, 
   eta = 0.03, 
   nthread = 4,
-  subsample = 0.9,
+  subsample = 0.95,
   min_child_weight = 8.0,
   gamma = 0.3,
   verbose = 1,
@@ -283,7 +390,7 @@ model.xgb <- xgb.train(params,
   data = dtrain,
   print_every_n = 100,
   early_stopping_rounds = 50,
-  nrounds = 13852, 
+  nrounds = 5000, 
   watchlist <- list(train = dtrain))
 
 ggplot(model.xgb$evaluation_log, aes(iter, train_auc)) + geom_line()

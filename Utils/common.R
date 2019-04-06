@@ -13,17 +13,27 @@ logit <- function(x){
   return (1.0 / (1.0 + exp(-x)))
 }
 
-normalize_data <- function(x){
-  ecdf_norm<-function(x) {
-    n = length(x)
+# expand_dublicates - the same x values will produce different y values 
+ecdf_norm<-function(x, normal = TRUE, expand_dublicates = FALSE) {
+  n = length(x)
+  
+  if(expand_dublicates){
     y = (seq(n)-0.5)/n
     y[order(x)] = y
-    return (y)
+  }else{
+    y = ecdf(x)(x) -0.5/n
   }
   
-  x = data.frame(c1 = rnorm(10), c2 = rnorm(10), c3 = sample(LETTERS[1:4], 10, replace = TRUE) )
+  if(normal){
+    y = qnorm(y)
+  }
+  return (y)
+}
+
+
+normalize_data <- function(x){
+  #x = data.frame(c1 = rnorm(10), c2 = rnorm(10), c3 = sample(LETTERS[1:4], 10, replace = TRUE) )
   sapply(x, function (col) { ecdf_norm(col) })
-  
 }
 
 #Platt calibration

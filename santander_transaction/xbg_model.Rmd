@@ -68,13 +68,70 @@ source(file.path(working_folder, '/Utils/common.R'))
   df[, (var_names):=lapply(.SD, function(x) {ecdf(x)(x) - 0.5/length(x)} ), .SDcols = var_names]
   df[, (var_names):=lapply(.SD, qnorm), .SDcols = var_names] #convert to normal
   
+  df[, var_gt1 :=rowSums(.SD>1),   .SDcols = var_names]
+  df[, var_gt15:=rowSums(.SD>1.5), .SDcols = var_names]
+  df[, var_gt2 :=rowSums(.SD>2),   .SDcols = var_names]
+  df[, var_gt25:=rowSums(.SD>2.5), .SDcols = var_names]
+  df[, var_gt3 :=rowSums(.SD>3),   .SDcols = var_names]
+  
+  df[, var_lt1 :=rowSums(.SD< -1),   .SDcols = var_names]
+  df[, var_lt15:=rowSums(.SD< -1.5), .SDcols = var_names]
+  df[, var_lt2 :=rowSums(.SD< -2),   .SDcols = var_names]
+  df[, var_lt25:=rowSums(.SD< -2.5), .SDcols = var_names]
+  df[, var_lt3 :=rowSums(.SD< -3),   .SDcols = var_names]
+ 
 ```
 
 ## Plot data
 
 ```{r plot_data}
-  ggplot(df, aes(var_89, group = is_train, color = is_train)) + stat_ecdf()
 
+  plot_profile(pred.xgb[train_index], df[['target']][train_index], df[['var_count0']][train_index])
+  plot_profile(pred.xgb[train_index], df[['target']][train_index], df[['var_count3']][train_index])
+  plot_profile(pred.xgb[tindex], df[['target']][tindex], df[['var_81']][tindex])
+  
+  plots = llply(seq(-3, 3, length.out = 16), function(thr){
+    df[, var_count_x:=rowSums(.SD<thr), .SDcols = var_names] 
+    p = plot_profile(pred.xgb[tindex], df[['target']][tindex], df[['var_count_x']][tindex]) + ggtitle(paste(thr))
+    return(ggplotGrob(p))
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 3, top = NULL)
+  
+  plots = llply(seq(40), function(thr){
+    df[, var_sum_x:=rowMeans(.SD ^ 2), .SDcols = sample(var_names, 20) ]
+    df[, var_sum_x:=rowMeans(.SD ^ 2), .SDcols = var_names ] 
+    p = plot_profile(pred.xgb[tindex], df[['target']][tindex], df[['var_sum_x']][tindex], bucket_count = 20) + ggtitle(paste(thr))
+    return(ggplotGrob(p))
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 8, top = NULL)
+  
+  #plot variable profiles
+  dtm = melt(df[,c('ID_code','is_train','target', var_names), with = FALSE], id.vars = c('ID_code','is_train','target'))
+  dtm[, c("tag1", "tag2") := tstrsplit(ID_code, "_", fixed=TRUE)]
+  dtm[, c("var_id") := tstrsplit(variable, "_", fixed=TRUE, keep=2L)]
+  dtm[, tag2 := as.numeric(tag2)]
+  dtm[, var_id := as.numeric(var_id)]
+  dtm[, var_order := seq(nrow(importance_matrix))[match(variable, importance_matrix$Feature)]]
+  
+  ggplot(dtm[tag2<15 & tag1 == 'train',], aes(var_id, value, group = tag2, color = factor(target) ) ) + geom_line() + facet_wrap(~tag2)
+  ggplot(dtm[tag2 %in% sample.int(max(dtm$tag2), 10) & tag1 == 'train',], aes(var_id, value, group = tag2, color = factor(tag2) ) ) + geom_line() + facet_wrap(~target)
+  ggplot(dtm[tag2<200 & tag1 == 'train',], aes(var_id, tag2, fill = value ) ) + geom_tile() + facet_wrap(~target) + scale_fill_custom(discrete = FALSE)
+  
+  ggplot(dtm[tag2<200 & tag1 == 'train',], aes(var_id, tag2, fill = value ) ) + geom_tile() + scale_fill_custom(discrete = FALSE) + 
+    geom_hline(data = dtm[tag2<200 & tag1 == 'train' & target == 1 & var_id == 1,], aes(yintercept = tag2), alpha = 0.2, linetype = 'dashed')
+
+  ggplot(dtm[tag2 %in% sample.int(max(dtm$tag2), 10) & tag1 == 'train',], aes(var_order, value, group = tag2, color = factor(tag2) ) ) + geom_line() + facet_wrap(~target)
+  ggplot(dtm[tag2<200 & tag1 == 'train',], aes(tag2,var_order, fill = value ) ) + geom_tile() + scale_fill_custom(discrete = FALSE) + 
+    geom_vline(data = dtm[tag2<200 & tag1 == 'train' & target == 1 & var_order == 3,], aes(xintercept = tag2), alpha = 0.2, linetype = 'dashed')
+
+  
+  #corr_matrix = cor(t(data.matrix(df[1:200, var_names, with = FALSE ])), use="complete.obs")
+  #corrplot(corr_matrix, method="number", number.cex = 0.5)
+  #corrplot(corr_matrix, method="circle", order="hclust")
+  
+  
+  ggplot(df, aes(var_89, group = is_train, color = is_train)) + stat_ecdf()
+  
   ggplot(df[var_89>12,], aes(var_139, group = is_train, color = is_train)) + stat_ecdf()
   ggplot(df[1:1000,], aes(sample=var_89, group = is_train, color = is_train)) + stat_qq()
   
@@ -203,7 +260,7 @@ actual = df[[obj_var]]
 
 #only keep several car_11 levels
 exclude_vars = c('ID_code', 'is_train', obj_var) #replaced with logs
-all_vars = names(df) %!in_set% c(exclude_vars)
+all_vars = names(df)[grep('var_[0-9]+', names(df))] %!in_set% c(exclude_vars)
 
 mon_inc_vars = stri_join('var_', c(110, 53, 26, 22, 6, 99, 2, 78,
                                    164,94,133,190,179,40,0,1,170,184,191,
@@ -226,29 +283,34 @@ var.monotone = rep(0, length(all_vars))
 var.monotone[all_vars %in% mon_inc_vars]  =  1
 var.monotone[all_vars %in% mon_dec_vars]  = -1
 
+df[, var_sum2     := rowMeans(.SD^2), .SDcols = all_vars] #add vars 
+df[, var_sum2_inc := rowMeans(.SD^2), .SDcols = mon_inc_vars] #add vars
+df[, var_sum2_dec := rowMeans(.SD^2), .SDcols = mon_dec_vars] #add vars 
+
 df[, var_sum_inc:=rowSums(.SD), .SDcols = mon_inc_vars] #add vars
 df[, var_sum_dec:=rowSums(.SD), .SDcols = mon_dec_vars] #add vars 
 df[, var_sum_diff:=var_sum_inc - var_sum_dec]
 all_vars = c(all_vars, 'var_sum_inc', 'var_sum_dec')
+all_vars = names(df)[grep('var_', names(df))]
 
 dtrain = data.matrix(df[tindex,all_vars, with = F])
 #Round = 98	eta = 0.2366	max_depth = 1.0000	subsample = 1.0000	monotone = 1.0000	min_child_weight = 6.0000	Value = 0.8965 
 #eta = 0.0387	max_depth = 1.0000	subsample = 0.9067	min_child_weight = 8.0000	gamma = 0.3154	monotone = 1.0000	Value = 0.8974 (12352)
 
 model.xgb <- xgboost(
-  max_depth = 2, 
+  max_depth = 4, 
   eta = 0.03, 
   nthread = 4,
   subsample = 0.95,
   min_child_weight = 8.0,
-  gamma = 0.3,
+  gamma = 0.2,
   objective = "binary:logistic",
   eval_metric = "auc",
   base_score = mean(actual[tindex]),
 #  monotone_constraints = var.monotone,
   data = dtrain, label = actual[tindex],
   print_every_n = 100,
-  nrounds = 10000, #13000
+  nrounds = 3349, #10000
   verbose = 1)
 
 
@@ -277,6 +339,7 @@ plot_binmodel_percentiles(actual[tindex], pred.xgb[tindex], 100)
 importance_matrix <- xgb.importance(model = model.xgb)
 print(importance_matrix)
 fwrite( importance_matrix, file.path(working_folder,'santander_transaction/var.imp.xgb.csv'))
+#importance_matrix = fread(file.path(working_folder,'santander_transaction/var.imp.xgb.csv'))
 
 xgb.ggplot.importance(importance_matrix = importance_matrix)
 xgb.ggplot.deepness(model.xgb)
@@ -325,12 +388,12 @@ ggsave(filename = file.path(working_folder,"santander_transaction/xbg.pd.pdf"), 
 set.seed(132140937)
 
 params = list(
-  max_depth = 2, 
+  max_depth = 4, 
   eta = 0.03, 
   nthread = 4,
   subsample = 0.95,
   min_child_weight = 8.0,
-  gamma = 0.3,
+  gamma = 0.2,
   objective = "binary:logistic",
   eval_metric = "auc",
 #  monotone_constraints = var.monotone,

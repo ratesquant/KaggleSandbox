@@ -112,7 +112,7 @@ pred.glm_lg = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s="lambda
 plot_binmodel_roc(actual[tindex], pred.glm[tindex])
 plot_binmodel_cdf(actual[tindex], pred.glm[tindex])
 plot_binmodel_percentiles(actual[tindex], pred.glm[tindex], 100)
-gbm.roc.area(actual[tindex], pred.glm[tindex]) #0.8601852
+gbm.roc.area(actual[tindex], pred.glm[tindex]) #0.9682639
 
 plots = llply(as.character(coefs.glm$name[abs(coefs.glm$coefs.1)>0]) %!in_set% c('(Intercept)') , function(var_name) {
   p = plot_profile(pred.glm[tindex], actual[tindex],df[[var_name]][tindex], error_band = 'binom', min_obs = 3) +
@@ -124,7 +124,7 @@ marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
 ```
 
 ## GBM Model
-```{r gbm_model}
+```{r gbm_model, eval = FALSE}
 #only keep several car_11 levels
 exclude_vars = c('id', 'is_train', obj_var) #replaced with logs
 
@@ -143,15 +143,15 @@ mon_dec_vars = stri_join('X', c())
 var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
-cv_folds = 10
+cv_folds = 20
 max_it = 1000
 
 model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
                  n.trees = max_it,
                  cv.folds = cv_folds,
-                 shrinkage = 0.005,
-                 interaction.depth=2,
+                 shrinkage = 0.001,
+                 interaction.depth=1,
                  train.fraction = 1.0,
                  bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
                  n.cores = 4,
@@ -196,6 +196,115 @@ marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
 ```
 
 
+## XGBoost Model with offset
+
+```{r xgboost_model}
+#only keep several car_11 levels
+exclude_vars = c('id', 'is_train', obj_var) #replaced with logs
+all_vars = names(df) %!in_set% c(exclude_vars)
+
+params = list(max_depth = 2, 
+  eta = 0.03, 
+  nthread = 4,
+  subsample = 0.95,
+  min_child_weight = 8.0,
+  gamma = 0.3,
+  verbose = 1,
+  objective = "binary:logistic",
+  eval_metric = "auc",
+  base_score = mean(actual[tindex]))
+
+dtrain <- xgb.DMatrix(data.matrix(df[tindex,all_vars, with = F]), label =  actual[tindex])
+setinfo(dtrain, "base_margin", pred.glm_lg[tindex])
+
+dtest <- xgb.DMatrix(data.matrix(df[,all_vars, with = F]), label =  actual)
+setinfo(dtest, "base_margin", pred.glm_lg)
+
+model.xgb <- xgb.train(params,
+  data = dtrain,
+  print_every_n = 100,
+  early_stopping_rounds = 50,
+  nrounds = 1000, 
+  watchlist <- list(train = dtrain))
+
+ggplot(model.xgb$evaluation_log, aes(iter, train_auc)) + geom_line()
+
+pred.xgb <- predict(model.xgb,dtest)
+
+gbm.roc.area(actual[tindex], pred.xgb[tindex]) #0.7474184
+importance_matrix <- xgb.importance(model = model.xgb)
+print(importance_matrix)
+#fwrite( importance_matrix, file.path(working_folder,'dont_overfit/var.imp.with_margin.csv'))
+
+xgb.ggplot.importance(importance_matrix = importance_matrix)
+
+plots = llply(as.character(importance_matrix$Feature), function(var_name) {
+  p = plot_profile(pred.xgb[tindex], actual[tindex],df[[var_name]][tindex], error_band = 'binom', bucket_count = 20) +
+    ggtitle(var_name) +  theme(title =element_text(size=6), axis.title.y = element_blank()) 
+  return( p )
+})
+marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
+
+##  CV -------------------
+set.seed(132140937)
+  
+  xgb_cv <- xgboost::xgb.cv(params,
+    data = dtrain,
+    nrounds = 1000, 
+    nfold = 20,  
+    print_every_n = 10,
+    early_stopping_rounds = 100)
+  
+data.frame(best_it = xgb_cv$best_iteration, xgb_cv$evaluation_log[xgb_cv$best_iteration,]) 
+
+
+### Param optimization  ----------------
+#ound = 27	eta = 0.0911	max_depth = 8.0000	subsample = 0.8126	min_child_weight = 7.0000	gamma = 0.5000	colsample_bytree = 0.8371	Value = 0.9848 
+xgb_cv_bayes <- function(eta, max_depth, subsample, min_child_weight, gamma, colsample_bytree) {
+    set.seed(132140937) # to remove random noise from the parameters
+  
+    cv <- xgb.cv(params = list(eta = eta,
+                             max_depth = max_depth,
+                             subsample = subsample, 
+                             min_child_weight = min_child_weight,
+                             gamma = gamma, 
+                             colsample_bytree = colsample_bytree,
+                             oobjective = "binary:logistic", eval_metric = "auc", nthread = 4, base_score = mean(actual[tindex])),
+               data = dtrain,
+               nround = 1000, #2000
+               nfold = 20,
+               early_stopping_rounds = 100,  
+               verbose = 0)
+  gc(reset = TRUE)
+  
+  list(Score = cv$evaluation_log$test_auc_mean[cv$best_iteration], Pred = cv$best_iteration)
+}
+OPT_Res <- BayesianOptimization(xgb_cv_bayes,
+                                bounds = list(
+                                eta = c(0.001, 0.1),
+                                max_depth = c(1L, 10L),
+                                subsample = c(0.7, 1.0),
+                                min_child_weight = c(1L, 20L),
+                                gamma = c(0, 20),
+                                colsample_bytree = c(0.5, 1.0)), 
+                                init_grid_dt = NULL, 
+                                init_points = 100, #10
+                                n_iter = 1000,     #50
+                                acq = "ucb", kappa = 2.576, eps = 0.0,
+                                verbose = TRUE)
+opt_res = data.table(OPT_Res$History, it_count=as.numeric(OPT_Res$Pred))
+#setorder(opt_res, Value)
+
+tableplot(opt_res, sortCol = 'Value')
+tableplot(opt_res, sortCol = 'Round')
+tableplot(opt_res, sortCol = 'eta')
+
+ggplot(opt_res, aes(eta, Value)) + geom_point(alpha = 0.6) + geom_smooth()
+ggplot(opt_res, aes(subsample, Value, size = max_depth, color =min_child_weight)) + geom_point(alpha = 0.6) + geom_smooth()
+ggplot(opt_res, aes(max_depth, Value, size = min_child_weight)) + geom_point(alpha = 0.3) + geom_smooth()
+
+
+```
 
 ## Save Results
 gbm - 0.787 (1.08180)

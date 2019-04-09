@@ -1,0 +1,241 @@
+---
+title: "Dont Overtfit"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+
+knitr::opts_chunk$set(echo = TRUE)
+library(plyr)
+
+library(data.table)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(corrplot)
+library(forcats)
+library(lubridate)
+library(zip)
+library(glmnet)
+
+library(gbm)
+
+#working_folder = 'C:/Dev/Kaggle/'
+#working_folder = 'F:/Github/KaggleSandbox/'
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox')
+
+source(file.path(working_folder, '/Utils/common.R'))
+```
+
+## Load Data
+
+```{r load_data}
+
+  df_train = fread(file.path(working_folder,'dont_overfit/data/train.csv'), check.names=T)#, nrows = 10000)
+  df_test  = fread(file.path(working_folder,'dont_overfit/data/test.csv'),  check.names=T)#, nrows = 10000)
+
+  df_train[,is_train:=TRUE  ]
+  df_test[, is_train:=FALSE ]
+  df_test[, target:=NA ]
+  
+  df = rbind(df_train, df_test)
+  df = df[sample.int(nrow(df), nrow(df)),]
+  tindex = df$is_train
+  
+  df_test = NULL
+  
+  gc(reset = TRUE)
+  
+  obj_var = 'target'
+  actual = df[[obj_var]]
+
+```
+
+## Plot data
+
+```{r plot_data}
+
+  var_names = names(df)[grep('X', names(df))]
+
+  corr_matrix = cor(data.matrix(df[, var_names, with = FALSE ]), use="complete.obs")
+  #corrplot(corr_matrix, method="number", number.cex = 0.5)
+  #corrplot(corr_matrix, method="circle", order="hclust")
+  
+  plots = llply(var_names[1:15], function(vname){
+    p = ggplot(df, aes_string(vname, group = 'is_train', color = 'is_train')) + stat_ecdf() + theme(legend.position = 'none')
+    return(ggplotGrob(p))
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 3, top = NULL)
+  
+   #tableplot(df_train[1:10000,], select = c('target',stri_join('var_', seq(0, 10))), sortCol = 'var_0')
+  #tableplot(df_train[1:10000,], select = c('target','var_1'), sortCol = 'var_0')
+
+```
+
+
+## Logistic regression
+
+lambda = 0.03360355 (50)
+         0.03520361 (20)
+         0.0465371  (10)
+
+```{r logreg_model}
+exclude_vars = c('id', 'is_train', obj_var)
+all_vars = names(df) %!in_set% c(exclude_vars)
+
+dt_train = data.matrix(df[tindex,all_vars, with = F])
+
+set.seed(1011)
+cvob3=cv.glmnet(dt_train, actual[tindex],family="binomial",type.measure="auc", nfolds = 20)
+plot(cvob3)
+
+ggplot(data.frame(lambda = cvob3$lambda, nzero = cvob3$nzero), aes(lambda, nzero)) + geom_point() + geom_vline(xintercept = cvob3$lambda.min)
+#coef(cvob3,s="lambda.min")
+coefs.glm = data.matrix(coef(cvob3,s="lambda.min")) 
+coefs.glm = data.table(name = rownames(coefs.glm), coefs = coefs.glm)
+#$lambda.min 0.0465371 : X33, X65, X101, X183, X199, X226
+#$lambda.1se 0.07073225: 33, 65, 73, 91, 117, 199, 217, 295 
+#coefs.glm[abs(coefs.1)>0 ]
+#cvob3$lambda.min
+
+cvob3$cvm[ which(cvob3$lambda == cvob3$lambda.min) ]
+cvob3$cvsd[ which(cvob3$lambda == cvob3$lambda.min) ]
+
+#pred.glm         = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s="lambda.1se", type = 'response')
+pred.glm    = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s="lambda.min", type = 'response')
+pred.glm_lg = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s="lambda.min", type = 'link')
+
+#fit2=glmnet(dt_train,actual[tindex],family="binomial")
+#predict(fit2,type="nonzero")
+
+plot_binmodel_roc(actual[tindex], pred.glm[tindex])
+plot_binmodel_cdf(actual[tindex], pred.glm[tindex])
+plot_binmodel_percentiles(actual[tindex], pred.glm[tindex], 100)
+gbm.roc.area(actual[tindex], pred.glm[tindex]) #0.8601852
+
+plots = llply(as.character(coefs.glm$name[abs(coefs.glm$coefs.1)>0]) %!in_set% c('(Intercept)') , function(var_name) {
+  p = plot_profile(pred.glm[tindex], actual[tindex],df[[var_name]][tindex], error_band = 'binom', min_obs = 3) +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
+
+```
+
+## GBM Model
+```{r gbm_model}
+#only keep several car_11 levels
+exclude_vars = c('id', 'is_train', obj_var) #replaced with logs
+
+all_vars = names(df) %!in_set% c(exclude_vars)
+
+set.seed(1012356)
+
+formula.gbm = formula(stri_join( obj_var, ' ~ offset(glm) + ', stri_join(unique(all_vars), collapse = ' + ')))
+
+model_vars = all.vars(formula.gbm) %!in_set% c(obj_var, 'glm')
+var.monotone = rep(0, length(model_vars))
+
+mon_inc_vars = stri_join('X', c())
+mon_dec_vars = stri_join('X', c())
+
+var.monotone[model_vars %in% mon_inc_vars]  =  1
+var.monotone[model_vars %in% mon_dec_vars]  = -1
+
+cv_folds = 10
+max_it = 1000
+
+model.gbm  = gbm(formula.gbm,
+                 distribution = "bernoulli",
+                 n.trees = max_it,
+                 cv.folds = cv_folds,
+                 shrinkage = 0.005,
+                 interaction.depth=2,
+                 train.fraction = 1.0,
+                 bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
+                 n.cores = 4,
+                 var.monotone = var.monotone,
+                 data = cbind(df[tindex , c(obj_var, all_vars), with = F], glm = pred.glm_lg[tindex]),
+                 verbose = TRUE)
+
+#saveRDS(model.gbm, file.path(working_folder,'santander_transaction/model_gbm.rds'))
+#model.gbm = readRDS(file.path(working_folder,'santander_transaction/model_gbm.rds'))
+
+plot_gbmiterations(model.gbm) #0.03795, AUC
+
+best_it.gbm = gbm.perf(model.gbm, plot.it = FALSE)
+
+pred.gbm_lg  = predict(model.gbm, n.trees = best_it.gbm, newdata = df, type = 'link') + pred.glm_lg
+pred.gbm     = logit(pred.gbm_lg)
+plot_binmodel_roc(actual[tindex], pred.gbm[tindex])
+plot_binmodel_cdf(actual[tindex], pred.gbm[tindex])
+plot_binmodel_percentiles(actual[tindex], pred.gbm[tindex], 100)
+gbm.roc.area(actual[tindex], pred.gbm[tindex]) #0.7474184
+
+#influence
+var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
+var_inf = subset(var_inf, rel.inf>0.5)
+#fwrite(var_inf, file = file.path(working_folder, "dont_overfit/variables.csv"), row.names = FALSE)
+plot_gbminfluence(var_inf)
+print(var_inf)
+
+imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.1])
+#df_agg[1:100,..imp_vars]
+
+plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars, output_type = 'response')
+marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+
+plots = llply(as.character(var_inf$var), function(var_name) {
+  p = plot_profile(pred.gbm[tindex], actual[tindex],df[[var_name]][tindex], error_band = 'binom', min_obs = 3) +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
+
+```
+
+
+
+## Save Results
+gbm - 0.787 (1.08180)
+
+```{r save_results}
+
+submit = df[,.(id, target = pred.gbm)]
+
+submit = submit[df$is_train==FALSE,]
+
+setorder(submit, id)
+
+file = file.path(working_folder, "dont_overfit/solution.gbm.csv")
+  
+fwrite(submit, file = file, row.names = FALSE)
+
+zip(paste(file, '.zip', sep = ''), file)
+  
+print(file)
+```
+
+
+## Save Results - GLM
+glm - 0.847 (20-fold) 
+
+```{r save_results}
+
+submit = df[,.(id, target = pred.glm)]
+
+submit = submit[df$is_train==FALSE,]
+
+setorder(submit, id)
+
+file = file.path(working_folder, "dont_overfit/solution.glm.csv")
+  
+fwrite(submit, file = file, row.names = FALSE)
+
+zip(paste(file, '.zip', sep = ''), file)
+  
+print(file)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

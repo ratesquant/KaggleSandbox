@@ -18,6 +18,7 @@ library(forcats)
 library(lubridate)
 library(zip)
 library(glmnet)
+library(earth)
 
 library(gbm)
 
@@ -50,6 +51,12 @@ source(file.path(working_folder, '/Utils/common.R'))
   obj_var = 'target'
   actual = df[[obj_var]]
 
+  df[, X300 := pmax(0,    X33 + 1.483)]
+  df[, X301 := pmax(0,  0.394 -  X65) ]
+  df[, X302 := pmax(0,  0.583 -    X91) * pmax(0,  0.642 -   X117) ]
+  df[, X303 := pmax(0,  X199 +0.922) * pmax(0,   1.737 -    X301) ]
+  df[, X304 := pmax(0,    X217 -   0.115) * pmax(0,   1.737 -    X301)]
+  df[, X305 := pmax(0, 0.479568 -     X302) * pmax(0, 2.044449 -     X303)]
 ```
 
 ## Plot data
@@ -73,8 +80,7 @@ source(file.path(working_folder, '/Utils/common.R'))
 
 ```
 
-
-## Logistic regression
+## Earth Model
 
 lambda = 0.03360355 (50)
          0.03520361 (20)
@@ -84,11 +90,58 @@ lambda = 0.03360355 (50)
 exclude_vars = c('id', 'is_train', obj_var)
 all_vars = names(df) %!in_set% c(exclude_vars)
 
+set.seed(1012356)
+
+formula.mars = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+model.mars <- earth(formula.mars, 
+                    data = df[tindex, all.vars(formula.mars), with = FALSE], 
+                    degree = 2, nfold = 20, trace = 3, glm=list(family=binomial),
+                    nk = 1000,thresh = 0.0001,
+                    pmethod="cv")
+
+#plotmo(model.mars)
+evimp(model.mars)
+summary(model.mars, digits = 7, style = "pmax")
+
+pred.mars = as.vector(predict(model.mars, type = 'response', newdata = df))
+
+plot_binmodel_roc(actual[tindex], pred.mars[tindex])
+plot_binmodel_cdf(actual[tindex], pred.mars[tindex])
+plot_binmodel_percentiles(actual[tindex], pred.mars[tindex], 100)
+gbm.roc.area(actual[tindex], pred.mars[tindex]) #0.7474184
+
+
+```
+
+## Logistic regression
+
+lambda = 0.03360355 (50)
+         0.03520361 (20)
+         0.0465371  (10)
+
+```{r logreg_model}
+get_all_coefs<-function(glmnet_obj){
+  res = ldply(glmnet_obj$lambda, function(lambda){
+    temp = data.matrix(coef(glmnet_obj,s=lambda))
+    data.frame(var_name = rownames(temp), coef = as.numeric(temp), lambda)
+  })
+  return(res)
+}
+
+exclude_vars = c('id', 'is_train', obj_var)
+all_vars = names(df) %!in_set% c(exclude_vars)
+
 dt_train = data.matrix(df[tindex,all_vars, with = F])
 
-set.seed(1011)
+set.seed(1011) 
+#cvob3=cv.glmnet(dt_train, actual[tindex],family="binomial",type.measure="auc", nfolds = 20, lambda = seq(0.02, 0.05, by =0.0001))
 cvob3=cv.glmnet(dt_train, actual[tindex],family="binomial",type.measure="auc", nfolds = 20)
 plot(cvob3)
+
+coef_path = data.table(get_all_coefs(cvob3))
+imp_vars = as.character(unique( subset(coef_path,lambda > cvob3$lambda.min & coef>0)$var_name))
+ggplot(coef_path[var_name %in% imp_vars, ], aes(log(lambda), coef, group = var_name, color = var_name )) + geom_line()
 
 ggplot(data.frame(lambda = cvob3$lambda, nzero = cvob3$nzero), aes(lambda, nzero)) + geom_point() + geom_vline(xintercept = cvob3$lambda.min)
 #coef(cvob3,s="lambda.min")
@@ -97,7 +150,7 @@ coefs.glm = data.table(name = rownames(coefs.glm), coefs = coefs.glm)
 #$lambda.min 0.0465371 : X33, X65, X101, X183, X199, X226
 #$lambda.1se 0.07073225: 33, 65, 73, 91, 117, 199, 217, 295 
 #coefs.glm[abs(coefs.1)>0 ]
-#cvob3$lambda.min
+#cvob3$lambda.min #0.03520361
 
 cvob3$cvm[ which(cvob3$lambda == cvob3$lambda.min) ]
 cvob3$cvsd[ which(cvob3$lambda == cvob3$lambda.min) ]
@@ -105,6 +158,17 @@ cvob3$cvsd[ which(cvob3$lambda == cvob3$lambda.min) ]
 #pred.glm         = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s="lambda.1se", type = 'response')
 pred.glm    = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s="lambda.min", type = 'response')
 pred.glm_lg = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s="lambda.min", type = 'link')
+
+#0.06 - 0.828
+#0.05 - 0.842
+#0.04 - 0.847
+#0.03 - 0.846
+pred.glm    = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s=0.035, type = 'response')
+pred.glm_lg = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s=0.035, type = 'link')
+
+fit1=glmnet(dt_train, actual[tindex],family="binomial")
+#plot(fit1)
+plot(fit1,xvar="lambda",label=TRUE)
 
 #fit2=glmnet(dt_train,actual[tindex],family="binomial")
 #predict(fit2,type="nonzero")
@@ -121,6 +185,17 @@ plots = llply(as.character(coefs.glm$name[abs(coefs.glm$coefs.1)>0]) %!in_set% c
 })
 marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
 
+
+# --- Bootstrap ------------
+boot_res = ldply(seq(100), function(boot_i){
+  set.seed(1011 + boot_i) 
+  cvob3=cv.glmnet(dt_train, actual[tindex],family="binomial",type.measure="auc", nfolds = 20, lambda = seq(0.02, 0.08, by =0.0001))
+  #data.frame(boot_i, l_min = cvob3$lambda.min, l_1se = cvob3$lambda.1se, auc = cvob3$cvm, lambda = cvob3$lambda)
+  data.frame(boot_i, l_min = cvob3$lambda.min, l_1se = cvob3$lambda.1se, auc = max(cvob3$cvm))
+})
+setDT(boot_res)
+
+ggplot(boot_res, aes(l_min, auc)) + geom_point()
 ```
 
 ## GBM Model
@@ -203,12 +278,14 @@ marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
 exclude_vars = c('id', 'is_train', obj_var) #replaced with logs
 all_vars = names(df) %!in_set% c(exclude_vars)
 
-params = list(max_depth = 2, 
-  eta = 0.03, 
+params = list(
+  max_depth = 6, 
+  eta = 0.0087, 
   nthread = 4,
-  subsample = 0.95,
-  min_child_weight = 8.0,
-  gamma = 0.3,
+  subsample = 0.8375,
+  min_child_weight = 14.0,
+  gamma = 18.1820,
+  colsample_bytree = 0.8420,
   verbose = 1,
   objective = "binary:logistic",
   eval_metric = "auc",
@@ -246,7 +323,7 @@ plots = llply(as.character(importance_matrix$Feature), function(var_name) {
 marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
 
 ##  CV -------------------
-set.seed(132140937)
+set.seed(132497)
   
   xgb_cv <- xgboost::xgb.cv(params,
     data = dtrain,
@@ -259,9 +336,11 @@ data.frame(best_it = xgb_cv$best_iteration, xgb_cv$evaluation_log[xgb_cv$best_it
 
 
 ### Param optimization  ----------------
-#ound = 27	eta = 0.0911	max_depth = 8.0000	subsample = 0.8126	min_child_weight = 7.0000	gamma = 0.5000	colsample_bytree = 0.8371	Value = 0.9848 
+#Round = 147	eta = 0.0098	max_depth = 6.0000	subsample = 0.7709	min_child_weight = 10.0000	gamma = 3.4247	colsample_bytree = 0.6772	Value = 0.9844 
+#Round = 27	  eta = 0.0087	max_depth = 6.0000	subsample = 0.8375	min_child_weight = 14.0000	gamma = 18.1820	colsample_bytree = 0.8420	Value = 0.9860 
+
 xgb_cv_bayes <- function(eta, max_depth, subsample, min_child_weight, gamma, colsample_bytree) {
-    set.seed(132140937) # to remove random noise from the parameters
+    set.seed(132497) # to remove random noise from the parameters
   
     cv <- xgb.cv(params = list(eta = eta,
                              max_depth = max_depth,
@@ -269,7 +348,7 @@ xgb_cv_bayes <- function(eta, max_depth, subsample, min_child_weight, gamma, col
                              min_child_weight = min_child_weight,
                              gamma = gamma, 
                              colsample_bytree = colsample_bytree,
-                             oobjective = "binary:logistic", eval_metric = "auc", nthread = 4, base_score = mean(actual[tindex])),
+                             objective = "binary:logistic", eval_metric = "auc", nthread = 4, base_score = mean(actual[tindex])),
                data = dtrain,
                nround = 1000, #2000
                nfold = 20,
@@ -281,15 +360,15 @@ xgb_cv_bayes <- function(eta, max_depth, subsample, min_child_weight, gamma, col
 }
 OPT_Res <- BayesianOptimization(xgb_cv_bayes,
                                 bounds = list(
-                                eta = c(0.001, 0.1),
+                                eta = c(0.001, 0.01),
                                 max_depth = c(1L, 10L),
-                                subsample = c(0.7, 1.0),
-                                min_child_weight = c(1L, 20L),
+                                subsample = c(0.7, 0.9),
+                                min_child_weight = c(5L, 15L),
                                 gamma = c(0, 20),
                                 colsample_bytree = c(0.5, 1.0)), 
                                 init_grid_dt = NULL, 
-                                init_points = 100, #10
-                                n_iter = 1000,     #50
+                                init_points = 50, #10
+                                n_iter = 100,     #50
                                 acq = "ucb", kappa = 2.576, eps = 0.0,
                                 verbose = TRUE)
 opt_res = data.table(OPT_Res$History, it_count=as.numeric(OPT_Res$Pred))
@@ -310,20 +389,24 @@ ggplot(opt_res, aes(max_depth, Value, size = min_child_weight)) + geom_point(alp
 gbm - 0.787 (1.08180)
 
 ```{r save_results}
-
-submit = df[,.(id, target = pred.gbm)]
-
-submit = submit[df$is_train==FALSE,]
-
-setorder(submit, id)
-
-file = file.path(working_folder, "dont_overfit/solution.gbm.csv")
+save_results = function(submit, file_suffix){
   
-fwrite(submit, file = file, row.names = FALSE)
-
-zip(paste(file, '.zip', sep = ''), file)
+  submit = df[,.(id, target = pred.gbm)]
   
-print(file)
+  submit = submit[df$is_train==FALSE,]
+  
+  setorder(submit, id)
+  
+  file = file.path(working_folder, sprintf("dont_overfit/solution.%s.csv", file_suffix))
+    
+  fwrite(submit, file = file, row.names = FALSE)
+  
+  zip(paste(file, '.zip', sep = ''), file)
+    
+  print(file)
+  
+}
+save_results( df[,.(id, target = pred.gbm)], 'gbm')
 ```
 
 
@@ -332,19 +415,15 @@ glm - 0.847 (20-fold)
 
 ```{r save_results}
 
-submit = df[,.(id, target = pred.glm)]
-
-submit = submit[df$is_train==FALSE,]
-
-setorder(submit, id)
-
-file = file.path(working_folder, "dont_overfit/solution.glm.csv")
-  
-fwrite(submit, file = file, row.names = FALSE)
-
-zip(paste(file, '.zip', sep = ''), file)
-  
-print(file)
+save_results( df[,.(id, target = pred.glm)], 'glm')
 ```
+
+## Save Results - MARS
+
+```{r save_results}
+
+save_results( df[,.(id, target = pred.mars)], 'mars')
+```
+
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

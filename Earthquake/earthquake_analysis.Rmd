@@ -24,8 +24,8 @@ library(stringi)
 library(foreach)
 
 #working_folder = 'C:/Dev/Kaggle/'
-working_folder = 'F:/Github/KaggleSandbox/'
-#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+#working_folder = 'F:/Github/KaggleSandbox/'
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 
 source(file.path(working_folder, '/Utils/common.R'))
 
@@ -47,8 +47,9 @@ df = fread(file.path(working_folder,'Earthquake/data/train_1000.csv'))
 setnames(df,c('acoustic_data', 'time_to_failure'), c('y', 'ttf'))
 #df = fread(file.path(working_folder,'Earthquake/data/train_1024.csv'))
 df[, t:=dt * seq(0, nrow(df)-1)]
-#df[, u     :=rollmeanr(acoustic_data * acoustic_data, k = 1024, na.pad = TRUE)]
-#df[, u_max :=rollmaxr( acoustic_data * acoustic_data, k = 1024, na.pad = TRUE)]
+df[, ym    :=rollmeanr(y * y, k = 1000, na.pad = TRUE)]
+df[, u     :=rollmeanr(y * y, k = 1000, na.pad = TRUE)]
+df[, u_max :=rollmaxr( y * y, k = 1000, na.pad = TRUE)]
 #df[,freq:=fft(acoustic_data)]
 
 f_index = which(diff(df$ttf)>1e-3)
@@ -73,21 +74,30 @@ low frequency build up before the failure: period [256-1024] * 128
 
 #create plot for first failure
 
-ggplot(df[label ==0, ], aes(t, ttf)) + geom_line()
-wave.out <- morlet(y1 = df[label==0,y], p2 = 11, dj = 0.5) #12 * 1
+ggplot(df[label ==1, ], aes(t, y)) + geom_line()
+wave.out <- morlet(y1 = df[label==1,y], p2 = 11, dj = 1) #12 * 1
 print(wave.out$period)
 levs <- quantile(wave.out$Power, seq(0, 1, length.out = 11))
 wavelet.plot(wave.out, wavelet.levels = levs, add.sig = FALSE, add.coi=TRUE)
 
-my.w <- analyze.wavelet(df[label==0,], "y",
+my.w <- analyze.wavelet(df[label == 1,], "y",
 loess.span = 0,
 dt = 1, dj = 1.0,
-lowerPeriod = 2,
+lowerPeriod = 1,
 upperPeriod = 2048,
 make.pval = FALSE, n.sim = 1, verbose = FALSE)
 
-wt.image(my.w, color.key = "quantile", n.levels = 10,
-         legend.params = list(n.ticks = 10, label.digits = 1, label.format = "e", mar = 8.0))
+wt.image(my.w, color.key = "quantile", n.levels = 100, legend.params = list(n.ticks = 10, label.digits = 1, label.format = "e", mar = 8.0))
+
+mean(wave.out$Power[,5]) / mean( my.w$Power[5,] )
+
+ggplot(data.frame(t = df[label ==1, ]$t, p1 = 1e-3*wave.out$Power[,5], p2 = my.w$Power[5,])) + #geom_point(aes(p1,p2) )
+  geom_line(aes(t, p1), color = 'red') + geom_line(aes(t, p2), color = 'blue')
+
+
+ggplot(melt(cbind(t=df[label ==1, ]$t, data.frame(wave.out$Power)),id.vars = 't'), aes(t, variable, fill = log10(value) )) + geom_tile() + 
+  scale_fill_custom('jet', discrete = FALSE)
+
 #quantile(my.w$Power, seq(0, 1, length.out = 11))
 #my.w$Period
 #wave.out$period
@@ -107,10 +117,8 @@ for(label_i in unique(df$label) ){
   make.pval = FALSE, n.sim = 1, verbose = FALSE)
   wt.image(my.w, color.key = "quantile", n.levels = 10, main = paste(label_i),
          legend.params = list(n.ticks = 10, label.digits = 1, label.format = "e", mar = 8.0))
-
   #my.w$Period
   #ggplot(data.frame(p = my.w$Power[which(my.w$Period==256), ],t=df$t[index1[i]:index2[i]]), aes(t, p)) + geom_line()
-  
   dev.off()
 }
 ```
@@ -156,7 +164,7 @@ model.gbm = gbm(as.formula(stri_join('ttf ~ ', stri_join(var_names, collapse = '
                 shrinkage = 0.01, #0.001
                 bag.fraction = 0.8,
                 interaction.depth = 4,
-                cv.folds = 10,
+                cv.folds = 3,
                 train.fraction = 1.0,
                 var.monotone = NULL,
                 n.cores = 2,
@@ -182,27 +190,28 @@ ggplot(cbind(dfs,ttf_pred = pred.gbm) , aes(t, ttf)) + geom_line() + geom_line(a
 
 ## Save all test data wavelets
 ```{r test_data_wavelets, echo=FALSE, eval = FALSE}
-
 test_files = list.files(file.path(working_folder,'Earthquake/data/test'), pattern = '*.csv', full.names = TRUE)
 
-for(file in test_files){
+for(my_file in test_files){
+  
+  my_file = test_files[1]
  
-  df_test = fread(file)
-  #df_test = df_test[seq(1, nrow(df_test), by = 1000),]
+  df_test = fread(my_file)
+  df_test = df_test[seq(1, nrow(df_test), by = 4),]
+  #df_test = df_test[1:15000,]
   
   setnames(df_test,c('acoustic_data'), c('y'))
   
   my.w <- analyze.wavelet(df_test, "y",
   loess.span = 0,
-  dt = 1, dj = 1,
+  dt = 1, dj = 1/100,
   lowerPeriod = 2,
   upperPeriod = 4096*8,
   make.pval = FALSE, n.sim = 1, verbose = FALSE)
   
-  png(file.path(working_folder,sprintf('Earthquake/data/test_pdf/test_wavelet_%s.png', basename(file) )), width=1920, height=1080)
+  png(file.path(working_folder,sprintf('Earthquake/data/test_wavelets/%s.png', basename(my_file) )), width=2560, height=1440)
   
-  wt.image(my.w, color.key = "quantile", n.levels = 10, main = basename(file),
-           legend.params = list(n.ticks = 10, label.digits = 1, label.format = "e", mar = 8.0))
+  wt.image(my.w, color.key = "quantile",plot.ridge = FALSE, n.levels = 100, main = basename(my_file), legend.params = list(n.ticks = 10, label.digits = 1, label.format = "e", mar = 8.0))
   
   dev.off()
 }
@@ -231,26 +240,44 @@ size is 150000 (0.0375 sec)
 ```{r test_data, echo=FALSE}
 
 test_files = list.files(file.path(working_folder,'Earthquake/data/test'), pattern = '*.csv', full.names = TRUE)
+#grep('seg_aa98cc',test_files)
 
-grep('seg_aa98cc',test_files)
-
-df_test = fread(test_files[1710])
-
-setnames(df_test,c('acoustic_data'), c('y'))
-
-my.w <- analyze.wavelet(df_test, "y",
-loess.span = 0,
-dt = 1, dj = 1,
-lowerPeriod = 2,
-upperPeriod = 4096,
-make.pval = FALSE, n.sim = 1, verbose = FALSE)
-
-wt.image(my.w, color.key = "quantile", n.levels = 10, main = paste(basename(test_files[1])),
-         legend.params = list(n.ticks = 10, label.digits = 1, label.format = "e", mar = 8.0))
-
-
-for(file in test_files){
+df_res = foreach(i=1:length(test_files), .combine=rbind ) %do% {
+  i=1
+  sample_id = tools::file_path_sans_ext( basename(test_files[i]) )
   
+  df_test = fread(test_files[i])
+  
+  setnames(df_test,c('acoustic_data'), c('y'))
+  
+  df_test = df_test[seq(1, nrow(df_test), by = 1000),]
+  df_test[, sample := tools::file_path_sans_ext( basename(test_files[i]) ) ]
+  
+  #do wavelet
+  my.w <- analyze.wavelet(df_test, "y",
+  loess.span = 0,
+  dt = 1, dj = 1/10,
+  lowerPeriod = 2,
+  upperPeriod = 4096,
+  make.pval = FALSE, n.sim = 1, verbose = FALSE)
+  
+  #wt.image(my.w, color.key = "quantile", n.levels = 10, legend.params = list(n.ticks = 10, label.digits = 1, label.format = "e", mar = 8.0))
+
+  for(i in seq(length(my.w$Period))){
+    df_test[, `:=`(sprintf('pavg_%d', i), rollmeanr(my.w$Power[i,], k = 1024*8, na.pad = TRUE))]
+    df_test[, `:=`(sprintf('pcount_%d', i), rollmeanr(as.numeric(my.w$Power[i,] > quantile(my.w$Power[i,], 0.99, na.rm = TRUE, names = FALSE)), k = 1024*8, na.pad = TRUE))]
+  }
+  
+  pred = predict(model.gbm, n.trees = best_it, newdata = df_test)
+  
+  return(data.frame(seg_id = sample_id, time_to_failure = mean(pred)))
 }
 
+  setorder(df_res, seg_id)
+  
+  file = file.path(working_folder, sprintf("Earthquake/solution.%s.csv", 'first'))
+  fwrite(df_res, file = file, row.names = FALSE)
+  zip(paste(file, '.zip', sep = ''), file)
+  print(file)
+  
 ```

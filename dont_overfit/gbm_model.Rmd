@@ -56,7 +56,11 @@ source(file.path(working_folder, '/Utils/common.R'))
   df[, X302 := pmax(0,  0.583 -    X91) * pmax(0,  0.642 -   X117) ]
   df[, X303 := pmax(0,  X199 +0.922) * pmax(0,   1.737 -    X301) ]
   df[, X304 := pmax(0,    X217 -   0.115) * pmax(0,   1.737 -    X301)]
-  df[, X305 := pmax(0, 0.479568 -     X302) * pmax(0, 2.044449 -     X303)]
+  #df[, X305 := pmax(0, 0.479568 -     X302) * pmax(0, 2.044449 -     X303)]
+  df[, X306 := pmax(0,    X33 -1.483)]
+  
+  
+   
 ```
 
 ## Plot data
@@ -96,7 +100,7 @@ formula.mars = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), co
 
 model.mars <- earth(formula.mars, 
                     data = df[tindex, all.vars(formula.mars), with = FALSE], 
-                    degree = 2, nfold = 20, trace = 3, glm=list(family=binomial),
+                    degree = 4, nfold = 20, trace = 3, glm=list(family=binomial),
                     nk = 1000,thresh = 0.0001,
                     pmethod="cv")
 
@@ -140,8 +144,9 @@ cvob3=cv.glmnet(dt_train, actual[tindex],family="binomial",type.measure="auc", n
 plot(cvob3)
 
 coef_path = data.table(get_all_coefs(cvob3))
-imp_vars = as.character(unique( subset(coef_path,lambda > cvob3$lambda.min & coef>0)$var_name))
-ggplot(coef_path[var_name %in% imp_vars, ], aes(log(lambda), coef, group = var_name, color = var_name )) + geom_line()
+imp_vars = as.character(unique( subset(coef_path,lambda > 1.0*cvob3$lambda.min & coef>0)$var_name))
+ggplot(coef_path[var_name %in% imp_vars, ], aes(log(lambda), coef, group = var_name, color = var_name )) + geom_line() + 
+  geom_vline(xintercept = log(cvob3$lambda.min), linetype = 'dashed')
 
 ggplot(data.frame(lambda = cvob3$lambda, nzero = cvob3$nzero), aes(lambda, nzero)) + geom_point() + geom_vline(xintercept = cvob3$lambda.min)
 #coef(cvob3,s="lambda.min")
@@ -152,7 +157,7 @@ coefs.glm = data.table(name = rownames(coefs.glm), coefs = coefs.glm)
 #coefs.glm[abs(coefs.1)>0 ]
 #cvob3$lambda.min #0.03520361
 
-cvob3$cvm[ which(cvob3$lambda == cvob3$lambda.min) ]
+cvob3$cvm[ which(cvob3$lambda == cvob3$lambda.min) ] #0.8624413
 cvob3$cvsd[ which(cvob3$lambda == cvob3$lambda.min) ]
 
 #pred.glm         = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s="lambda.1se", type = 'response')
@@ -163,8 +168,8 @@ pred.glm_lg = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s="lambda
 #0.05 - 0.842
 #0.04 - 0.847
 #0.03 - 0.846
-pred.glm    = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s=0.035, type = 'response')
-pred.glm_lg = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s=0.035, type = 'link')
+pred.glm    = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s=0.05, type = 'response')
+pred.glm_lg = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s=0.05, type = 'link')
 
 fit1=glmnet(dt_train, actual[tindex],family="binomial")
 #plot(fit1)
@@ -391,10 +396,6 @@ gbm - 0.787 (1.08180)
 ```{r save_results}
 save_results = function(submit, file_suffix){
   
-  submit = df[,.(id, target = pred.gbm)]
-  
-  submit = submit[df$is_train==FALSE,]
-  
   setorder(submit, id)
   
   file = file.path(working_folder, sprintf("dont_overfit/solution.%s.csv", file_suffix))
@@ -415,7 +416,7 @@ glm - 0.847 (20-fold)
 
 ```{r save_results}
 
-save_results( df[,.(id, target = pred.glm)], 'glm')
+save_results( df[,.(id, target = pred.glm)][df$is_train==FALSE], 'glm')
 ```
 
 ## Save Results - MARS

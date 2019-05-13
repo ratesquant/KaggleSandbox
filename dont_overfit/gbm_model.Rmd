@@ -19,6 +19,9 @@ library(lubridate)
 library(zip)
 library(glmnet)
 library(earth)
+library(MASS)
+library(np)
+#library(tabplot)
 
 library(gbm)
 
@@ -51,44 +54,80 @@ source(file.path(working_folder, '/Utils/common.R'))
   obj_var = 'target'
   actual = df[[obj_var]]
 
-  df[, X300 := pmax(0,    X33 + 1.483)]
-  df[, X301 := pmax(0,  0.394 -  X65) ]
-  df[, X302 := pmax(0,  0.583 -    X91) * pmax(0,  0.642 -   X117) ]
-  df[, X303 := pmax(0,  X199 +0.922) * pmax(0,   1.737 -    X301) ]
-  df[, X304 := pmax(0,    X217 -   0.115) * pmax(0,   1.737 -    X301)]
-  #df[, X305 := pmax(0, 0.479568 -     X302) * pmax(0, 2.044449 -     X303)]
-  df[, X306 := pmax(0,    X33 -1.483)]
+  df[, X300 := pmax(0,   X33 + 1.483)]
+  df[, X301 := pmax(0,  X300 - 1.508) ]
+  df[, X302 := X66 *  X129]
+  #df[, X302 := pmax(0,  0.583 -    X91) * pmax(0,  0.642 -   X117) ]
   
-  
-   
+  #
 ```
 
 ## Plot data
 
 ```{r plot_data}
 
+sig_vars = c('X302','X300','X298','X65','X117','X217','X91','X199','X73','X16','X189','X295','X258','X108','X37','X18','X239','X147','X180' ,'X29','X100','X82','X51','X79','X156','X229','X267')
+
   var_names = names(df)[grep('X', names(df))]
 
   corr_matrix = cor(data.matrix(df[, var_names, with = FALSE ]), use="complete.obs")
   #corrplot(corr_matrix, method="number", number.cex = 0.5)
   #corrplot(corr_matrix, method="circle", order="hclust")
+  ggplot(melt(corr_matrix), aes(Var1, Var2, fill = value)) + geom_tile() + scale_fill_custom('main',discrete = FALSE) + 
+    theme(axis.text.x = element_text(angle = 90, size = 5), axis.text.y = element_text(size = 5))
   
-  plots = llply(var_names[1:15], function(vname){
+  plots = llply(sig_vars, function(vname){
     p = ggplot(df, aes_string(vname, group = 'is_train', color = 'is_train')) + stat_ecdf() + theme(legend.position = 'none')
     return(ggplotGrob(p))
   })
   marrangeGrob(plots, nrow = 5, ncol = 3, top = NULL)
   
-   #tableplot(df_train[1:10000,], select = c('target',stri_join('var_', seq(0, 10))), sortCol = 'var_0')
+  plots = llply(sig_vars, function(vname){
+    p = plot_profile(pred.glm[tindex],df$target[tindex], df[[vname]][tindex], bucket_count = 4, error_band = 'binom', average_value='mean') + ggtitle(vname)
+    return(ggplotGrob(p))
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 3, top = NULL)
+  
+  
+  #tabplot::tableplot(df[tindex,c('target', sig_vars), with =FALSE], sortCol = 'target')
   #tableplot(df_train[1:10000,], select = c('target','var_1'), sortCol = 'var_0')
+
+```
+
+## NP
+density or locpoly
+```{r np}
+exclude_vars = c('id', 'is_train', obj_var,'target_f')
+all_vars = names(df) %!in_set% c(exclude_vars)
+
+sig_vars = c('X300','X65','X117','X217','X91','X199','X73','X16','X189','X295','X258','X108','X37','X18','X239','X147','X180' ,'X29','X100','X82','X51','X79','X156','X229','X267')
+
+
+df[,target_f:=factor(target)]
+
+np_formula = formula(stri_join( 'target_f ~ ', stri_join(unique(sig_vars), collapse = ' + ')))
+model.npbw = npcdensbw(np_formula,  data =  df[tindex, all.vars(np_formula), with = FALSE], 
+          bandwidth.compute = TRUE,
+          bwscaling = TRUE)  # nmulti = 1
+
+#plot(model.npbw)
+summary(model.npbw)
+
+#do kernel regression
+model.np <- npconmode(model.npbw)
+pred.np =  as.numeric( npconmode(model.npbw, newdata = df[,all.vars(np_formula)[-1], with = FALSE])$condens )
+
+plot_binmodel_roc(actual[tindex], pred.np[tindex])
+plot_binmodel_cdf(actual[tindex], pred.np[tindex])
+plot_binmodel_percentiles(actual[tindex], pred.np[tindex], 100)
 
 ```
 
 ## Earth Model
 
-lambda = 0.03360355 (50)
-         0.03520361 (20)
-         0.0465371  (10)
+GLM target =
+  -0.6987201
+  + 1.018534 * pmax(0,    X33 - -1.483) 
 
 ```{r logreg_model}
 exclude_vars = c('id', 'is_train', obj_var)
@@ -100,13 +139,14 @@ formula.mars = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), co
 
 model.mars <- earth(formula.mars, 
                     data = df[tindex, all.vars(formula.mars), with = FALSE], 
-                    degree = 4, nfold = 20, trace = 3, glm=list(family=binomial),
+                    degree = 4, nfold = 10, trace = 3, glm=list(family=binomial),
                     nk = 1000,thresh = 0.0001,
                     pmethod="cv")
 
+#plot(model.mars)
 #plotmo(model.mars)
 evimp(model.mars)
-summary(model.mars, digits = 7, style = "pmax")
+summary(model.mars, digits = 12, style = "pmax")
 
 pred.mars = as.vector(predict(model.mars, type = 'response', newdata = df))
 
@@ -123,6 +163,42 @@ gbm.roc.area(actual[tindex], pred.mars[tindex]) #0.7474184
 lambda = 0.03360355 (50)
          0.03520361 (20)
          0.0465371  (10)
+         
+          name      coefs.1    abs_coef
+ 1:         X63 -0.008576891 0.008576891
+ 2:        X237 -0.020930802 0.020930802
+ 3:        X129 -0.021435431 0.021435431
+ 4:         X24  0.021500342 0.021500342
+ 5:        X127 -0.021875535 0.021875535
+ 6:        X183  0.023735867 0.023735867
+ 7:        X252 -0.026722401 0.026722401
+ 8:        X227 -0.028456201 0.028456201
+ 9:        X239 -0.029219586 0.029219586
+10:        X276 -0.030792478 0.030792478
+11:        X298 -0.039803241 0.039803241
+12:        X101  0.042645260 0.042645260
+13:         X90 -0.044671541 0.044671541
+14:        X134 -0.045073350 0.045073350
+15:        X165 -0.045691322 0.045691322
+16:        X226  0.051406334 0.051406334
+17:         X16 -0.065499499 0.065499499
+18:         X82 -0.080158164 0.080158164
+19:         X43 -0.080745003 0.080745003
+20:        X108 -0.087891134 0.087891134
+21:        X133 -0.088873054 0.088873054
+22:        X258 -0.104520002 0.104520002
+23:         X80 -0.107218602 0.107218602
+24:        X194 -0.111922764 0.111922764
+25:        X189 -0.112776752 0.112776752
+26:        X295 -0.142055533 0.142055533
+27:         X73 -0.158019751 0.158019751
+28:        X117 -0.194639370 0.194639370
+29:        X199  0.224759745 0.224759745
+30:         X91 -0.270798326 0.270798326
+31:        X217 -0.287587840 0.287587840
+32: (Intercept) -0.349598845 0.349598845
+33:         X65  0.483756212 0.483756212
+34:        X300  0.775011244 0.775011244
 
 ```{r logreg_model}
 get_all_coefs<-function(glmnet_obj){
@@ -136,26 +212,38 @@ get_all_coefs<-function(glmnet_obj){
 exclude_vars = c('id', 'is_train', obj_var)
 all_vars = names(df) %!in_set% c(exclude_vars)
 
+#all_vars = c('X300','X65','X117','X217','X91','X199','X73','X16','X189','X295','X258','X108','X37','X18','X239','X147','X180' ,'X29','X100','X82','X51','X79','X156','X229','X267')
+
 dt_train = data.matrix(df[tindex,all_vars, with = F])
 
-set.seed(1011) 
+set.seed(1011)
+set.seed(1023) 
 #cvob3=cv.glmnet(dt_train, actual[tindex],family="binomial",type.measure="auc", nfolds = 20, lambda = seq(0.02, 0.05, by =0.0001))
-cvob3=cv.glmnet(dt_train, actual[tindex],family="binomial",type.measure="auc", nfolds = 20)
+cvob3=cv.glmnet(dt_train, actual[tindex],family="binomial",type.measure="auc", nfolds = 10)
 plot(cvob3)
 
+ggplot(data.frame(auc = cvob3$cvm, auc_hi = cvob3$cvup, auc_lo = cvob3$cvlo, lambda = log(cvob3$lambda)) , aes(lambda, auc) ) + geom_line() + 
+  geom_ribbon(aes(ymin = auc_lo, ymax = auc_hi), fill = 'blue', alpha = 0.3) +
+  geom_vline(xintercept =  log(cvob3$lambda.min)) + 
+  ggtitle(sprintf('Best Auc %.5f', cvob3$cvm[which(cvob3$lambda == cvob3$lambda.min)]))
+
+cvob3$cvm[which(cvob3$lambda == cvob3$lambda.min)]
+
 coef_path = data.table(get_all_coefs(cvob3))
-imp_vars = as.character(unique( subset(coef_path,lambda > 1.0*cvob3$lambda.min & coef>0)$var_name))
+imp_vars = as.character(unique( subset(coef_path,lambda > cvob3$lambda.min & abs(coef) >0)$var_name))
 ggplot(coef_path[var_name %in% imp_vars, ], aes(log(lambda), coef, group = var_name, color = var_name )) + geom_line() + 
   geom_vline(xintercept = log(cvob3$lambda.min), linetype = 'dashed')
 
 ggplot(data.frame(lambda = cvob3$lambda, nzero = cvob3$nzero), aes(lambda, nzero)) + geom_point() + geom_vline(xintercept = cvob3$lambda.min)
 #coef(cvob3,s="lambda.min")
-coefs.glm = data.matrix(coef(cvob3,s="lambda.min")) 
+coefs.glm = data.matrix(coef(cvob3,s="lambda.min"))
+coefs.glm = data.matrix(coef(cvob3,s=0.0395473)) 
 coefs.glm = data.table(name = rownames(coefs.glm), coefs = coefs.glm)
 #$lambda.min 0.0465371 : X33, X65, X101, X183, X199, X226
 #$lambda.1se 0.07073225: 33, 65, 73, 91, 117, 199, 217, 295 
 #coefs.glm[abs(coefs.1)>0 ]
 #cvob3$lambda.min #0.03520361
+cvob3$cvm[which(cvob3$lambda == cvob3$lambda.min)]
 
 cvob3$cvm[ which(cvob3$lambda == cvob3$lambda.min) ] #0.8624413
 cvob3$cvsd[ which(cvob3$lambda == cvob3$lambda.min) ]
@@ -165,11 +253,8 @@ pred.glm    = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s="lambda
 pred.glm_lg = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s="lambda.min", type = 'link')
 
 #0.06 - 0.828
-#0.05 - 0.842
-#0.04 - 0.847
-#0.03 - 0.846
-pred.glm    = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s=0.05, type = 'response')
-pred.glm_lg = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s=0.05, type = 'link')
+pred.glm    = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s=0.04340311, type = 'response')
+pred.glm_lg = predict(cvob3,newx=data.matrix(df[,all_vars, with = F]), s=0.04340311, type = 'link')
 
 fit1=glmnet(dt_train, actual[tindex],family="binomial")
 #plot(fit1)
@@ -191,17 +276,79 @@ plots = llply(as.character(coefs.glm$name[abs(coefs.glm$coefs.1)>0]) %!in_set% c
 marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
 
 
-# --- Bootstrap ------------
-boot_res = ldply(seq(100), function(boot_i){
-  set.seed(1011 + boot_i) 
-  cvob3=cv.glmnet(dt_train, actual[tindex],family="binomial",type.measure="auc", nfolds = 20, lambda = seq(0.02, 0.08, by =0.0001))
-  #data.frame(boot_i, l_min = cvob3$lambda.min, l_1se = cvob3$lambda.1se, auc = cvob3$cvm, lambda = cvob3$lambda)
-  data.frame(boot_i, l_min = cvob3$lambda.min, l_1se = cvob3$lambda.1se, auc = max(cvob3$cvm))
+# --- Bootstrap to find optimal lambda------------
+
+boot_res = ldply(seq(10), function(boot_i){
+  seed = 1011 + (boot_i-1)
+  set.seed(seed) 
+  cvob3=cv.glmnet(dt_train, actual[tindex],family="binomial",type.measure="auc", nfolds = 20)
+  #lambda_index = which(cvob3$lambda == cvob3$lambda.min)
+  
+  return (data.frame(boot_i, seed, lambda = cvob3$lambda, nzero = cvob3$nzero, auc = cvob3$cvm))
+  #return (data.frame(boot_i, seed, lambda = cvob3$lambda.min, auc = cvob3$cvm[lambda_index], nzero = cvob3$nzero[lambda_index]))
 })
 setDT(boot_res)
 
-ggplot(boot_res, aes(l_min, auc)) + geom_point()
+#0.04340311 0.8018615
+#0.0395473 0.8123854
+boot_res_avg =boot_res[,.(mean_auc = mean(auc)), by =.(lambda)]
+boot_res_avg[mean_auc==max(mean_auc),]
+
+ggplot(boot_res, aes(log(lambda), auc, group =boot_i)) + geom_line(alpha = 0.1) +
+  geom_line(data = boot_res_avg, aes(log(lambda), mean_auc, group = 1)) + geom_vline(xintercept = log(boot_res_avg[mean_auc==max(mean_auc),]$lambda))
+
+ggplot(boot_res, aes(log(lambda), nzero, group =boot_i)) + geom_line(alpha = 0.1)
 ```
+
+## Stepwise
+     Step Df  Deviance Resid. Df   Resid. Dev      AIC
+1                            249 3.267091e+02 328.7091
+2  + X300  1 40.475499       248 2.862336e+02 290.2336
+3   + X65  1 23.024783       247 2.632088e+02 269.2088
+4  + X117  1 12.880675       246 2.503281e+02 258.3281
+5  + X217  1 12.643413       245 2.376847e+02 247.6847
+6   + X91  1 13.113458       244 2.245713e+02 236.5713
+7  + X199  1 13.244503       243 2.113268e+02 225.3268
+8   + X73  1  9.663837       242 2.016629e+02 217.6629
+9   + X16  1  9.283511       241 1.923794e+02 210.3794
+10 + X189  1  8.923575       240 1.834558e+02 203.4558
+11 + X295  1  9.417470       239 1.740384e+02 196.0384
+12 + X258  1 10.854961       238 1.631834e+02 187.1834
+13 + X108  1  8.752626       237 1.544308e+02 180.4308
+14  + X37  1  7.580538       236 1.468502e+02 174.8502
+15  + X18  1  7.609299       235 1.392410e+02 169.2410
+16 + X239  1  6.803136       234 1.324378e+02 164.4378
+17 + X147  1  7.298285       233 1.251395e+02 159.1395
+18 + X180  1  8.719160       232 1.164204e+02 152.4204
+19  + X29  1  8.521437       231 1.078989e+02 145.8989
+20 + X100  1  7.329235       230 1.005697e+02 140.5697
+21  + X82  1  7.557457       229 9.301224e+01 135.0122
+22  + X51  1  8.390440       228 8.462180e+01 128.6218
+23  + X79  1  9.487953       227 7.513385e+01 121.1338
+24 + X156  1 11.330452       226 6.380339e+01 111.8034
+25 + X229  1 12.750049       225 5.105335e+01 101.0533
+26 + X267  1 51.053344       224 1.203228e-06  52.0000
+
+```{r stepwise_model}
+
+exclude_vars = c('id', 'is_train', obj_var)
+all_vars = names(df) %!in_set% c(exclude_vars)
+
+formula.step = formula(stri_join( obj_var, ' ~  ', stri_join(unique(all_vars), collapse = ' + ')))
+
+model.glm <- glm(target ~ 1, family = binomial(link = "logit"), data = df[tindex , c(obj_var, all_vars), with = F])
+summary(model.glm)
+model.glm.step <- stepAIC(model.glm, formula.step, direction = 'forward', trace = TRUE)
+model.glm.step <- stepAIC(model.glm, formula.step, direction = 'both',    trace = TRUE)
+model.glm.step$anova
+
+pred.glm_step    = as.numeric(predict(model.glm.step, newdata = df, type = 'response'))
+
+#target ~ X300 + X65 + X117 + X217 + X91 + X199 + X73 + X16 + 
+#    X189 + X295 + X258 + X108 + X37 + X18 + X239 + X147 + X180 + 
+#    X29 + X100 + X82 + X51 + X79 + X156 + X229 + X267
+```
+
 
 ## GBM Model
 ```{r gbm_model, eval = FALSE}
@@ -223,15 +370,15 @@ mon_dec_vars = stri_join('X', c())
 var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
-cv_folds = 20
-max_it = 1000
+cv_folds = 10
+max_it = 5000
 
 model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
                  n.trees = max_it,
                  cv.folds = cv_folds,
                  shrinkage = 0.001,
-                 interaction.depth=1,
+                 interaction.depth=2,
                  train.fraction = 1.0,
                  bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
                  n.cores = 4,
@@ -263,7 +410,16 @@ print(var_inf)
 imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.1])
 #df_agg[1:100,..imp_vars]
 
-plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars, output_type = 'response')
+#plot interactions
+var_interaction = gbm_interactions(model.gbm, df[tindex,], iter = best_it.gbm, min_influence = 1, degree = 2) 
+plot_gbminteractions(subset(var_interaction, interaction_score>0.05))
+print(subset(var_interaction, interaction_score>0.01))
+
+
+
+gbm_interactions <- function(gbm_model, data, iter, min_influence = 1, degree = 2){
+  
+plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars, output_type = 'link')
 marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
 
 plots = llply(as.character(var_inf$var), function(var_name) {
@@ -412,11 +568,12 @@ save_results( df[,.(id, target = pred.gbm)], 'gbm')
 
 
 ## Save Results - GLM
-glm - 0.847 (20-fold) 
+glm - 0.847 (20-fold) - no extra variables (20 fold auc 0.8146711)
 
 ```{r save_results}
 
 save_results( df[,.(id, target = pred.glm)][df$is_train==FALSE], 'glm')
+#save_results( df[,.(id, target = pred.glm_step)][df$is_train==FALSE], 'glm_step')
 ```
 
 ## Save Results - MARS

@@ -23,7 +23,8 @@ library(xgboost)
 library(wesanderson)
 #library(caret)
 
-working_folder = 'C:/Dev/Kaggle/'
+#working_folder = 'C:/Dev/Kaggle/'
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 
 source(file.path(working_folder, '/Utils/common.R'))
 ```
@@ -66,7 +67,7 @@ df_plot$prob = predict(model.glm, newdata = df_plot, type = 'response')
 
 p1 = ggplot() + 
         geom_raster(data = df_plot, aes(x, y, fill = prob )) +  
-  scale_fill_gradientn(colors = wes_palette('FantasticFox', 5, type = "continuous"))+
+  scale_fill_gradientn(colors = wes_palette('FantasticFox1', 5, type = "continuous"))+
   geom_point(data = df, aes(x, y, color = factor(z) )) 
 p2 = ggplot() + 
         geom_raster(data = df_plot, aes(x, y, fill = prob>0.5 )) +  
@@ -119,7 +120,7 @@ run_gbm <- function(depth = 1) {
   
   p1 = ggplot() + 
           geom_raster(data = df_plot, aes(x, y, fill = prob )) +  
-    scale_fill_gradientn(colors = wes_palette('FantasticFox', 5, type = "continuous"))+
+    scale_fill_gradientn(colors = wes_palette('FantasticFox1', 5, type = "continuous"))+
     geom_point(data = df, aes(x, y, color = factor(z) )) 
   p2 = ggplot() + 
           geom_raster(data = df_plot, aes(x, y, fill = prob>0.5 )) +  

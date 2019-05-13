@@ -412,7 +412,7 @@ plot_gbmpartial_2d <- function(gbm_model, iter, variables, resolution = 100, out
   return (plots)
 }
 
-plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, error_band = c('normal', 'binom'), average_value = c('mean', 'median'), conf_level = 0.95){
+plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, error_band = c('normal', 'binom')[1], average_value = c('mean', 'median')[1], conf_level = 0.95){
   plot_result = ggplot() + geom_blank()
   
   factor_plot = FALSE

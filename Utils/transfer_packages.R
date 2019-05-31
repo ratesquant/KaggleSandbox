@@ -27,7 +27,11 @@ for (pkg in essential_packages) install.packages(pkg)
 #check that all packages load
 for (pkg in current_packages) require(pkg, character.only=TRUE)
 
+#load all packages
+lapply(.packages(all.available = TRUE), function(xx) library(xx,     character.only = TRUE)) 
+
 library(randomForest)
 library(randomForestExplainer)
 
 library(rBayesianOptimization)
+

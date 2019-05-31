@@ -481,7 +481,7 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
   if(nrow(res) > 0 )
   {
     if(factor_plot){
-      res[,buckets := factor(buckets)]
+      res[,buckets := factor(bucket)]
       xlabels = levels(res$buckets)
       
       plot_result = ggplot(res, aes(buckets, actual, group = 1)) + 

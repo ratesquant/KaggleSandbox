@@ -1,0 +1,154 @@
+---
+title: "Champs Model"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(plyr)
+
+library(data.table)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(corrplot)
+library(forcats)
+library(e1071)
+library(lubridate)
+
+library(gbm)
+#library(randomForestSRC)
+#library(xgboost)
+#library(lightgbm)
+
+#working_folder = 'C:/Dev/Kaggle/'
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
+
+source(file.path(working_folder, '/Utils/common.R'))
+```
+
+## Load Data
+
+```{r load_data}
+ df_train = fread(file.path(working_folder,'champs/data/train.csv'), check.names=T)#, nrows = 10000)
+ df_test  = fread(file.path(working_folder,'champs/data/test.csv'), check.names=T)#, nrows = 10000)
+ 
+ df_structure = fread(file.path(working_folder,'champs/data/structures.csv'), check.names=T)#, nrows = 10000)
+ 
+ df_train[,is_train:=TRUE  ]
+ df_test[, is_train:=FALSE ]
+ df_test[, scalar_coupling_constant:=NA ]
+  
+ df = rbind(df_train, df_test)
+ df = df[sample.int(nrow(df), nrow(df)),]
+ train_index = df$is_train
+
+ rm(df_train,df_test)  
+ gc(reset = TRUE)
+ df[, type_f:=factor(type)]
+ #tables()
+ 
+ #
+ df[molecule_name=='dsgdb9nsd_027208',]
+ df_structure[molecule_name=='dsgdb9nsd_027208',]
+ ggplot( df_structure[molecule_name=='dsgdb9nsd_027208',], aes(x, y, color = atom)) + geom_point()
+ 
+ ggplot(df[is_train == TRUE,], aes(scalar_coupling_constant, group = type, color = type)) + stat_ecdf() 
+ 
+```
+
+## Additional Data
+
+```{r add_data}
+
+```
+
+## GBM Model
+
+```{r gbm_model}
+
+obj_var = 'scalar_coupling_constant'
+actual = df[[obj_var]]
+
+all_vars =c('type_f')
+
+set.seed(1012356)
+
+formula.gbm = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+model_vars = all.vars(formula.gbm) %!in_set% c(obj_var)
+
+cv_folds = 0
+max_it = 1000
+
+model.gbm  = gbm(formula.gbm,
+                 distribution = "gaussian",
+                 n.trees = max_it,
+                 cv.folds = cv_folds,
+                 shrinkage = 0.01,
+                 interaction.depth=3,
+                 train.fraction = 0.5,
+                 bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
+                 n.cores = 4,
+                 var.monotone = NULL,
+                 data = df[train_index , all.vars(formula.gbm), with = F],
+                 verbose = TRUE)
+
+plot_gbmiterations(model.gbm)
+
+best_it.gbm = gbm.perf(model.gbm, plot.it = FALSE)
+pred.gbm  = predict(model.gbm, n.trees = best_it.gbm, newdata = df, type = 'link')
+
+
+#influence
+var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
+var_inf = subset(var_inf, rel.inf>0.1)
+plot_gbminfluence(var_inf)
+print(var_inf)
+
+imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.1])
+#df_agg[1:100,..imp_vars]
+
+plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars, output_type = 'link')
+marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
+
+plots = llply(as.character(var_inf$var), function(var_name) {
+  p = plot_profile(pred.gbm[train_index], actual[train_index], df[[var_name]][train_index], error_band = 'normal') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
+
+
+```
+
+## Save Results
+# type (1.237255, 1.240)
+```{r save_results}
+#insample check 
+df_in = cbind(df, scalar_coupling_constant_pred = pred.gbm)
+df_in[is_train == TRUE, .(.N, mae = log( mean(abs( scalar_coupling_constant_pred -  scalar_coupling_constant)) ) ), by =.(type)][,mean(mae)]
+
+#submit = df[,.(ID_code, target = pred.gbm)]
+submit = df[,.(id, scalar_coupling_constant = pred.gbm)]
+submit = submit[df$is_train==FALSE,]
+
+setorder(submit, id)
+
+file = file.path(working_folder, "champs/solution.csv")
+  
+fwrite(submit, file = file, row.names = FALSE)
+
+#gzip(file, overwrite = TRUE)
+utils::zip(paste(file, '.zip', sep = ''), file)
+  
+print(file)
+
+```

@@ -48,8 +48,7 @@ source(file.path(working_folder, '/Utils/common.R'))
   
  df = rbind(df_train, df_test)
  df = df[sample.int(nrow(df), nrow(df)),]
- train_index = df$is_train
-
+ 
  rm(df_train,df_test)  
  gc(reset = TRUE)
  df[, type_f:=factor(type)]
@@ -58,9 +57,65 @@ source(file.path(working_folder, '/Utils/common.R'))
  #
  df[molecule_name=='dsgdb9nsd_027208',]
  df_structure[molecule_name=='dsgdb9nsd_027208',]
- ggplot( df_structure[molecule_name=='dsgdb9nsd_027208',], aes(x, y, color = atom)) + geom_point()
+ ggplot( df_structure[molecule_name=='dsgdb9nsd_027208',], aes(x, y, color = atom, label = atom_index)) + geom_point() + geom_text( nudge_x = 0.03, color = 'black')
  
  ggplot(df[is_train == TRUE,], aes(scalar_coupling_constant, group = type, color = type)) + stat_ecdf() 
+ 
+ #add_features
+ gen_features <- function(x){
+   #x = df_s[molecule_name == 'dsgdb9nsd_076950', ]
+   m_name = x$molecule_name
+   id0 = x$atom_index_0 + 1
+   id1 = x$atom_index_1 + 1
+   m_structure = df_structure[molecule_name==m_name,]
+   
+   n_counts = m_structure[,.(.N), atom]
+   
+   #print(m_name)
+   
+   m = as.matrix(dist(m_structure[, .(x, y, z) ], method = "euclidean", diag = FALSE, upper = FALSE, p = 2))
+   prox_mat0 = data.table(d = m[-id0,id0], atom = m_structure$atom[-id0])
+   prox_mat1 = data.table(d = m[-id1,id1], atom = m_structure$atom[-id1])
+   
+   setorder(prox_mat0, d)
+   setorder(prox_mat1, d)
+   
+   prox_mat0 = prox_mat0[1:10,]
+   prox_mat1 = prox_mat1[1:10,]
+   
+   temp0 = cbind(data.frame(t(prox_mat0$atom)), data.frame(t(prox_mat0$d)))
+   names(temp0) <- c(stri_join('b0_atom_', seq(10)), stri_join('b0_dist_', seq(10)))
+   
+   temp1 = cbind(data.frame(t(prox_mat1$atom)), data.frame(t(prox_mat1$d)))
+   names(temp1) <- c(stri_join('b1_atom_', seq(10)), stri_join('b1_dist_', seq(10)))
+   
+   
+   res = cbind(data.frame(bond_dist = m[id1, id0], 
+                          count_c = sum(m_structure$atom == 'C'), 
+                          count_h = sum(m_structure$atom == 'H'), 
+                          count_o = sum(m_structure$atom == 'O'),
+                          count_f = sum(m_structure$atom == 'F'),
+                          count_n = sum(m_structure$atom == 'N')), temp0, temp1)
+   #res = data.frame(bond_dist = m[id1, id0])
+   return(res)
+ }
+ 
+ #Read with features ----------------
+ #df_s = df[sample.int(nrow(df), 10000),]
+ df_s = df[sample.int(nrow(df), nrow(df)),] #All features
+ #system.time(df_s[, gen_features(.SD), by = .(id) ])
+ df_features = df_s[, gen_features(.SD), by = .(id) ]
+ df = cbind(df_s, df_features)
+ #fwrite(df_s, file.path(working_folder,'champs/data/all.csv'))#, nrows = 10000)
+ #df = fread(file.path(working_folder,'champs/data/all.csv'))
+ names(df) = make.names(names(df), unique = TRUE)
+ 
+ train_index = df$is_train
+ 
+ table(df[, .(is_train, type)])
+ 
+ ggplot(df[is_train == TRUE,], aes(scalar_coupling_constant, group = type, color = type)) + stat_ecdf() 
+ ggplot(df[is_train == TRUE,], aes(bond_dist, group = type, color = type)) + stat_ecdf() 
  
 ```
 
@@ -71,13 +126,27 @@ source(file.path(working_folder, '/Utils/common.R'))
 ```
 
 ## GBM Model
+                var    rel.inf
+type_f       type_f 77.9374868
+bond_dist bond_dist 19.0159336
+b1_dist_4 b1_dist_4  0.7675131
+b0_dist_4 b0_dist_4  0.6021463
+b1_dist_1 b1_dist_1  0.5676753
+b0_dist_3 b0_dist_3  0.4432985
+b0_dist_2 b0_dist_2  0.2684908
+b1_dist_3 b1_dist_3  0.1221672
 
 ```{r gbm_model}
 
 obj_var = 'scalar_coupling_constant'
 actual = df[[obj_var]]
 
-all_vars =c('type_f')
+col_names = names(df)
+
+all_vars =c('type_f', 'bond_dist', col_names[grep('b[(01)]_', col_names)], col_names[grep('count_[(chofn)]', col_names)])
+
+char_columns = names(which(lapply(df, is.character) ==TRUE)) %in_set% all_vars
+if(length(char_columns)>0) { df[, (char_columns):=lapply(.SD, factor), .SDcols = char_columns] }
 
 set.seed(1012356)
 
@@ -92,20 +161,23 @@ model.gbm  = gbm(formula.gbm,
                  distribution = "gaussian",
                  n.trees = max_it,
                  cv.folds = cv_folds,
-                 shrinkage = 0.01,
-                 interaction.depth=3,
+                 shrinkage = 0.008,
+                 interaction.depth=7,
                  train.fraction = 0.5,
                  bag.fraction = 0.9,# 0.5 for small samples, 0.7 for large
                  n.cores = 4,
                  var.monotone = NULL,
-                 data = df[train_index , all.vars(formula.gbm), with = F],
+                 data = df[is_train ==TRUE , all.vars(formula.gbm), with = F],
                  verbose = TRUE)
 
-plot_gbmiterations(model.gbm)
+plot_gbmiterations(model.gbm) #9.466, 8.036
 
 best_it.gbm = gbm.perf(model.gbm, plot.it = FALSE)
 pred.gbm  = predict(model.gbm, n.trees = best_it.gbm, newdata = df, type = 'link')
+#pred.gbm  = predict(model.gbm, n.trees = best_it.gbm, newdata = df_s, type = 'link')
 
+ggplot(data.table(pred = pred.gbm, actual), aes(pred, actual)) + geom_point() + geom_abline(slope = 1, color = 'red')
+summary(lm(actual ~ pred, data.table(pred = pred.gbm, actual))) # 0.9945 
 
 #influence
 var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
@@ -117,24 +189,25 @@ imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.1])
 #df_agg[1:100,..imp_vars]
 
 plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars, output_type = 'link')
-marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
+marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 
-plots = llply(as.character(var_inf$var), function(var_name) {
+plots = llply(as.character(all_vars), function(var_name) {
   p = plot_profile(pred.gbm[train_index], actual[train_index], df[[var_name]][train_index], error_band = 'normal') +
     ggtitle(var_name) +  theme(title =element_text(size=6))
   return( p )
 })
-marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
+marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 
 
 ```
 
 ## Save Results
 # type (1.237255, 1.240)
+#      (0.706, 0.7066924)
 ```{r save_results}
 #insample check 
-df_in = cbind(df, scalar_coupling_constant_pred = pred.gbm)
-df_in[is_train == TRUE, .(.N, mae = log( mean(abs( scalar_coupling_constant_pred -  scalar_coupling_constant)) ) ), by =.(type)][,mean(mae)]
+#df_in = cbind(df, scalar_coupling_constant_pred = pred.gbm)
+#df_in[is_train == TRUE, .(.N, mae = log( mean(abs( scalar_coupling_constant_pred -  scalar_coupling_constant)) ) ), by =.(type)][,mean(mae)]
 
 #submit = df[,.(ID_code, target = pred.gbm)]
 submit = df[,.(id, scalar_coupling_constant = pred.gbm)]
@@ -147,7 +220,8 @@ file = file.path(working_folder, "champs/solution.csv")
 fwrite(submit, file = file, row.names = FALSE)
 
 #gzip(file, overwrite = TRUE)
-utils::zip(paste(file, '.zip', sep = ''), file)
+#utils::zip(paste(file, '.zip', sep = ''), file)
+zipr(paste(file, '.zip', sep = ''), file)
   
 print(file)
 

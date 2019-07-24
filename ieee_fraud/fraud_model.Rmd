@@ -78,8 +78,15 @@ source(file.path(working_folder, '/Utils/common.R'))
  
  df[, c("id_31_level1")         := tstrsplit(id_31, " ", fixed=TRUE, keep=1L)]
  df[, c("id_30_level1")         := tstrsplit(id_30, " ", fixed=TRUE, keep=1L)]
- df[, c("DeviceInfo_level1")    := tstrsplit(DeviceInfo, "( |-|:)", fixed=FALSE, keep=1L)]
- df[, c("DeviceInfo_level2")    := tstrsplit(DeviceInfo, "( |-|:)", fixed=FALSE, keep=2L)]
+ df[, c("DeviceInfo_level1")    := tstrsplit(DeviceInfo, "( |-|:|/)", fixed=FALSE, keep=1L)]
+ df[, c("DeviceInfo_level2")    := tstrsplit(DeviceInfo, "( |-|:|/)", fixed=FALSE, keep=2L)]
+ df[, c("DeviceInfo_level3")    := tstrsplit(DeviceInfo, "( |-|:|/)", fixed=FALSE, keep=3L)]
+ df[, c("DeviceInfo_level4")    := tstrsplit(DeviceInfo, "( |-|:|/)", fixed=FALSE, keep=4L)]
+ df[, c("id_34_level1")         := tstrsplit(id_34, ":", fixed=TRUE, keep=2L)]
+ 
+ df[, is_emaildomain_diff         := as.numeric(R_emaildomain!=P_emaildomain)]
+ df[, is_emaildomain_level1_diff  := as.numeric(R_emaildomain_level1!=P_emaildomain_level1)]
+ df[, is_emaildomain_level2_diff  := as.numeric(R_emaildomain_level2!=P_emaildomain_level2)]
  
  table(df$DeviceInfo_level2)
  
@@ -100,7 +107,7 @@ source(file.path(working_folder, '/Utils/common.R'))
  
  cat_vars = names(df)[which(sapply(df, is.character))] %!in_set% id_vars
  fac_vars = stri_join(cat_vars, '_factor')
- df[, (fac_vars):=lapply(.SD, function(x) fct_infreq(fct_lump(x, n = 20))), .SDcols = cat_vars]
+ df[, (fac_vars):=lapply(.SD, function(x) fct_infreq(fct_lump(x, n = 10))), .SDcols = cat_vars]
  
  df[,is_protonmail:=as.numeric(P_emaildomain=='protonmail.com')]
  
@@ -121,7 +128,7 @@ n_events     = sum(df$isFraud[t_index] != 0)
 n_non_events = sum(df$isFraud[t_index] == 0)
 
 n_total = sum(t_index)
-non_event_sample_size = min(4*n_events,n_non_events)
+non_event_sample_size = min(5*n_events,n_non_events)
 sample_size = non_event_sample_size + n_events
 
 non_event_sample = sample.int(n_non_events,non_event_sample_size,replace = FALSE)
@@ -186,13 +193,13 @@ var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
 cv_folds = 0
-max_it = 10000
+max_it = 30000
 
 model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
                  n.trees = max_it,
                  cv.folds = cv_folds,
-                 shrinkage = 0.01,
+                 shrinkage = 0.005,
                  interaction.depth=7,
                  train.fraction = 0.7,
                  bag.fraction = 0.9,# 0.5 for small samples, 0.9 for large
@@ -230,17 +237,17 @@ imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.1])
 #df_agg[1:100,..imp_vars]
 
 plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars, output_type = 'response')
-marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+#marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
 
 gplots = lapply(plots, ggplotGrob)
-ggsave(filename = file.path(working_folder,"ieee_fraud/gbm.pd.d3.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=5), device = 'pdf', width = 11, height = 8.5, dpi = 240)
+ggsave(filename = file.path(working_folder,"ieee_fraud/gbm.v2.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 240)
 
-plots = llply(as.character(var_inf$var)[1:35], function(var_name) {
+plots = llply(as.character(var_inf$var), function(var_name) {
   p = plot_profile(pred.gbm[s_index], actual[s_index],df[[var_name]][s_index], bucket_count = 20, error_band = 'binom') +
     ggtitle(var_name) +  theme(title =element_text(size=6))
   return( p )
 })
-marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
+#marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
 
 gplots = lapply(plots, ggplotGrob)
 ggsave(filename = file.path(working_folder,"ieee_fraud/gbm.profiles.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 240)
@@ -248,16 +255,17 @@ ggsave(filename = file.path(working_folder,"ieee_fraud/gbm.profiles.pdf"), plot 
 
 #a = df[s_index, c('isFraud',imp_vars), with = FALSE][1:100,]
 
-vname = 'R_emaildomain'
+vname = 'DeviceInfo'
 plot_profile(pred.gbm[s_index], actual[s_index],fct_infreq(df[[vname]][s_index]), error_band = 'binom')
+plot_profile(pred.gbm_t[t_index], actual[t_index],fct_infreq(df[[vname]][t_index]), error_band = 'binom')
 
-vname = 'id_33_ratio'
-plot_profile(pred.gbm[s_index], actual[s_index],df[[vname]][s_index], bucket_count = 50, error_band = 'binom')
-
+vname = 'card2'
+plot_profile(pred.gbm[s_index],   actual[s_index],df[[vname]][s_index], bucket_count = 20, error_band = 'binom')
+plot_profile(pred.gbm_t[t_index], actual[t_index],df[[vname]][t_index], bucket_count = 20, error_band = 'binom')
 ```
 
 ## Save Results
-gbm - 0.9248
+gbm - 0.9256
 
 ```{r save_results}
 

@@ -67,8 +67,10 @@ source(file.path(working_folder, '/Utils/common.R'))
  #prepare variables --------------
  df[, c("P_emaildomain_level1") := tstrsplit(P_emaildomain, ".", fixed=TRUE, keep=1L)]
  df[, c("P_emaildomain_level2") := tstrsplit(P_emaildomain, ".", fixed=TRUE, keep=2L)]
+ df[, c("P_emaildomain_level3") := tstrsplit(P_emaildomain, ".", fixed=TRUE, keep=3L)]
  df[, c("R_emaildomain_level1") := tstrsplit(R_emaildomain, ".", fixed=TRUE, keep=1L)]
  df[, c("R_emaildomain_level2") := tstrsplit(R_emaildomain, ".", fixed=TRUE, keep=2L)]
+ df[, c("R_emaildomain_level3") := tstrsplit(R_emaildomain, ".", fixed=TRUE, keep=3L)]
  
  df[, c("id_33_level1")         := tstrsplit(id_33, "x", fixed=TRUE, keep=1L)] #screen resultion
  df[, c("id_33_level2")         := tstrsplit(id_33, "x", fixed=TRUE, keep=2L)]
@@ -90,28 +92,28 @@ source(file.path(working_folder, '/Utils/common.R'))
  
  table(df$DeviceInfo_level2)
  
- df[, TransactionAmt_cents  := round(100*(TransactionAmt - floor(TransactionAmt)),1) ]
- df[, TransactionAmt_mcent  := TransactionAmt_cents - floor(TransactionAmt_cents) ]
- df[, TransactionAmt_mod2   := (TransactionAmt_cents)  %% 2]
- df[, TransactionAmt_mod5   := (TransactionAmt_cents)  %% 5]
- df[, TransactionAmt_mod10  := (TransactionAmt_cents)  %% 10]
- df[, TransactionAmt_mod15  := (TransactionAmt_cents)  %% 15]
- 
- df[, V308_cents  := round(100*(V308 - floor(V308)),1) ]
- df[, V308_mcent  := V308_cents - floor(V308_cents) ]
- df[, V308_mod2   := (V308_cents)  %% 2]
- df[, V308_mod5   := (V308_cents)  %% 5]
- df[, V308_mod10  := (V308_cents)  %% 10]
- df[, V308_mod15  := (V308_cents)  %% 15]
- 
+ amount_col_names = c('cents','mcent','mod2','mod5','mod10', 'mod15')
+ amount_features <- function(x){
+   cents = round(100*(x - floor(x)),1)
+   result = list(cents,  cents - floor(cents),  (cents)  %% 2, (cents)  %% 5, (cents)  %% 10,  (cents)  %% 15)
+   return (result)
+ }
+ df[, (stri_join('TransactionAmt_', amount_col_names)) := amount_features(TransactionAmt) ]
+ df[, (stri_join('V308_', amount_col_names))           := amount_features(V308) ]
+ df[, (stri_join('V317_', amount_col_names))           := amount_features(V317) ]
  
  cat_vars = names(df)[which(sapply(df, is.character))] %!in_set% id_vars
  fac_vars = stri_join(cat_vars, '_factor')
  df[, (fac_vars):=lapply(.SD, function(x) fct_infreq(fct_lump(x, n = 10))), .SDcols = cat_vars]
  
- df[,is_protonmail:=as.numeric(P_emaildomain=='protonmail.com')]
+ df[,is_P_protonmail:=as.numeric(P_emaildomain=='protonmail.com')]
+ df[,is_P_mail:=as.numeric(P_emaildomain=='mail.com')]
  
-  
+ df[,is_R_protonmail:=as.numeric(R_emaildomain=='protonmail.com')]
+ df[,is_R_mail:=as.numeric(R_emaildomain=='mail.com')]
+ 
+ df[,is_emaildomain_same:=as.numeric(P_emaildomain==R_emaildomain)]
+ 
 ```
 
 ## Outcome based sampling
@@ -145,31 +147,45 @@ df[s_index,.(.N), by = .(isFraud)]
 ## Data View
 
 ```{r data, echo=FALSE}
+df[s_index, .(isFraud, V258, C1)][1:30,]
 
 ggplot(df[t_index, .(.N, p =mean(isFraud)), by =.(P_emaildomain)], aes(P_emaildomain, log10(N), fill = p)) + geom_bar(stat = 'identity') + 
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_fill_custom('mixed', discrete = FALSE)
 
+ggplot(df[t_index, ], aes(V201, group =isFraud, fill = factor(isFraud) )) + geom_density(alpha = 0.5) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_fill_custom('mixed', discrete = TRUE)
+
+ggplot(df[s_index, ], aes(V127, V128, group =isFraud, color = factor(isFraud) )) + geom_point(alpha = 0.5) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_custom('mixed', discrete = TRUE)
+
+ggplot(df[s_index, ], aes(log10(TransactionAmt+1), group =isFraud, color = factor(isFraud) )) + stat_ecdf() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_custom('mixed', discrete = TRUE)
+
+ggplot(df[s_index, ], aes(log10(V127-V126+1), group =isFraud, color = factor(isFraud) )) + stat_ecdf() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_custom('mixed', discrete = TRUE)
+
+df[s_index, .(isFraud, V126, V127, V128, V129, V130, V131, V132, V133, V134, V135, V136, V137)][order(isFraud),]
+
+#num_vars  = model_vars %in_set% names(which(sapply(df_agg, is.numeric)))
+#corr_matrix = cor(df[s_index, .(isFraud, V126, V127, V128, V129, V130, V131, V132, V133, V134, V135, V136, V137),], use="complete.obs")
+#corrplot(corr_matrix, method="number", number.cex = 0.8)
+
 ```
 
 ## GBM Model
-                          var    rel.inf
-V258                     V258 17.8396209
-V201                     V201 10.3425550
-C1                         C1  8.8178958
-C14                       C14  7.4277155
-V317                     V317  4.0742308
-D2                         D2  3.7689955
-V308                     V308  2.9852360
-card6                   card6  2.3428117
-R_emaildomain   R_emaildomain  2.3003750
-V187                     V187  2.1320245
-TransactionAmt TransactionAmt  1.5818123
-V294                     V294  1.4740342
-card2                   card2  1.4621689
-V283                     V283  1.4524049
-C13                       C13  1.3657578
-M4                         M4  1.3453581
-P_emaildomain   P_emaildomain  1.3364940
+                                                 var    rel.inf
+V258                                               V258 10.7461716
+C1                                                   C1  7.4167000
+V201                                               V201  6.5740447
+C14                                                 C14  5.2924031
+D2                                                   D2  2.5898804
+V187                                               V187  2.4197563
+V294                                               V294  2.3644936
+TransactionAmt                           TransactionAmt  2.2691842
+card2                                             card2  2.2543906
+R_emaildomain_level1_factor R_emaildomain_level1_factor  2.2522215
+C13                                                 C13  2.0492515
+P_emaildomain_level1_factor P_emaildomain_level1_factor  1.9849411
 
 ```{r gbm_model}
 
@@ -199,7 +215,7 @@ model.gbm  = gbm(formula.gbm,
                  distribution = "bernoulli",
                  n.trees = max_it,
                  cv.folds = cv_folds,
-                 shrinkage = 0.005,
+                 shrinkage = 0.01,
                  interaction.depth=7,
                  train.fraction = 0.7,
                  bag.fraction = 0.9,# 0.5 for small samples, 0.9 for large
@@ -207,7 +223,7 @@ model.gbm  = gbm(formula.gbm,
                  var.monotone = var.monotone,
                  data = df[s_index , all.vars(formula.gbm), with = F],
                  verbose = TRUE)
-#0.5577          0.5704
+#0.38096 - val (0.005)
 #saveRDS(model.gbm, file.path(working_folder,'ieee_fraud/model_gbm.rds'))
 #model.gbm = readRDS(file.path(working_folder,'ieee_fraud/model_gbm.rds'))
 
@@ -223,8 +239,8 @@ plot_binmodel_roc(actual[s_index], pred.gbm[s_index])
 plot_binmodel_cdf(actual[t_index], pred.gbm[t_index])
 plot_binmodel_percentiles(actual[t_index], pred.gbm[t_index], 100)
 plot_binmodel_percentiles(actual[s_index], pred.gbm[s_index], 100)
-gbm.roc.area(actual[t_index], pred.gbm[t_index]) #0.9520389
-gbm.roc.area(actual[s_index], pred.gbm[s_index]) #0.9552584
+gbm.roc.area(actual[t_index], pred.gbm[t_index]) #0.9588089
+gbm.roc.area(actual[s_index], pred.gbm[s_index]) #0.962286
 
 #influence
 var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
@@ -240,7 +256,7 @@ plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars, output_type = 'respons
 #marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
 
 gplots = lapply(plots, ggplotGrob)
-ggsave(filename = file.path(working_folder,"ieee_fraud/gbm.v2.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+ggsave(filename = file.path(working_folder,"ieee_fraud/gbm.pd.v2.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 240)
 
 plots = llply(as.character(var_inf$var), function(var_name) {
   p = plot_profile(pred.gbm[s_index], actual[s_index],df[[var_name]][s_index], bucket_count = 20, error_band = 'binom') +
@@ -250,22 +266,31 @@ plots = llply(as.character(var_inf$var), function(var_name) {
 #marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
 
 gplots = lapply(plots, ggplotGrob)
-ggsave(filename = file.path(working_folder,"ieee_fraud/gbm.profiles.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+ggsave(filename = file.path(working_folder,"ieee_fraud/gbm.profiles.v2.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 240)
 
+# Check cat vars -----------
+#df[1:100, cat_vars, with = FALSE]
+gplots = llply(cat_vars, function(var_name) {
+  p = plot_profile(pred.gbm[s_index], actual[s_index],fct_infreq(factor(df[[var_name]][s_index])), error_band = 'binom') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( ggplotGrob(p) )
+})
+ggsave(filename = file.path(working_folder,"ieee_fraud/cat_vars.pdf"), plot = marrangeGrob(gplots, nrow=2, ncol=2), device = 'pdf', width = 14, height = 8.5, dpi = 240)
 
 #a = df[s_index, c('isFraud',imp_vars), with = FALSE][1:100,]
 
-vname = 'DeviceInfo'
-plot_profile(pred.gbm[s_index], actual[s_index],fct_infreq(df[[vname]][s_index]), error_band = 'binom')
-plot_profile(pred.gbm_t[t_index], actual[t_index],fct_infreq(df[[vname]][t_index]), error_band = 'binom')
+vname = 'ProductCD'
+plot_profile(pred.gbm[s_index], actual[s_index],fct_infreq(factor(df[[vname]][s_index])), error_band = 'binom')
 
-vname = 'card2'
+vname = 'V128'
 plot_profile(pred.gbm[s_index],   actual[s_index],df[[vname]][s_index], bucket_count = 20, error_band = 'binom')
 plot_profile(pred.gbm_t[t_index], actual[t_index],df[[vname]][t_index], bucket_count = 20, error_band = 'binom')
+
+plot_profile(pred.gbm[s_index],   actual[s_index],pmax(df[s_index, log10(1+ V129 * V134) ]), bucket_count = 50, error_band = 'binom')
 ```
 
 ## Save Results
-gbm - 0.9256
+gbm - 0.9268
 
 ```{r save_results}
 

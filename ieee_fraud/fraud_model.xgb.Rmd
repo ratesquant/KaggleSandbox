@@ -129,7 +129,7 @@ n_events     = sum(df$isFraud[t_index] != 0)
 n_non_events = sum(df$isFraud[t_index] == 0)
 
 n_total = sum(t_index)
-non_event_sample_size = min(5*n_events,n_non_events)
+non_event_sample_size = min(1*n_events,n_non_events)
 sample_size = non_event_sample_size + n_events
 
 non_event_sample = sample.int(n_non_events,non_event_sample_size,replace = FALSE)
@@ -252,6 +252,7 @@ fwrite( importance_matrix, file.path(working_folder,'ieee_fraud/var.imp.xgb.csv'
 #importance_matrix = fread(file.path(working_folder,'santander_transaction/var.imp.xgb.csv'))
 
 xgb.ggplot.importance(importance_matrix = importance_matrix)
+xgb.ggplot.deepness(model.xgb)
 
 plots = llply(as.character(var_inf$var), function(var_name) {
   p = plot_profile(pred.gbm[s_index], actual[s_index],df[[var_name]][s_index], bucket_count = 20, error_band = 'binom') +
@@ -261,7 +262,7 @@ plots = llply(as.character(var_inf$var), function(var_name) {
 #marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
 
 gplots = lapply(plots, ggplotGrob)
-ggsave(filename = file.path(working_folder,"ieee_fraud/gbm.profiles.v2.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+ggsave(filename = file.path(working_folder,"ieee_fraud/xgb.profiles.v2.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 240)
 
 # Check cat vars -----------
 #df[1:100, cat_vars, with = FALSE]
@@ -270,7 +271,56 @@ gplots = llply(cat_vars, function(var_name) {
     ggtitle(var_name) +  theme(title =element_text(size=6))
   return( ggplotGrob(p) )
 })
-ggsave(filename = file.path(working_folder,"ieee_fraud/cat_vars.pdf"), plot = marrangeGrob(gplots, nrow=2, ncol=2), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+ggsave(filename = file.path(working_folder,"ieee_fraud/xgb_vars.pdf"), plot = marrangeGrob(gplots, nrow=2, ncol=2), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+
+```
+
+## XGBoost CV
+
+```{r xgb_model_cv}
+### CV Random Search ----------------
+n_runs = 10
+my_params = data.table(depth = sample(seq(10),n_runs), eta = runif(n_runs, 0.001, 0.03), subsample = runif(n_runs, 0.7, 1.0), gamma = runif(n_runs, 0, 1.0), min_child_weight =sample(seq(10),n_runs))
+
+param_res = ldply(seq(nrow(my_params)), function(run_index){
+  print(my_params[run_index,])
+  
+  set.seed(132140937)
+  
+  my_param <- list(
+              max_depth = my_params$depth[run_index], 
+              eta = my_params$eta[run_index], 
+              subsample = my_params$subsample[run_index],
+              min_child_weight = my_params$min_child_weight[run_index],
+              gamma = my_params$gamma[run_index],
+              objective = "binary:logistic",
+              eval_metric = "auc",
+              base_score = mean(actual[s_index]))
+  
+  xgb_cv <- xgboost::xgb.cv(params = my_param,
+    data = dtrain, label = actual[s_index], 
+    verbose = 1,
+    nrounds = 2000, 
+    nfold = 5,  
+    nthread = 2, 
+    print_every_n = 1000,
+    early_stopping_rounds = 50)
+  gc(reset = TRUE)
+  return ( data.frame(best_it = xgb_cv$best_iteration, xgb_cv$evaluation_log[xgb_cv$best_iteration,]) ) 
+})
+param_res = cbind(param_res, my_params)
+
+ggplot(param_res, aes(depth, test_auc_mean, group = eta, color = factor(eta))) + geom_point() + geom_line() + 
+  geom_errorbar(aes(ymin = test_auc_mean - test_auc_std, ymax = test_auc_mean + test_auc_std), alpha = 0.6, width = 0.1) + 
+  facet_grid( ~ subsample)
+
+ggplot(param_res, aes(depth, train_auc_mean/test_auc_mean, group = eta, color = factor(eta))) + geom_point() + 
+  facet_grid(mono ~ subsample)
+  
+
+ggplot(param_res, aes(depth,  best_it, group = eta)) + geom_point() + facet_grid(mono ~ subsample)
+
+
 
 ```
 

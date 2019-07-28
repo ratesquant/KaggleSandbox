@@ -1,0 +1,296 @@
+---
+title: "GBM Fraud Model"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(plyr)
+
+library(data.table)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(forcats)
+library(corrplot)
+library(forcats)
+#library(pdp)
+library(e1071)
+library(lubridate)
+
+library(gbm)
+#library(randomForestSRC)
+library(xgboost)
+#library(lightgbm)
+
+working_folder = 'C:/Dev/Kaggle/'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+source(file.path(working_folder, '/Utils/common.R'))
+```
+
+
+## Load Data
+
+```{r load_data}
+
+ data_folder = file.path(working_folder,'ieee_fraud/data/')
+
+ df_test_id = fread(file.path(data_folder,'test_identity.csv'), check.names=T)#, nrows = 10000)
+ df_test_tr  = fread(file.path(data_folder,'test_transaction.csv'),  check.names=T)#, nrows = 10000)
+
+ df_train_id = fread(file.path(data_folder,'train_identity.csv'), check.names=T)#, nrows = 10000)
+ df_train_tr  = fread(file.path(data_folder,'train_transaction.csv'),  check.names=T)#, nrows = 10000)
+
+ df_test  = merge(df_test_tr,  df_test_id,  by = 'TransactionID', all.x = TRUE)
+ df_train = merge(df_train_tr, df_train_id, by = 'TransactionID', all.x = TRUE)
+ 
+ df_test[,  is_train:=FALSE  ]
+ df_train[, is_train:=TRUE ]
+ df_test[, isFraud:=NA ]
+ df = rbind(df_train, df_test)
+ 
+ df = df[sample.int(nrow(df), nrow(df)),] #shuffle
+ t_index = df$is_train
+  
+ rm(list = ls()[grepl('df_t.*', ls())])
+ gc(reset = TRUE)
+ 
+ tables()
+ 
+ id_vars = c('TransactionID', 'TransactionDT')
+   
+ #prepare variables --------------
+ df[, c("P_emaildomain_level1") := tstrsplit(P_emaildomain, ".", fixed=TRUE, keep=1L)]
+ df[, c("P_emaildomain_level2") := tstrsplit(P_emaildomain, ".", fixed=TRUE, keep=2L)]
+ df[, c("P_emaildomain_level3") := tstrsplit(P_emaildomain, ".", fixed=TRUE, keep=3L)]
+ df[, c("R_emaildomain_level1") := tstrsplit(R_emaildomain, ".", fixed=TRUE, keep=1L)]
+ df[, c("R_emaildomain_level2") := tstrsplit(R_emaildomain, ".", fixed=TRUE, keep=2L)]
+ df[, c("R_emaildomain_level3") := tstrsplit(R_emaildomain, ".", fixed=TRUE, keep=3L)]
+ 
+ df[, c("id_33_level1")         := tstrsplit(id_33, "x", fixed=TRUE, keep=1L)] #screen resultion
+ df[, c("id_33_level2")         := tstrsplit(id_33, "x", fixed=TRUE, keep=2L)]
+ df[, id_33_level1:=as.numeric(id_33_level1)]
+ df[, id_33_level2:=as.numeric(id_33_level2)]
+ df[, id_33_ratio:=id_33_level1/id_33_level2]
+ 
+ df[, c("id_31_level1")         := tstrsplit(id_31, " ", fixed=TRUE, keep=1L)]
+ df[, c("id_30_level1")         := tstrsplit(id_30, " ", fixed=TRUE, keep=1L)]
+ df[, c("DeviceInfo_level1")    := tstrsplit(DeviceInfo, "( |-|:|/)", fixed=FALSE, keep=1L)]
+ df[, c("DeviceInfo_level2")    := tstrsplit(DeviceInfo, "( |-|:|/)", fixed=FALSE, keep=2L)]
+ df[, c("DeviceInfo_level3")    := tstrsplit(DeviceInfo, "( |-|:|/)", fixed=FALSE, keep=3L)]
+ df[, c("DeviceInfo_level4")    := tstrsplit(DeviceInfo, "( |-|:|/)", fixed=FALSE, keep=4L)]
+ df[, c("id_34_level1")         := tstrsplit(id_34, ":", fixed=TRUE, keep=2L)]
+ 
+ df[, is_emaildomain_diff         := as.numeric(R_emaildomain!=P_emaildomain)]
+ df[, is_emaildomain_level1_diff  := as.numeric(R_emaildomain_level1!=P_emaildomain_level1)]
+ df[, is_emaildomain_level2_diff  := as.numeric(R_emaildomain_level2!=P_emaildomain_level2)]
+ 
+ table(df$DeviceInfo_level2)
+ 
+ amount_col_names = c('cents','mcent','mod2','mod5','mod10', 'mod15')
+ amount_features <- function(x){
+   cents = round(100*(x - floor(x)),1)
+   result = list(cents,  cents - floor(cents),  (cents)  %% 2, (cents)  %% 5, (cents)  %% 10,  (cents)  %% 15)
+   return (result)
+ }
+ df[, (stri_join('TransactionAmt_', amount_col_names)) := amount_features(TransactionAmt) ]
+ df[, (stri_join('V308_', amount_col_names))           := amount_features(V308) ]
+ df[, (stri_join('V317_', amount_col_names))           := amount_features(V317) ]
+ 
+ cat_vars = names(df)[which(sapply(df, is.character))] %!in_set% id_vars
+ fac_vars = stri_join(cat_vars, '_factor')
+ df[, (fac_vars):=lapply(.SD, function(x) fct_infreq(fct_lump(x, n = 10))), .SDcols = cat_vars]
+ 
+ df[,is_P_protonmail:=as.numeric(P_emaildomain=='protonmail.com')]
+ df[,is_P_mail:=as.numeric(P_emaildomain=='mail.com')]
+ 
+ df[,is_R_protonmail:=as.numeric(R_emaildomain=='protonmail.com')]
+ df[,is_R_mail:=as.numeric(R_emaildomain=='mail.com')]
+ 
+ df[,is_emaildomain_same:=as.numeric(P_emaildomain==R_emaildomain)]
+ 
+```
+
+## Outcome based sampling
+
+```{r data, echo=FALSE}
+
+#outcome based sampling
+set.seed(788732476)
+
+n_events     = sum(df$isFraud[t_index] != 0)
+n_non_events = sum(df$isFraud[t_index] == 0)
+
+n_total = sum(t_index)
+non_event_sample_size = min(5*n_events,n_non_events)
+sample_size = non_event_sample_size + n_events
+
+non_event_sample = sample.int(n_non_events,non_event_sample_size,replace = FALSE)
+sampling_correction = log(( sample_size - n_events ) / (n_total - n_events))
+
+s_index = t_index & df$isFraud != 0
+s_index[ which(df$isFraud==0 & t_index)[non_event_sample]] = TRUE
+
+df[t_index,.(.N), by = .(isFraud)]
+df[s_index,.(.N), by = .(isFraud)]
+
+table(df[t_index, .(isFraud) ])
+table(df[, .(is_train, ProductCD)])
+
+
+```
+
+## Data View
+
+```{r data, echo=FALSE}
+df[s_index, .(isFraud, V258, C1)][1:30,]
+
+ggplot(df[t_index, .(.N, p =mean(isFraud)), by =.(P_emaildomain)], aes(P_emaildomain, log10(N), fill = p)) + geom_bar(stat = 'identity') + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_fill_custom('mixed', discrete = FALSE)
+
+ggplot(df[t_index, ], aes(V201, group =isFraud, fill = factor(isFraud) )) + geom_density(alpha = 0.5) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_fill_custom('mixed', discrete = TRUE)
+
+ggplot(df[s_index, ], aes(V127, V128, group =isFraud, color = factor(isFraud) )) + geom_point(alpha = 0.5) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_custom('mixed', discrete = TRUE)
+
+ggplot(df[s_index, ], aes(log10(TransactionAmt+1), group =isFraud, color = factor(isFraud) )) + stat_ecdf() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_custom('mixed', discrete = TRUE)
+
+ggplot(df[s_index, ], aes(log10(V127-V126+1), group =isFraud, color = factor(isFraud) )) + stat_ecdf() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_custom('mixed', discrete = TRUE)
+
+df[s_index, .(isFraud, V126, V127, V128, V129, V130, V131, V132, V133, V134, V135, V136, V137)][order(isFraud),]
+
+#num_vars  = model_vars %in_set% names(which(sapply(df_agg, is.numeric)))
+#corr_matrix = cor(df[s_index, .(isFraud, V126, V127, V128, V129, V130, V131, V132, V133, V134, V135, V136, V137),], use="complete.obs")
+#corrplot(corr_matrix, method="number", number.cex = 0.8)
+
+```
+
+## XGBOOST Model
+                                                 var    rel.inf
+V258                                               V258 10.7461716
+C1                                                   C1  7.4167000
+V201                                               V201  6.5740447
+C14                                                 C14  5.2924031
+D2                                                   D2  2.5898804
+V187                                               V187  2.4197563
+V294                                               V294  2.3644936
+TransactionAmt                           TransactionAmt  2.2691842
+card2                                             card2  2.2543906
+R_emaildomain_level1_factor R_emaildomain_level1_factor  2.2522215
+C13                                                 C13  2.0492515
+P_emaildomain_level1_factor P_emaildomain_level1_factor  1.9849411
+
+```{r xgb_model}
+
+obj_var = 'isFraud'
+actual = df[[obj_var]]
+
+exclude_vars = c('TransactionID', 'TransactionDT', 'is_train', obj_var, cat_vars)
+
+all_vars = names(df) %!in_set% c(exclude_vars)
+
+set.seed(1012356)
+
+formula.gbm = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+model_vars = all.vars(formula.gbm) %!in_set% c(obj_var)
+
+var.monotone = rep(0, length(model_vars))
+mon_inc_vars = c()
+mon_dec_vars = c()
+var.monotone[model_vars %in% mon_inc_vars]  =  1
+var.monotone[model_vars %in% mon_dec_vars]  = -1
+
+cv_folds = 0
+max_it = 100
+
+dtrain <- xgb.DMatrix(data.matrix(df[s_index,all_vars, with = F]), label = actual[s_index] )
+
+param <- list(max_depth = 7, 
+              eta = 0.03, 
+              nthread = 2,
+              subsample = 0.9,
+              min_child_weight = 8,
+              gamma = 0.1,
+              objective = "binary:logistic",
+              eval_metric = "auc",
+              base_score = mean(actual[s_index]),
+              monotone_constraints = var.monotone)
+
+model.xgb <- xgb.train(param, data = dtrain, 
+                       watchlist = list(train = dtrain, eval = dtrain),
+                       nrounds = 100, 
+                       verbose = 1, 
+                       print_every_n = 10,
+                       early_stopping_rounds = 30)
+
+
+ggplot(model.xgb$evaluation_log, aes(iter, train_auc)) + geom_line()
+
+#pred.xgb <- predict(model.xgb, data.matrix(df[,all_vars, with = F]) )
+pred.xgb <- predict(model.xgb, data.matrix(df[s_index,all_vars, with = F]) )
+
+best_it.gbm = gbm.perf(model.gbm, plot.it = FALSE)
+
+plot_binmodel_roc(actual[s_index], pred.gbm[s_index])
+plot_binmodel_percentiles(actual[s_index], pred.gbm[s_index], 100)
+gbm.roc.area(actual[s_index], pred.gbm[s_index]) #0.962286
+
+importance_matrix <- xgb.importance(model = model.xgb)
+print(importance_matrix)
+fwrite( importance_matrix, file.path(working_folder,'ieee_fraud/var.imp.xgb.csv'))
+#importance_matrix = fread(file.path(working_folder,'santander_transaction/var.imp.xgb.csv'))
+
+xgb.ggplot.importance(importance_matrix = importance_matrix)
+
+plots = llply(as.character(var_inf$var), function(var_name) {
+  p = plot_profile(pred.gbm[s_index], actual[s_index],df[[var_name]][s_index], bucket_count = 20, error_band = 'binom') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+#marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
+
+gplots = lapply(plots, ggplotGrob)
+ggsave(filename = file.path(working_folder,"ieee_fraud/gbm.profiles.v2.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+
+# Check cat vars -----------
+#df[1:100, cat_vars, with = FALSE]
+gplots = llply(cat_vars, function(var_name) {
+  p = plot_profile(pred.gbm[s_index], actual[s_index],fct_infreq(factor(df[[var_name]][s_index])), error_band = 'binom') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( ggplotGrob(p) )
+})
+ggsave(filename = file.path(working_folder,"ieee_fraud/cat_vars.pdf"), plot = marrangeGrob(gplots, nrow=2, ncol=2), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+
+```
+
+## Save Results
+gbm - 0.9268
+
+```{r save_results}
+
+submit = df[,.(TransactionID, isFraud  = pred.gbm)]
+
+submit = submit[df$is_train==FALSE,]
+
+setorder(submit, TransactionID)
+
+file = file.path(working_folder, "ieee_fraud/solution.csv")
+  
+fwrite(submit, file = file, row.names = FALSE)
+
+zip::zipr(paste(file, '.zip', sep = ''), file)
+  
+print(file)
+
+```

@@ -30,8 +30,8 @@ library(gbm)
 library(xgboost)
 #library(lightgbm)
 
-working_folder = 'C:/Dev/Kaggle/'
-#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+#working_folder = 'C:/Dev/Kaggle/'
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 source(file.path(working_folder, '/Utils/common.R'))
 ```
 
@@ -211,16 +211,13 @@ mon_dec_vars = c()
 var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
-cv_folds = 0
-max_it = 100
-
 dtrain <- xgb.DMatrix(data.matrix(df[s_index,all_vars, with = F]), label = actual[s_index] )
 
 param <- list(max_depth = 7, 
-              eta = 0.03, 
-              nthread = 2,
+              eta = 0.01, 
+              nthread = 4,
               subsample = 0.9,
-              min_child_weight = 8,
+              min_child_weight = 5,
               gamma = 0.1,
               objective = "binary:logistic",
               eval_metric = "auc",
@@ -229,10 +226,10 @@ param <- list(max_depth = 7,
 
 model.xgb <- xgb.train(param, data = dtrain, 
                        watchlist = list(train = dtrain, eval = dtrain),
-                       nrounds = 100, 
+                       nrounds = 5000, 
                        verbose = 1, 
                        print_every_n = 10,
-                       early_stopping_rounds = 30)
+                       early_stopping_rounds = 50)
 
 
 ggplot(model.xgb$evaluation_log, aes(iter, train_auc)) + geom_line()
@@ -279,8 +276,15 @@ ggsave(filename = file.path(working_folder,"ieee_fraud/xgb_vars.pdf"), plot = ma
 
 ```{r xgb_model_cv}
 ### CV Random Search ----------------
-n_runs = 10
-my_params = data.table(depth = sample(seq(10),n_runs), eta = runif(n_runs, 0.001, 0.03), subsample = runif(n_runs, 0.7, 1.0), gamma = runif(n_runs, 0, 1.0), min_child_weight =sample(seq(10),n_runs))
+# best_it iter train_auc_mean train_auc_std test_auc_mean test_auc_std depth        eta subsample     gamma min_child_weight
+#1:    4595 4595      0.9999932  7.483291e-07     0.9616438 0.0003759545     9 0.01532725 0.8681703 0.3419146                1
+
+n_runs = 20
+my_params = data.table(depth = sample(seq(from = 5, to = 10),n_runs), 
+                       eta = runif(n_runs, 0.001, 0.03), 
+                       subsample = runif(n_runs, 0.7, 1.0), 
+                       gamma = runif(n_runs, 0, 1.0), 
+                       min_child_weight =sample(seq(10),n_runs))
 
 param_res = ldply(seq(nrow(my_params)), function(run_index){
   print(my_params[run_index,])
@@ -300,23 +304,26 @@ param_res = ldply(seq(nrow(my_params)), function(run_index){
   xgb_cv <- xgboost::xgb.cv(params = my_param,
     data = dtrain, label = actual[s_index], 
     verbose = 1,
-    nrounds = 2000, 
+    nrounds = 10000, 
     nfold = 5,  
-    nthread = 2, 
+    nthread = 4, 
     print_every_n = 1000,
     early_stopping_rounds = 50)
   gc(reset = TRUE)
   return ( data.frame(best_it = xgb_cv$best_iteration, xgb_cv$evaluation_log[xgb_cv$best_iteration,]) ) 
 })
 param_res = cbind(param_res, my_params)
+setDT(param_res)
+setorder(param_res, test_auc_mean)
 
-ggplot(param_res, aes(depth, test_auc_mean, group = eta, color = factor(eta))) + geom_point() + geom_line() + 
-  geom_errorbar(aes(ymin = test_auc_mean - test_auc_std, ymax = test_auc_mean + test_auc_std), alpha = 0.6, width = 0.1) + 
-  facet_grid( ~ subsample)
+ggplot(param_res, aes(depth, test_auc_mean, group = eta, color = factor(eta), size = min_child_weight )) + geom_point()  + 
+  geom_errorbar(aes(ymin = test_auc_mean - test_auc_std, ymax = test_auc_mean + test_auc_std), alpha = 0.6, width = 0.1)
 
-ggplot(param_res, aes(depth, train_auc_mean/test_auc_mean, group = eta, color = factor(eta))) + geom_point() + 
-  facet_grid(mono ~ subsample)
-  
+ggplot(param_res, aes(subsample, test_auc_mean, color = factor(depth), size = min_child_weight )) + geom_point()
+ggplot(param_res, aes(depth, test_auc_mean, color = factor(depth), size = min_child_weight )) + geom_point()
+ggplot(param_res, aes(eta, test_auc_mean, color = factor(depth), size = min_child_weight )) + geom_point()
+ggplot(param_res, aes(min_child_weight, test_auc_mean, color = factor(depth), size = min_child_weight )) + geom_point()
+
 
 ggplot(param_res, aes(depth,  best_it, group = eta)) + geom_point() + facet_grid(mono ~ subsample)
 
@@ -326,16 +333,17 @@ ggplot(param_res, aes(depth,  best_it, group = eta)) + geom_point() + facet_grid
 
 ## Save Results
 gbm - 0.9268
+xbg - 0.9340 max_depth = 7, eta = 0.01, nthread = 4, subsample = 0.9,  min_child_weight = 5,    gamma = 0.1
 
 ```{r save_results}
 
-submit = df[,.(TransactionID, isFraud  = pred.gbm)]
+submit = df[,.(TransactionID, isFraud  = pred.xgb)]
 
 submit = submit[df$is_train==FALSE,]
 
 setorder(submit, TransactionID)
 
-file = file.path(working_folder, "ieee_fraud/solution.csv")
+file = file.path(working_folder, "ieee_fraud/solution.xgb.csv")
   
 fwrite(submit, file = file, row.names = FALSE)
 

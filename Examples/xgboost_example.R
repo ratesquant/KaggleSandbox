@@ -11,8 +11,8 @@ library(corrplot)
 library(plyr)
 
 #working_folder = 'C:/Dev/Kaggle/'
-working_folder = 'F:/Github/KaggleSandbox/'
-#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+#working_folder = 'F:/Github/KaggleSandbox/'
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 source(file.path(working_folder, '/Utils/common.R'))
 
 options(na.action='na.pass')
@@ -45,7 +45,6 @@ var.monotone[all_vars %in% mon_inc_vars]  =  1
 var.monotone[all_vars %in% mon_dec_vars]  = -1
 
 #convert strings to numerical variables, otherwise use one-hot
-
 df_train <- subset(data.matrix(df[,all_vars, with = F]), select = -price) #stats::model.matrix
 df_train <- sparse.model.matrix(price ~ ., data = df[,all_vars, with = F])[,-1] #stats::model.matrix
 
@@ -183,3 +182,53 @@ res = ldply(seq(10), function(n_cores) {
 
 ggplot(res, aes(n_cores, elapsed)) + geom_point()
 ggplot(res, aes(n_cores, (system + user)/elapsed )) + geom_point()
+
+### Hyper Tuning: Random Search -------------
+n_runs = 100
+my_params = data.table(depth = sample(seq(from = 1, to = 15),n_runs, TRUE), 
+                       eta = runif(n_runs, 0.001, 0.1), 
+                       subsample = runif(n_runs, 0.6, 1.0), 
+                       gamma = runif(n_runs, 0, 1.0), 
+                       min_child_weight =sample(seq(10),n_runs, TRUE))
+
+param_res = ldply(seq(nrow(my_params)), function(run_index){
+  print(my_params[run_index,])
+  
+  set.seed(132140937)
+  
+  my_param <- list(
+    max_depth = my_params$depth[run_index], 
+    eta = my_params$eta[run_index], 
+    subsample = my_params$subsample[run_index],
+    min_child_weight = my_params$min_child_weight[run_index],
+    gamma = my_params$gamma[run_index],
+    objective = "reg:linear",
+    eval_metric = "rmse",
+    base_score = mean(actual))
+  
+  xgb_cv <- xgboost::xgb.cv(params = my_param,
+                            data = df_train, label = actual, 
+                            verbose = 1,
+                            nrounds = 10000, 
+                            nfold = 5,  
+                            nthread = 1, 
+                            print_every_n = 1000,
+                            early_stopping_rounds = 50)
+  gc(reset = TRUE)
+  return ( data.frame(best_it = xgb_cv$best_iteration, xgb_cv$evaluation_log[xgb_cv$best_iteration,]) ) 
+})
+param_res = cbind(param_res, my_params)
+setDT(param_res)
+setorder(param_res, test_rmse_mean)
+param_res[, rank:=seq(nrow(param_res))]
+
+ggplot(param_res, aes(rank, depth, size = min_child_weight )) + geom_point()
+ggplot(param_res, aes(rank, eta, size = min_child_weight )) + geom_point()
+
+ggplot(param_res, aes(depth, test_rmse_mean, color = factor(depth), size = min_child_weight )) + geom_point() + geom_hline(yintercept = min(param_res$test_rmse_mean), alpha = 0.1)
+ggplot(param_res, aes(subsample, test_rmse_mean, color = factor(depth), size = min_child_weight )) + geom_point()
+ggplot(param_res, aes(eta, test_rmse_mean, color = factor(depth), size = min_child_weight )) + geom_point()
+ggplot(param_res, aes(min_child_weight, test_rmse_mean, color = factor(depth), size = min_child_weight )) + geom_point()
+ggplot(param_res, aes(gamma, test_rmse_mean, color = factor(depth), size = min_child_weight )) + geom_point()
+
+

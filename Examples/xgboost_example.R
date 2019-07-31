@@ -185,7 +185,7 @@ ggplot(res, aes(n_cores, (system + user)/elapsed )) + geom_point()
 
 ### Hyper Tuning: Random Search -------------
 n_runs = 100
-my_params = data.table(depth = sample(seq(from = 1, to = 15),n_runs, TRUE), 
+my_params = data.table(depth = sample(seq(from = 7, to = 12),n_runs, TRUE), 
                        eta = runif(n_runs, 0.001, 0.1), 
                        subsample = runif(n_runs, 0.6, 1.0), 
                        gamma = runif(n_runs, 0, 1.0), 
@@ -211,7 +211,7 @@ param_res = ldply(seq(nrow(my_params)), function(run_index){
                             verbose = 1,
                             nrounds = 10000, 
                             nfold = 5,  
-                            nthread = 1, 
+                            nthread = 4, 
                             print_every_n = 1000,
                             early_stopping_rounds = 50)
   gc(reset = TRUE)
@@ -222,13 +222,16 @@ setDT(param_res)
 setorder(param_res, test_rmse_mean)
 param_res[, rank:=seq(nrow(param_res))]
 
-ggplot(param_res, aes(rank, depth, size = min_child_weight )) + geom_point()
-ggplot(param_res, aes(rank, eta, size = min_child_weight )) + geom_point()
+#best_it  iter train_rmse_mean train_rmse_std test_rmse_mean test_rmse_std depth         eta subsample      gamma min_child_weight rank
+#1:     703   703        328.9975      1.3174295       515.9930      8.249915     8 0.023540473 0.9635348 0.89497809                2    1
+#depth = 9, subsample = 0.9, eta = 0.01, min_child_weight = 5 (>1), ga 
+index = param_res$depth>=6 & param_res$min_child_weight > 1
+#index = param_res$depth>0 #
+  
+ggplot(param_res[index, ], aes(depth, test_rmse_mean, size = min_child_weight )) + geom_point() + geom_smooth()
+ggplot(param_res[index,], aes(subsample, test_rmse_mean, size = min_child_weight )) + geom_point()+ geom_smooth()
+ggplot(param_res[index,], aes(log10(eta), test_rmse_mean, size = min_child_weight )) + geom_point()+ geom_smooth()
+ggplot(param_res[index,], aes(min_child_weight, test_rmse_mean, size = min_child_weight )) + geom_point()
+ggplot(param_res[index,], aes(gamma, test_rmse_mean,  size = min_child_weight )) + geom_point()
 
-ggplot(param_res, aes(depth, test_rmse_mean, color = factor(depth), size = min_child_weight )) + geom_point() + geom_hline(yintercept = min(param_res$test_rmse_mean), alpha = 0.1)
-ggplot(param_res, aes(subsample, test_rmse_mean, color = factor(depth), size = min_child_weight )) + geom_point()
-ggplot(param_res, aes(eta, test_rmse_mean, color = factor(depth), size = min_child_weight )) + geom_point()
-ggplot(param_res, aes(min_child_weight, test_rmse_mean, color = factor(depth), size = min_child_weight )) + geom_point()
-ggplot(param_res, aes(gamma, test_rmse_mean, color = factor(depth), size = min_child_weight )) + geom_point()
-
-
+ggplot(param_res[depth>4,], aes(depth, test_rmse_mean, color = factor(depth), size = min_child_weight )) + geom_point()

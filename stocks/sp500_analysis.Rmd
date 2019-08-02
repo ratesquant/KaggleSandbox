@@ -1,0 +1,79 @@
+---
+title: "Stock Analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(lubridate)
+library(data.table)
+
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+data_folder = file.path(working_folder,'stocks/data/')
+ 
+source(file.path(working_folder, '/Utils/common.R'))
+
+```
+
+## Load Data
+
+```{r load_data}
+library(BatchGetSymbols)
+
+sp500_filename = file.path(data_folder, 'sp500.Rds')
+
+if( file.exists(sp500_filename) ) {
+  l.out = loadRDS(sp500_filename)
+}else{
+  first.date <- Sys.Date() %m-% months(12*20)
+  last.date <- Sys.Date()
+  
+  df_SP500 <- GetSP500Stocks()
+  setDT(df_SP500)
+  tickers <- df_SP500$company
+  
+  l.out <- BatchGetSymbols(tickers = tickers,
+                           first.date = first.date,
+                           last.date = last.date)
+  
+  print(l.out$df.control)
+  print(l.out$df.tickers)
+  
+  saveRDS(l.out, sp500_filename)
+}
+```
+
+## Load ETFs
+
+```{r load_etf, echo=FALSE}
+first.date <- Sys.Date() %m-% months(12)
+last.date <- Sys.Date()
+freq.data <- 'daily'
+# set tickers
+tickers <- c('VNQ','VIG','VYM','MUB', 'BND', 'AGG', 
+             'VXF','VTI','SCHB','ITOT', #US
+             'VEA','SCHF','IXUS',#Foreign Stocks
+             'VWO', 'IEMG','SCHE', #Emerging Markets Stocks
+             'VIG', 'DVY', 'SCHD', #Dividend Stocks
+             'VTEB', 'TFI','MUB', #Municipal Bonds
+             'VNQ', 'IYR','SCHH', #Real Estate
+             'SCHP', 'TIP','IPE', #TIPS,
+             'LQD', 'VCIT', 'SPIB', #Corp Bonds
+             'EMB', 'PCY', 'EMLC'
+             )
+
+l.out <- BatchGetSymbols(tickers = tickers, 
+                         first.date = first.date,
+                         last.date = last.date, 
+                         freq.data = freq.data,
+                         cache.folder = file.path(tempdir(), 
+                                                  'BGS_Cache') ) # cache in tempdir()
+l.out$df.control
+
+ggplot(l.out$df.tickers, aes(x = ref.date, y = price.close)) + geom_line()+ 
+  facet_wrap(~ticker, scales = 'free_y') 
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

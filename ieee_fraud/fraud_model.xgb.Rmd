@@ -114,20 +114,32 @@ source(file.path(working_folder, '/Utils/common.R'))
  df[,is_R_protonmail:=as.numeric(R_emaildomain=='protonmail.com')]
  df[,is_R_mail:=as.numeric(R_emaildomain=='mail.com')]
  
+ df[,C1_2_diff := C1 - C2]
+ df[,C1_4_diff := C1 - C4]
+ df[,C1_6_diff := C1 - C6]
+ df[,C1_8_diff := C1 - C8]
+ df[,C1_14_diff := C1 - C14]
+ df[,C1_10_diff := C1 - C10]
+ df[,C1_13_diff := C1 - C13]
+ #df[,C1_11_diff := C1 - C11]
+ #df[,V294_307_diff := V294 - V307]
+ df[,V70_91_diff := V70 - V91]
+ df[,V70_90_diff := V70 - V90]
+ df[,V317_294_diff := V317 - V294]
+ 
 ```
 
 ## Outcome based sampling
 
 ```{r data, echo=FALSE}
 
-#outcome based sampling
 set.seed(788732476)
 
 n_events     = sum(df$isFraud[t_index] != 0)
 n_non_events = sum(df$isFraud[t_index] == 0)
 
 n_total = sum(t_index)
-non_event_sample_size = min(3*n_events,n_non_events)
+non_event_sample_size = min(4*n_events,n_non_events)
 sample_size = non_event_sample_size + n_events
 
 non_event_sample = sample.int(n_non_events,non_event_sample_size,replace = FALSE)
@@ -169,15 +181,13 @@ ggplot(df, aes(TransactionID, group =is_train, color = factor(is_train) )) + sta
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) + scale_color_custom('mixed', discrete = TRUE)
 
 #Check distributions
-ggplot(df, aes(D2, group =is_train, color = factor(is_train) )) + stat_ecdf()
+ggplot(df, aes(D7, group =is_train, color = factor(is_train) )) + stat_ecdf()
 ggplot(df, aes(D2, group =is_train, color = factor(is_train) )) + geom_density(adjust = 0.1)
-ggplot(df[is_train == TRUE,], aes(D2, group =isFraud, color = factor(isFraud) )) + stat_ecdf()
+ggplot(df[is_train == TRUE,], aes(D2, group =isFraud, color = factor(isFraud) )) + geom_density(adjust = 0.1)
+
+ggplot(df[s_index,], aes(V294_307_diff, V317)) + geom_point()
 
 df[s_index, .(isFraud, V126, V127, V128, V129, V130, V131, V132, V133, V134, V135, V136, V137)][order(isFraud),]
-
-#num_vars  = model_vars %in_set% names(which(sapply(df_agg, is.numeric)))
-#corr_matrix = cor(df[s_index, .(isFraud, V126, V127, V128, V129, V130, V131, V132, V133, V134, V135, V136, V137),], use="complete.obs")
-#corrplot(corr_matrix, method="number", number.cex = 0.8)
 
 ```
 
@@ -200,11 +210,12 @@ card6_factor ,0.0132897400421455,0.0102271897813111,0.00656258244450307
 
 
 ```{r xgb_model}
-
 obj_var = 'isFraud'
 actual = df[[obj_var]]
 
-exclude_vars = c('TransactionID', 'TransactionDT', 'is_train', obj_var, cat_vars)
+var_excluded =c('D2', 'D15', 'D4', 'D10', 'D1', 'D11', 'D12', 'D6', 'D7','id_20','id_13','id_02','C2','C4','C6','C8','C14','C10','C13','C11','V307','V91','V90','V294')
+
+exclude_vars = c('TransactionID', 'TransactionDT', 'is_train', obj_var, cat_vars, var_excluded) #remove variables that are different in 
 
 all_vars = names(df) %!in_set% c(exclude_vars)
 
@@ -220,33 +231,32 @@ mon_dec_vars = c()
 var.monotone[model_vars %in% mon_inc_vars]  =  1
 var.monotone[model_vars %in% mon_dec_vars]  = -1
 
-dtrain <- xgb.DMatrix(data.matrix(df[s_index,all_vars, with = F]), label = actual[s_index] )
+dtrain <- xgb.DMatrix(data.matrix(df[s_index,all_vars, with = F]), label = actual[s_index] ) #'D2' %in% colnames(dtrain)
 
 my_params <- list(max_depth = 9, 
-              eta = 0.01, 
+              eta =  0.012, 
               nthread = 4,
               subsample = 0.9,
-              min_child_weight = 5,
+              min_child_weight = 4,
               gamma = 0.3,
               objective = "binary:logistic",
               eval_metric = "auc",
               base_score = mean(actual[s_index]),
               monotone_constraints = var.monotone)
 
-model.xgb <- xgb.train(param, data = dtrain, 
+model.xgb <- xgb.train(my_params, data = dtrain, 
                        watchlist = list(train = dtrain, eval = dtrain),
-                       nrounds = 5000, 
+                       nrounds = 10000, 
                        verbose = 1, 
-                       print_every_n = 10,
-                       early_stopping_rounds = 50)
+                       print_every_n = 100)
 
 
+#xgb.save(model.xgb, file.path(working_folder,'ieee_fraud/xgb.model'))
+#model.xgb = xgb.load(file.path(working_folder,'ieee_fraud/xgb.model'))
 ggplot(model.xgb$evaluation_log, aes(iter, train_auc)) + geom_line()
 
 pred.xgb <- predict(model.xgb, data.matrix(df[,all_vars, with = F]) )
 #pred.xgb <- predict(model.xgb, data.matrix(df[s_index,all_vars, with = F]) )
-
-best_it.gbm = gbm.perf(model.gbm, plot.it = FALSE)
 
 plot_binmodel_roc(actual[s_index], pred.xgb[s_index])
 plot_binmodel_percentiles(actual[s_index], pred.xgb[s_index], 100)
@@ -254,7 +264,7 @@ gbm.roc.area(actual[s_index], pred.xgb[s_index]) #0.962286
 
 importance_matrix <- xgb.importance(model = model.xgb)
 print(importance_matrix)
-fwrite( importance_matrix, file.path(working_folder,'ieee_fraud/var.imp.xgb.csv'))
+fwrite( importance_matrix, file.path(working_folder,'ieee_fraud/var.imp.xgb.v3.csv'))
 #importance_matrix = fread(file.path(working_folder,'santander_transaction/var.imp.xgb.csv'))
 
 xgb.ggplot.importance(importance_matrix = importance_matrix)
@@ -266,9 +276,8 @@ plots = llply(as.character(importance_matrix$Feature), function(var_name) {
   return( p )
 })
 #marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
-
 gplots = lapply(plots, ggplotGrob)
-ggsave(filename = file.path(working_folder,"ieee_fraud/xgb.profiles.v2.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+ggsave(filename = file.path(working_folder,"ieee_fraud/xgb.profiles.v3.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 240)
 
 # Check cat vars -----------
 #df[1:100, cat_vars, with = FALSE]
@@ -277,35 +286,71 @@ gplots = llply(cat_vars, function(var_name) {
     ggtitle(var_name) +  theme(title =element_text(size=6))
   return( ggplotGrob(p) )
 })
-ggsave(filename = file.path(working_folder,"ieee_fraud/xgb_cat_vars.pdf"), plot = marrangeGrob(gplots, nrow=2, ncol=2), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+ggsave(filename = file.path(working_folder,"ieee_fraud/xgb_cat_vars2.pdf"), plot = marrangeGrob(gplots, nrow=2, ncol=2), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+
+gplots = llply( var_excluded, function(var_name) {
+  p = plot_profile(pred.xgb[s_index], actual[s_index],df[[var_name]][s_index], error_band = 'binom') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( ggplotGrob(p) )
+})
+ggsave(filename = file.path(working_folder,"ieee_fraud/xgb_exc_vars.v3.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 240)
 
 ```
 
 ## Post Processing
 ```{r xgb_model_post_processing}
-#df[1:10, as.character(importance_matrix$Feature)[1:30], with = FALSE]
-var_name = 'card1'
-plot_profile(pred.xgb[s_index], actual[s_index],df[[var_name]][s_index],  bucket_count = 20, error_band = 'binom') + ggtitle(var_name)
+#df[1:1000, c('isFraud', as.character(importance_matrix$Feature)[1:30]), with = FALSE]
+var_name = 'C14' #'D15', 'D4', 'D10', 'D1'
+plot_profile(pred.xgb[s_index], actual[s_index], df[[var_name]][s_index],  bucket_count = 25, error_band = 'binom') + ggtitle(var_name)
+
+x = df[s_index, C1 - C2]
+plot_profile(pred.xgb[s_index], actual[s_index], x,  bucket_count = 20, error_band = 'binom') + ggtitle(var_name)
+
+plot_profile(pred.xgb[s_index], actual[s_index], df[['TransactionDT']][s_index],  bucket_count = 20, error_band = 'binom') + ggtitle(var_name)
+plot_profile(pred.xgb[s_index], actual[s_index], df[['TransactionID']][s_index],  bucket_count = 20, error_band = 'binom') + ggtitle(var_name)
 
 #Check distributions
-gplots = llply(as.character(importance_matrix$Feature), function(var_name) {
+gplots = llply(head(as.character(importance_matrix$Feature),100), function(var_name) {
+  ks = ecdf_ks(df[[var_name]][df$is_train == TRUE], df[[var_name]][df$is_train == FALSE] )
   p = ggplot(df, aes_string(var_name, group = 'is_train', color = 'is_train' )) + stat_ecdf()+
-    ggtitle(var_name) +  theme(title =element_text(size=6), legend.position = 'None')
+    ggtitle(sprintf('%s: %.2f', var_name, ks ) ) +  theme(title =element_text(size=7), legend.position = 'None') + scale_color_manual(values = c('red', 'black'))
   return( ggplotGrob(p) )
 })
 ggsave(filename = file.path(working_folder,"ieee_fraud/ecdf_test-train.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+
+#correlation
+num_vars  = as.character(importance_matrix$Feature[1:60]) %in_set% names(which(sapply(df, is.numeric)))
+corr_matrix = cor(df[s_index,..num_vars], use="pairwise.complete.obs")
+cor_plot = ggplot( melt(corr_matrix), aes(Var1, Var2, fill = value, alpha = abs(value), label = ifelse(abs(value)>0.1, sprintf('%.2f', value), ''))) + geom_tile() + scale_fill_custom('jet', discrete = FALSE) + 
+  theme(axis.text.x  = element_text(angle = 45, hjust = 1, size = 6), axis.text.y  = element_text(size = 6), axis.title.x = element_blank(), axis.title.y = element_blank()) + geom_text(size = 2)
+ggsave(filename = file.path(working_folder,"ieee_fraud/cor_matrix.pdf"), plot = ggplotGrob(cor_plot), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+
+#corrMatOrder(corr_matrix[1:10, 1:10], order = "hclust")
+#corrplot(corr_matrix[1:10, 1:10], method="number", number.cex = 0.8, order = 'hclust')
 
 ```
 
 ## XGBoost CV
 
 ```{r xgb_model_cv}
+my_param <- list(
+              max_depth = 9, 
+              eta = 0.012, 
+              subsample = 0.9,
+              min_child_weight = 4,
+              gamma = 0.3,
+              objective = "binary:logistic",
+              eval_metric = "auc",
+              base_score = mean(actual[s_index]))
+
 ### CV Random Search ----------------
+#depth = 10, subsample = 0.9
 # best_it iter train_auc_mean train_auc_std test_auc_mean test_auc_std depth        eta subsample     gamma min_child_weight
 # 1:    4595  4595      0.9999932  7.483291e-07     0.9616438 0.0003759545     9 0.01532725 0.8681703 0.3419146                1
 #10:    4595  4595      0.9999932  7.483291e-07     0.9616438 0.0003759545     9 0.015327250 0.8681703 0.3419146                1
-n_runs = 10
-my_params = data.table(depth = sample(seq(from = 5, to = 10),n_runs, TRUE), 
+#       2782  2782      0.9999900  1.673282e-06     0.9679852  0.002020485    10 0.024847224 0.8053566 0.52775510                1
+n_runs = 20
+my_params = data.table(depth = sample(seq(from = 5, to = 12),n_runs, TRUE), 
                        eta = runif(n_runs, 0.001, 0.03), 
                        subsample = runif(n_runs, 0.8, 1.0), 
                        gamma = runif(n_runs, 0, 1.0), 
@@ -329,11 +374,14 @@ param_res = ldply(seq(nrow(my_params)), function(run_index){
   xgb_cv <- xgboost::xgb.cv(params = my_param,
     data = dtrain, label = actual[s_index], 
     verbose = 1,
-    nrounds = 10000, 
+    nrounds = 12000, 
     nfold = 5,  
     nthread = 4, 
     print_every_n = 1000,
-    early_stopping_rounds = 50)
+    early_stopping_rounds = 100)
+  
+  #ggplot(xgb_cv$evaluation_log, aes(iter,  train_auc_mean)) + geom_line() + geom_line(aes(iter,  test_auc_mean), color = 'red')
+  
   gc(reset = TRUE)
   return ( data.frame(best_it = xgb_cv$best_iteration, xgb_cv$evaluation_log[xgb_cv$best_iteration,]) ) 
 })
@@ -341,21 +389,27 @@ param_res = cbind(param_res, my_params)
 setDT(param_res)
 setorder(param_res, test_auc_mean)
 
+fwrite(param_res, file.path(working_folder,"ieee_fraud/cv.log.csv"))
+
 ggplot(param_res, aes(depth, test_auc_mean, group = eta, color = factor(eta), size = min_child_weight )) + geom_point()  + 
   geom_errorbar(aes(ymin = test_auc_mean - test_auc_std, ymax = test_auc_mean + test_auc_std), alpha = 0.6, width = 0.1)
 
-ggplot(param_res, aes(depth, test_auc_mean, color = factor(depth), size = min_child_weight )) + geom_point() + geom_hline(yintercept = max(param_res$test_auc_mean), alpha = 0.1)
-ggplot(param_res, aes(subsample, test_auc_mean, color = factor(depth), size = min_child_weight )) + geom_point()
-ggplot(param_res, aes(eta, test_auc_mean, color = factor(depth), size = min_child_weight )) + geom_point()
-ggplot(param_res, aes(min_child_weight, test_auc_mean, color = factor(depth), size = min_child_weight )) + geom_point()
-ggplot(param_res, aes(gamma, test_auc_mean, color = factor(depth), size = min_child_weight )) + geom_point()
+# depth 9-10, subsample = 0.9, min_child_weight, eta = 0.012
+ggplot(param_res, aes(depth, test_auc_mean, size = min_child_weight )) + geom_point()
+ggplot(param_res, aes(subsample, test_auc_mean, size = min_child_weight )) + geom_point()
+ggplot(param_res, aes(eta, test_auc_mean, size = min_child_weight )) + geom_point()
+ggplot(param_res, aes(min_child_weight, test_auc_mean, size = min_child_weight )) + geom_point()
+ggplot(param_res, aes(gamma, test_auc_mean, size = min_child_weight )) + geom_point()
 
 
 ```
 
 ## Save Results
+
 gbm - 0.9268
-xbg - 0.9340 max_depth = 7, eta = 0.01, nthread = 4, subsample = 0.9,  min_child_weight = 5,    gamma = 0.1
+xbg - 0.9340 max_depth =  7, eta = 0.01,  nthread = 4, subsample = 0.9,  min_child_weight = 5,  gamma = 0.1
+xbg - 0.9305 max_depth = 10, eta = 0.02,  nthread = 4, subsample = 0.9,  min_child_weight = 5,  gamma = 0.1
+xbg - 0.9313 max_depth = 9,  eta = 0.012, nthread = 4, subsample = 0.9,  min_child_weight = 4,  gamma = 0.3 ('D2', 'D15', 'D4', 'D10', 'D1', 'D11')
 
 ```{r save_results}
 

@@ -9,6 +9,9 @@ knitr::opts_chunk$set(echo = TRUE)
 library(ggplot2)
 library(lubridate)
 library(data.table)
+library(BatchGetSymbols)
+library(zoo)
+library(corrplot)
 
 working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 data_folder = file.path(working_folder,'stocks/data/')
@@ -20,7 +23,6 @@ source(file.path(working_folder, '/Utils/common.R'))
 ## Load Data
 
 ```{r load_data}
-library(BatchGetSymbols)
 
 sp500_filename = file.path(data_folder, 'sp500.Rds')
 
@@ -48,11 +50,12 @@ if( file.exists(sp500_filename) ) {
 ## Load ETFs
 
 ```{r load_etf, echo=FALSE}
-first.date <- Sys.Date() %m-% months(12)
+first.date <- Sys.Date() %m-% months(12*10)
 last.date <- Sys.Date()
 freq.data <- 'daily'
 # set tickers
-tickers <- c('VNQ','VIG','VYM','MUB', 'BND', 'AGG', 
+tickers <- c('^GSPC',
+             'VNQ','VIG','VYM','MUB', 'BND', 'AGG', 
              'VXF','VTI','SCHB','ITOT', #US
              'VEA','SCHF','IXUS',#Foreign Stocks
              'VWO', 'IEMG','SCHE', #Emerging Markets Stocks
@@ -60,7 +63,8 @@ tickers <- c('VNQ','VIG','VYM','MUB', 'BND', 'AGG',
              'VTEB', 'TFI','MUB', #Municipal Bonds
              'VNQ', 'IYR','SCHH', #Real Estate
              'SCHP', 'TIP','IPE', #TIPS,
-             'LQD', 'VCIT', 'SPIB', #Corp Bonds
+             'XLU', 
+             'LQD', 'VCIT', 'SPIB', 'VCSH', #Corp Bonds
              'EMB', 'PCY', 'EMLC'
              )
 
@@ -68,12 +72,44 @@ l.out <- BatchGetSymbols(tickers = tickers,
                          first.date = first.date,
                          last.date = last.date, 
                          freq.data = freq.data,
-                         cache.folder = file.path(tempdir(), 
-                                                  'BGS_Cache') ) # cache in tempdir()
+                         cache.folder = file.path(tempdir(),'BGS_Cache') ) # cache in tempdir()
 l.out$df.control
 
 ggplot(l.out$df.tickers, aes(x = ref.date, y = price.close)) + geom_line()+ 
   facet_wrap(~ticker, scales = 'free_y') 
+
+df = data.table(l.out$df.tickers)
+setkey(df, ticker, ref.date)
+```
+
+## Risk Return
+
+```{r risk_analysis, echo=FALSE}
+df[, date := ref.date]
+df[,price      :=  price.adjusted, by =.(ticker) ]
+df[,price_prev := shift(price), by =.(ticker) ]
+df[, ret := log(price/price_prev) ]
+df[, date_year := year(date)]
+
+df[, ret_vol :=  sqrt(rollmeanr(ret * ret, k = 250, fill = NA)), by =.(ticker) ]
+df[, ret_avg :=  sqrt(rollmeanr(ret      , k = 250, fill = NA)), by =.(ticker) ]
+
+ggplot(df[ticker == '^GSPC',], aes(x = ref.date, y = ret_avg/ret_vol)) + geom_line() + geom_smooth(se = FALSE, span = 0.1, color = 'red')
+ggplot(df[ticker %in% c('^GSPC', 'BND', 'MUB', 'LQD', 'SPIB','VIG','VNQ', 'XLU', 'VCSH') ,], aes(x = ref.date, y = ret_avg/ret_vol)) + geom_line() + facet_wrap(~ticker)
+ggplot(df[ticker %in% c('^GSPC', 'BND', 'MUB', 'LQD', 'SPIB','VIG','VNQ', 'XLU', 'VCSH') ,], aes(x = ref.date, y = 100*ret_vol)) + geom_line() + facet_wrap(~ticker)
+
+ggplot(df, aes(x = ref.date, y = ret_avg/ret_vol)) + geom_line() + geom_smooth(se = FALSE, span = 0.1, color = 'red') +  facet_wrap(~ticker)
+ggplot(df, aes(x = ref.date, y = 100*ret_vol)) + geom_line() + facet_wrap(~ticker)
+
+ggplot(df[ticker %in% c('^GSPC', 'BND', 'MUB', 'LQD', 'SPIB','VIG','VNQ') ], aes(x = 100*ret_vol, y = 100*ret_avg, color = ticker)) + geom_point(alpha = 0.6) + facet_wrap(~date_year)
+
+
+#correlation
+#num_vars  = model_vars %in_set% names(which(sapply(df, is.numeric)))
+corr_matrix = cor(as.matrix(dcast(df[, .(ret, date, ticker) ], date ~ ticker, value.var = 'ret', fun.aggregate = mean)[,-1]), use="complete.obs")
+corrplot(corr_matrix, method="number", number.cex = 0.5, order="hclust")
+corrplot(corr_matrix, method="circle", order="hclust")
+
 ```
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

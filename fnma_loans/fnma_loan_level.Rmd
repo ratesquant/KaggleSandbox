@@ -29,7 +29,7 @@ source(file.path(working_folder, '/Utils/common.R'))
 
 ```
 
-## Load Data
+## Load FNMA loan Data
 ```{r load_data}
 data_folder = file.path(Sys.getenv("HOME"),'/data/fnma/')
 
@@ -46,7 +46,7 @@ Acquisition_ColClasses = c("character", "character", "character", "numeric", "nu
 
 
 # Define Performance Variables, variable classes and read the files into R                                 
-Performance <- list.files(file.path(data_folder,'Performance_All'), pattern = glob2rx("Performance*bz2"), full.names=TRUE)
+performance_files <- list.files(file.path(data_folder,'Performance_All'), pattern = glob2rx("Performance*bz2"), full.names=TRUE)
 
 Performance_Variables = c("LOAN_ID", "MonthlyRptPrd", "ServicerName", "LAST_RT", "LAST_UPB", "LoanAge", "MonthsToLegalMat"
                           , "AdjMonthToMat", "MaturityDate", "MSA", "DelqStatus", "MOD_FLAG", "ZeroBalCode", 
@@ -83,9 +83,8 @@ performance_1pct_filename = file.path(data_folder,'Performance_1pct.Rds')
 if( file.exists(performance_1pct_filename) ) {
   Performance_Data = loadRDS(performance_1pct_filename)
 }else{
-  Performance_Data <- foreach(k=1:numberofcores, .inorder=FALSE, .combine=rbind,
-                            .packages=c("data.table")) %do% {
-                              Data_P<- fread(Performance[k], sep = "|", colClasses=Performance_ColClasses, showProgress=FALSE)
+  Performance_Data <- foreach(k=1:length(performance_files), .inorder=FALSE, .combine=rbind,.packages=c("data.table")) %do% {
+                              Data_P<- fread(performance_files[k], sep = "|", colClasses=Performance_ColClasses, showProgress=FALSE)
                               setnames(Data_P, Performance_Variables)
                               setkey(Data_P, "LOAN_ID")
                               Data_P <- Data_P[LOAN_ID %in% Acquisitions_Data$LOAN_ID,] # only take data from the 1% sample
@@ -93,6 +92,9 @@ if( file.exists(performance_1pct_filename) ) {
                             }
   saveRDS(Performance_Data, performance_1pct_filename)
 }
+
+rm(list= ls()[!(ls() %in% c('Acquisitions_Data', 'Performance_Data'))])
+
 
 Acquisitions_Data[, orig_date := dmy(stri_join('01/', ORIG_DTE))]
 Acquisitions_Data[, fpay_date := dmy(stri_join('01/', FRST_DTE))]

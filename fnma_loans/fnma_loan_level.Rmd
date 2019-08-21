@@ -66,7 +66,7 @@ set.seed(122345)
 acquisition_1pct_filename = file.path(data_folder,'Acquisition_1pct.Rds')
 
 if( file.exists(acquisition_1pct_filename) ) {
-  Acquisitions_Data = loadRDS(acquisition_1pct_filename)
+  Acquisitions_Data = readRDS(acquisition_1pct_filename)
 }else{
   Acquisitions_Data <- foreach(k=1:length(acquisition_files), .inorder=FALSE, .combine=rbind, .packages=c("data.table")) %do%   {
                                 Data_A<- fread(acquisition_files[k], sep = "|", colClasses=Acquisition_ColClasses, showProgress=FALSE)
@@ -84,6 +84,7 @@ if( file.exists(performance_1pct_filename) ) {
   Performance_Data = loadRDS(performance_1pct_filename)
 }else{
   Performance_Data <- foreach(k=1:length(performance_files), .inorder=FALSE, .combine=rbind,.packages=c("data.table")) %do% {
+                              print(performance_files[k])
                               Data_P<- fread(performance_files[k], sep = "|", colClasses=Performance_ColClasses, showProgress=FALSE)
                               setnames(Data_P, Performance_Variables)
                               setkey(Data_P, "LOAN_ID")
@@ -93,8 +94,7 @@ if( file.exists(performance_1pct_filename) ) {
   saveRDS(Performance_Data, performance_1pct_filename)
 }
 
-rm(list= ls()[!(ls() %in% c('Acquisitions_Data', 'Performance_Data'))])
-
+#rm(list= ls()[!(ls() %in% c('Acquisitions_Data', 'Performance_Data'))])
 
 Acquisitions_Data[, orig_date := dmy(stri_join('01/', ORIG_DTE))]
 Acquisitions_Data[, fpay_date := dmy(stri_join('01/', FRST_DTE))]

@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
 options(warn=-1)
 
 library(plyr)
-
+library(foreach)
 library(data.table)
 library(stringi)
 library(ggplot2)
@@ -34,11 +34,11 @@ source(file.path(working_folder, '/Utils/common.R'))
 data_folder = file.path(Sys.getenv("HOME"),'/data/fnma/')
 
 # Define Acquisition Variables, variable classes and read the files into R
-Acquisitions <- list.files(file.path(data_folder,'Acquisition_All'), pattern = glob2rx("*Acquisition*bz2"), full.names=TRUE)
+acquisition_files <- list.files(file.path(data_folder,'Acquisition_All'), pattern = glob2rx("*Acquisition*bz2"), full.names=TRUE)
 
 Acquisitions_Variables = c("LOAN_ID", "ORIG_CHN", "Seller.Name", "ORIG_RT", "ORIG_AMT", "ORIG_TRM", "ORIG_DTE"
                            ,"FRST_DTE", "OLTV", "OCLTV", "NUM_BO", "DTI", "CSCORE_B", "FTHB_FLG", "PURPOSE", "PROP_TYP"
-                           ,"NUM_UNIT", "OCC_STAT", "STATE", "ZIP_3", "MI_PCT", "Product.Type", "CSCORE_C", "MI_TYPE", "RELOCATION_FLG")
+                           ,"NUM_UNIT", "OCC_STAT", "STATE", "ZIP_3", "MI_PCT", "ProductType", "CSCORE_C", "MI_TYPE", "RELOCATION_FLG")
 
 Acquisition_ColClasses = c("character", "character", "character", "numeric", "numeric", "integer", "character", "character", "numeric",
                            "numeric", "character", "numeric", "numeric", "character", "character", "character", "character", "character",
@@ -48,8 +48,8 @@ Acquisition_ColClasses = c("character", "character", "character", "numeric", "nu
 # Define Performance Variables, variable classes and read the files into R                                 
 Performance <- list.files(file.path(data_folder,'Performance_All'), pattern = glob2rx("Performance*bz2"), full.names=TRUE)
 
-Performance_Variables = c("LOAN_ID", "Monthly.Rpt.Prd", "Servicer.Name", "LAST_RT", "LAST_UPB", "Loan.Age", "Months.To.Legal.Mat"
-                          , "Adj.Month.To.Mat", "Maturity.Date", "MSA", "Delq.Status", "MOD_FLAG", "Zero.Bal.Code", 
+Performance_Variables = c("LOAN_ID", "MonthlyRptPrd", "ServicerName", "LAST_RT", "LAST_UPB", "LoanAge", "MonthsToLegalMat"
+                          , "AdjMonthToMat", "MaturityDate", "MSA", "DelqStatus", "MOD_FLAG", "ZeroBalCode", 
                           "ZB_DTE", "LPI_DTE", "FCC_DTE","DISP_DT", "FCC_COST", "PP_COST", "AR_COST", "IE_COST", "TAX_COST", "NS_PROCS",
                           "CE_PROCS", "RMW_PROCS", "O_PROCS", "NON_INT_UPB", "PRIN_FORG_UPB_FHFA", "REPCH_FLAG", "PRIN_FORG_UPB_OTH", "TRANSFER_FLAG")
 
@@ -57,5 +57,109 @@ Performance_ColClasses = c("character", "character", "character", "numeric", "nu
                            "character", "character", "character", "character", "character", "character", "character", "character",
                            "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "character", "numeric", "character")
 
+#Close Connections created as result of Running Foreach
+env <- foreach:::.foreachGlobals
+rm(list=ls(name=env), pos=env)
+
+## read and take 1% random sample ---- 
+set.seed(122345)
+acquisition_1pct_filename = file.path(data_folder,'Acquisition_1pct.Rds')
+
+if( file.exists(acquisition_1pct_filename) ) {
+  Acquisitions_Data = loadRDS(acquisition_1pct_filename)
+}else{
+  Acquisitions_Data <- foreach(k=1:length(acquisition_files), .inorder=FALSE, .combine=rbind, .packages=c("data.table")) %do%   {
+                                Data_A<- fread(acquisition_files[k], sep = "|", colClasses=Acquisition_ColClasses, showProgress=FALSE)
+                                setnames(Data_A, Acquisitions_Variables)
+                                setkey(Data_A, "LOAN_ID")
+  }
+  Acquisitions_Data<-Acquisitions_Data[sample.int(nrow(Acquisitions_Data), floor(0.01*nrow(Acquisitions_Data)) ), ] # random sample
+  saveRDS(Acquisitions_Data, acquisition_1pct_filename)
+}
+
+## read performance data but only keep loans from 1% random sample ----
+performance_1pct_filename = file.path(data_folder,'Performance_1pct.Rds')
+
+if( file.exists(performance_1pct_filename) ) {
+  Performance_Data = loadRDS(performance_1pct_filename)
+}else{
+  Performance_Data <- foreach(k=1:numberofcores, .inorder=FALSE, .combine=rbind,
+                            .packages=c("data.table")) %do% {
+                              Data_P<- fread(Performance[k], sep = "|", colClasses=Performance_ColClasses, showProgress=FALSE)
+                              setnames(Data_P, Performance_Variables)
+                              setkey(Data_P, "LOAN_ID")
+                              Data_P <- Data_P[LOAN_ID %in% Acquisitions_Data$LOAN_ID,] # only take data from the 1% sample
+                              return(Data_P)
+                            }
+  saveRDS(Performance_Data, performance_1pct_filename)
+}
+
+Acquisitions_Data[, orig_date := dmy(stri_join('01/', ORIG_DTE))]
+Acquisitions_Data[, fpay_date := dmy(stri_join('01/', FRST_DTE))]
+Acquisitions_Data[, vintage := year(orig_date)]
+
 ```
 
+## Loan Macro Data
+```{r load_macro_data}
+# Mortgage Rate ----- 
+#https://fred.stlouisfed.org/series/MORTGAGE30US
+mtg_rate = fread(file.path(data_folder,'/macro/MORTGAGE30US.csv'))
+mtg_rate[, date := ymd(DATE)]
+mtg_rate[, DATE:=NULL]
+
+ggplot(mtg_rate, aes(date, MORTGAGE30US ))  + geom_line()
+
+#aggregate rate to monthly (not very )
+mtg_rate[, date_month := as_date(ISOdate(year(date), month(date), 1)) ]
+mtg_rate_mon = mtg_rate[, .(mtg30=mean(MORTGAGE30US, na.rm = TRUE)), by =.(date_month) ]
+setnames(mtg_rate_mon, 'date_month', 'date')
+
+# Unemployment Rate -----
+uer = fread(file.path(data_folder,'/macro/UNRATE.csv'))
+uer[, date := ymd(DATE)]
+uer[, DATE := NULL]
+
+# HPI Index -----
+hpi = fread(file.path(data_folder,'/macro/USSTHPI.csv'))
+hpi[, date := ymd(DATE)]
+hpi[, DATE := NULL]
+
+#interpolate HPI to monthly 
+dates = seq(min(hpi$date), max(hpi$date), by = '1 month')
+hpi_mon = data.table(date = dates, hpi = approx(hpi$date, hpi$USSTHPI, dates)$y)
+
+#join 
+df_macro = merge(mtg_rate_mon, merge(uer, hpi_mon, by = 'date', all = TRUE), by = 'date', all = TRUE)
+setnames(df_macro, 'UNRATE', 'uer')
+
+ggplot(df_macro, aes(date, uer))  + geom_line()
+ggplot(df_macro, aes(date, hpi))  + geom_line()
+ggplot(df_macro, aes(date, mtg30))  + geom_line()
+
+```
+
+## Plot Data
+```{r plot_data}
+
+df_agg = Acquisitions_Data[,.(.N, upb = 1e-6*sum(ORIG_AMT), 
+                              als = 1e-3*mean(ORIG_AMT), 
+                              dti = weighted.mean(DTI, ORIG_AMT, na.rm = TRUE),
+                              oltv = weighted.mean(OLTV, ORIG_AMT, na.rm = TRUE),
+                              rate = weighted.mean(ORIG_RT, ORIG_AMT, na.rm = TRUE)), by =.(orig_date)]
+
+ggplot(df_agg, aes(orig_date, N)) + geom_line() + ggtitle('monthly origination volume (1%), loans') + scale_x_date(date_breaks = "1 year", date_labels = "%Y")
+ggplot(df_agg, aes(orig_date, 0.1*upb)) + geom_line() + ggtitle('monthly origination volume, B') + scale_x_date(date_breaks = "1 year", date_labels = "%Y")
+ggplot(df_agg, aes(orig_date, als)) + geom_line() + ggtitle('average loan size, k') + scale_x_date(date_breaks = "1 year", date_labels = "%Y")
+ggplot(df_agg, aes(orig_date, dti)) + geom_line() + ggtitle('average loan size, k') + scale_x_date(date_breaks = "1 year", date_labels = "%Y")
+ggplot(df_agg, aes(orig_date, oltv)) + geom_line() + ggtitle('average loan size, k') + scale_x_date(date_breaks = "1 year", date_labels = "%Y")
+ggplot(df_agg, aes(orig_date, rate)) + geom_line() + ggtitle('average rate') + scale_x_date(date_breaks = "1 year", date_labels = "%Y")
+
+#compare to 30y rate
+ggplot(df_agg, aes(orig_date, rate)) + geom_line() + ggtitle('average rate') + scale_x_date(date_breaks = "1 year", date_labels = "%Y") + geom_line(data = mtg_rate, aes(date, rate), color = 'red')
+
+ggplot(Acquisitions_Data, aes(factor(vintage ), DTI)) + geom_boxplot() 
+ggplot(Acquisitions_Data, aes(factor(vintage ), CSCORE_B)) + geom_boxplot()
+ggplot(Acquisitions_Data, aes(factor(vintage ), ORIG_RT)) + geom_boxplot() 
+
+```

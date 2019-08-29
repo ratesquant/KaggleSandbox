@@ -1,0 +1,130 @@
+---
+title: "Transition Matrix Analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(foreach)
+library(ggplot2)
+library(scales)
+library(data.table)
+library(expm)   
+```
+
+## Create Data
+
+```{r data_create}
+steps = 24
+states = c('A', 'B', 'C', 'D')
+tr_matrix = t(matrix(c(0.9, 0.1, 0.0, 0.0, 
+                       0.0, 0.8, 0.2, 0.0,
+                       0.0, 0.0, 0.7, 0.3,
+                       0.0, 0.0, 0.0, 1.0), nrow = 4))
+rownames(tr_matrix)<-states
+colnames(tr_matrix)<-states
+#rowSums(tr_matrix)
+
+df_tr = data.table(melt(tr_matrix) )
+names(df_tr)<-c('state_from', 'state_to', 'rate')
+#df_tr[, .(total=sum(rate)),  by = state_from]
+
+#transition matrix
+ggplot(df_tr,aes(state_to, state_from, fill = rate, label = sprintf('%.2f', rate)) ) + geom_tile() + geom_text() + scale_fill_gradient(low = "white", high = "red" )
+
+df_bal = data.table(state_from = states, bal_from = c(100, 20, 10, 1))
+
+#c(100, 20, 10, 0) %*% (tr_matrix %^% 23) #matrix mulpilication form
+
+df = foreach(i = 1:steps, .combine = 'rbind') %do% {
+  df1 = df_tr[df_bal, on = 'state_from']
+  df1[, bal := rate * bal_from]
+  df1[, step:=i-1]
+  df_bal = df1[, .(bal_from = sum(bal)), by = .('state_from' = state_to )]
+  return (df1)
+}
+
+# 
+df[step==1,]
+df[, .(.N, rate = mean(rate), rate_est = sum(bal)/sum(bal_from) ), by = .(state_from, state_to )]
+
+#period begin balances
+df[,.(bal = sum(bal)), by =.(step,  state_from)] 
+
+#period end balances
+df[,.(bal = sum(bal)), by =.(step,  state_to)] 
+
+#balances
+ggplot(df[,.(bal = sum(bal)), by =.(step,  state_to)], aes(step, bal, group = state_to, color = state_to)) + geom_line()
+#rates
+ggplot(df[,.(rate = sum(bal)/sum(bal_from)), by =.(step,  state_to, state_from)], aes(step, rate, group = state_to, color = state_to)) + geom_line() + facet_wrap(~state_from)
+
+#balance conservation
+ggplot(df[,.(bal = sum(bal)), by =.(step)], aes(step, bal)) + geom_line()
+```
+
+## Rate Sensetivity
+
+```{r rate_sensetivity, echo=FALSE}
+
+#shift the transition rate
+rate_sensetivity <- function(df_sim, shift_state_from, shift_state_to, shift = 0.1){
+  
+  steps = sort(unique(df_sim$step))
+  
+  df_bal = df_sim[step == min(step),.(bal_from = sum(bal)), by =.( state_from)]  #starting balances
+  df_out = foreach(i = 1:length(steps), .combine = 'rbind') %do% {
+    df_tr_step = df[step == steps[i] ,.(rate = sum(bal)/sum(bal_from)), by =.(step, state_to, state_from)]
+    df_tr_step[is.na(rate), rate:=0]
+    
+    #shift transition rate
+    df_tr_step[state_from == shift_state_from & state_to == shift_state_to, rate :=  rate * exp(shift)]
+    df_tr_step[state_from == shift_state_from, rate :=  rate / sum(rate)]
+    df_tr_step[is.na(rate), rate:=0] #in case when no actual transitions from a given state, rates sum up to zero   
+    df_tr_step[, total_prob:=sum(rate), by = .(state_from)] #check consistency (total_prob - should be 1 for all states)
+    df_tr_step[state_from == state_to, rate:= rate + (1 - total_prob) ] #add missing probability to the stay-in-the same state
+    
+    df1 = df_tr_step[df_bal, on = 'state_from']
+    df1[, bal := rate * bal_from]
+    df1[, step:=steps[i] ]
+    df_bal = df1[, .(bal_from = sum(bal)), by = .('state_from' = state_to )] #update balance
+    return (df1)
+  }
+  return (df_out)
+}
+
+rate_sensetivity_full <- function(df_sim, shift = 0.1){
+  df_transitions = df_sim[, .(bal = sum(bal)), by =.(state_from, state_to)]
+  df_transitions = df_transitions[bal>0,] #exclude impossible transitions
+  
+  df_out = foreach(i = 1:nrow(df_transitions), .combine = 'rbind') %do% {
+    df_sim_up = rate_sensetivity(df_sim, df_transitions$state_from[i], df_transitions$state_to[i], shift)
+    
+    df_temp = df_sim_up[step == max(step),.(bal = sum(bal)), by =.(step,  state_to)] 
+    df_temp[, shift_state_from := df_transitions$state_from[i]]
+    df_temp[, shift_state_to   := df_transitions$state_to[i]]
+    return(df_temp)
+  }
+  return (df_out)
+}
+df_sim = df
+
+#change a single transition rate and redo the simulation
+df_out = rate_sensetivity(df_sim, 'A', 'B', 0.1)
+df_out_comp =  merge(df_out, df_sim, by = c('step', 'state_from', 'state_to')) #- compare with original
+
+ggplot(df_sim[,.(bal = sum(bal)), by =.(step,  state_to)], aes(step, bal, group = state_to, color = state_to)) + geom_line() + 
+  geom_line(data = df_out[,.(bal = sum(bal)), by =.(step,  state_to)], aes(step, bal, group = state_to, color = state_to), linetype = 'dashed')
+
+#change all transition rates and redo the simulation
+df_out = rate_sensetivity_full(df_sim, shift = 0.1)
+df_out =  merge(df_out, df_sim[step == max(step), .(bal_base = sum(bal)), by = .(step, state_to )], by = c('step', 'state_to'), all.x = TRUE)
+df_out[, rel_sens:=100*(bal - bal_base)/bal_base]
+
+ggplot(df_out,aes(shift_state_to, shift_state_from, fill =  rel_sens, label = sprintf('%.1f',  rel_sens )) ) + geom_tile() + geom_text() + 
+  facet_wrap(~state_to) + scale_fill_gradient2() + ggtitle('ClearDerivative')
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

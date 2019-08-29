@@ -81,9 +81,9 @@ if( file.exists(acquisition_1pct_filename) ) {
 performance_1pct_filename = file.path(data_folder,'Performance_1pct.Rds')
 
 if( file.exists(performance_1pct_filename) ) {
-  Performance_Data = loadRDS(performance_1pct_filename)
+  Performance_Data = readRDS(performance_1pct_filename)
 }else{
-  Performance_Data <- foreach(k=1:length(performance_files), .inorder=FALSE, .combine=rbind,.packages=c("data.table")) %do% {
+  Performance_Data <- foreach(k=1:2, .inorder=FALSE, .combine=rbind,.packages=c("data.table")) %do% {
                               print(performance_files[k])
                               Data_P<- fread(performance_files[k], sep = "|", colClasses=Performance_ColClasses, showProgress=FALSE)
                               setnames(Data_P, Performance_Variables)
@@ -95,10 +95,56 @@ if( file.exists(performance_1pct_filename) ) {
 }
 
 #rm(list= ls()[!(ls() %in% c('Acquisitions_Data', 'Performance_Data'))])
+# Obtain the Minimum Fico Score of the Borrower and Co-Borrower, Calculate House Price, and Replace Missing OCLTV values with OLTV values where available
+Acquisitions_Data[, c("CSCORE_MN", "CSCORE_MX", "ORIG_VAL", "OCLTV"):= .(pmin(CSCORE_B, CSCORE_C, na.rm = TRUE), pmax(CSCORE_B, CSCORE_C, na.rm = TRUE), (ORIG_AMT/(OLTV/100)), ifelse(is.na(OCLTV), OLTV, OCLTV))]
 
 Acquisitions_Data[, orig_date := dmy(stri_join('01/', ORIG_DTE))]
 Acquisitions_Data[, fpay_date := dmy(stri_join('01/', FRST_DTE))]
 Acquisitions_Data[, vintage := year(orig_date)]
+
+Performance_Data[, date:=mdy(MonthlyRptPrd) ]
+Performance_Data[, maturity_date:=dmy(stri_join('01/', MaturityDate)) ]
+
+Performance_Data[, disp_date:=mdy(DISP_DT)]
+Performance_Data[, fcc_date:=mdy(FCC_DTE)]
+Performance_Data[,PRIN_FORG_UPB := PRIN_FORG_UPB_FHFA + PRIN_FORG_UPB_OTH] ## LLPUB 16.2 release breaks the principle forgiveness UPB into two categories. 
+# Standardize Delinquency Status Codes
+Performance_Data[, delq:=as.numeric(ifelse(DelqStatus=="X", "999", DelqStatus))]
+Performance_Data[, c("LAST_UPB", "NON_INT_UPB") :=list(na.lomf(LAST_UPB), na.lomf(NON_INT_UPB)), by = "LOAN_ID"]
+
+Performance_Data[, LAST_STAT:= 
+                ifelse(ZeroBalCode=='01', 'P',
+                ifelse(ZeroBalCode=='02', 'T',
+                ifelse(ZeroBalCode=='03', 'S', 
+                ifelse(ZeroBalCode=='06', 'R', 
+                ifelse(ZeroBalCode=='09', 'F', 
+                ifelse(ZeroBalCode=='15', 'N',
+                ifelse(ZeroBalCode=='16', 'L',
+                ifelse(delq=='999','X',
+                ifelse(delq >9, '9', 
+                ifelse(delq==0, 'C', as.character(delq) ))))))))))]
+
+CreditEvents <- c("F", "S", "T", "N")
+
+# Calculate Interest Cost, total expenses and total proceeds
+Data_P[, c("INT_COST","total_expense", "total_proceeds") := 
+       list(ifelse(LAST_STAT %in% CreditEvents & !is.na(DISP_DT), pmax(Fin_UPB *(((LAST_RT/100) - .0035)/12)*lpi2disp, 0),0),
+            ifelse(LAST_STAT %in% CreditEvents & !is.na(DISP_DT), rowSums(Data_P[, list(FCC_COST,PP_COST,AR_COST,TAX_COST,IE_COST)], na.rm = TRUE),0),
+            ifelse(LAST_STAT %in% CreditEvents & !is.na(DISP_DT),(-1*rowSums(Data_P[, list(NS_PROCS,CE_PROCS,RMW_PROCS,O_PROCS)], na.rm = TRUE)),0))]
+
+# Calculate Net Loss, Net Severity, Total Costs, Total Proceeds, and Total Liquidation Expenses.  Define Last Date variable.
+Data_P[,c("NET_LOSS","NET_SEV", "Total_Cost", "Tot_Procs", "Tot_Liq_Ex", "LAST_DTE"):=
+                list(ifelse(LAST_STAT %in% CreditEvents & !is.na(DISP_DT), rowSums(Data_P[, list(LAST_UPB,INT_COST,total_expense,total_proceeds)], na.rm=TRUE),0),
+                     ifelse(LAST_STAT %in% CreditEvents & !is.na(DISP_DT), (rowSums(Data_P[, list(LAST_UPB,INT_COST,total_expense,total_proceeds)], na.rm=TRUE)/LAST_UPB),0),
+                     ifelse(LAST_STAT %in% CreditEvents, rowSums(Data_P[, list(LAST_UPB, INT_COST,FCC_COST,PP_COST, AR_COST, IE_COST, TAX_COST)], na.rm = TRUE),0), 
+                     ifelse(LAST_STAT %in% CreditEvents, rowSums(Data_P[, list(NS_PROCS, CE_PROCS, RMW_PROCS, O_PROCS)], na.rm = TRUE),0),
+                     ifelse(LAST_STAT %in% CreditEvents, rowSums(Data_P[, list(FCC_COST, PP_COST, AR_COST, IE_COST, TAX_COST)], na.rm = TRUE),0),
+                     as.Date(ifelse(!(is.na(Data_P$DISP_DT)), Data_P$DISP_DT, Data_P$Monthly.Rpt.Prd)))]
+
+
+
+setorderv(Performance_Data, c("LOAN_ID", "date"))
+setkey(Performance_Data, "LOAN_ID")
 
 ```
 

@@ -89,7 +89,6 @@ source(file.path(working_folder, '/Utils/common.R'))
  df[, c("id_34_level1")         := tstrsplit(id_34, ":", fixed=TRUE, keep=2L)]
  
  df[, is_emaildomain_diff         := as.numeric(R_emaildomain!=P_emaildomain)]
- df[, is_emaildomain_level1_diff  := as.numeric(R_emaildomain_level1!=P_emaildomain_level1)]
  df[, is_emaildomain_level2_diff  := as.numeric(R_emaildomain_level2!=P_emaildomain_level2)]
  
  table(df$DeviceInfo_level2)
@@ -115,17 +114,16 @@ source(file.path(working_folder, '/Utils/common.R'))
  df[,is_R_mail:=as.numeric(R_emaildomain=='mail.com')]
  
  df[,C1_2_diff := C1 - C2]
- df[,C1_4_diff := C1 - C4]
- df[,C1_6_diff := C1 - C6]
+ #df[,C1_4_diff := C1 - C4]
+ #df[,C1_6_diff := C1 - C6]
  df[,C1_8_diff := C1 - C8]
  df[,C1_14_diff := C1 - C14]
- df[,C1_10_diff := C1 - C10]
+ #df[,C1_10_diff := C1 - C10]
  df[,C1_13_diff := C1 - C13]
  #df[,C1_11_diff := C1 - C11]
  #df[,V294_307_diff := V294 - V307]
  df[,V70_91_diff := V70 - V91]
  df[,V70_90_diff := V70 - V90]
- df[,V317_294_diff := V317 - V294]
  
 ```
 
@@ -159,7 +157,7 @@ table(df[, .(is_train, ProductCD)])
 
 ## Data View
 
-```{r data, echo=FALSE}
+```{r data, echo=FALSE, eval = FALSE}
 df[s_index, .(isFraud, V258, C1)][1:30,]
 
 ggplot(df[t_index, .(.N, p =mean(isFraud)), by =.(P_emaildomain)], aes(P_emaildomain, log10(N), fill = p)) + geom_bar(stat = 'identity') + 
@@ -185,7 +183,7 @@ ggplot(df, aes(D7, group =is_train, color = factor(is_train) )) + stat_ecdf()
 ggplot(df, aes(D2, group =is_train, color = factor(is_train) )) + geom_density(adjust = 0.1)
 ggplot(df[is_train == TRUE,], aes(D2, group =isFraud, color = factor(isFraud) )) + geom_density(adjust = 0.1)
 
-ggplot(df[s_index,], aes(V294_307_diff, V317)) + geom_point()
+ggplot(df[s_index,], aes(card1, card2)) + geom_point()
 
 df[s_index, .(isFraud, V126, V127, V128, V129, V130, V131, V132, V133, V134, V135, V136, V137)][order(isFraud),]
 
@@ -213,7 +211,9 @@ card6_factor ,0.0132897400421455,0.0102271897813111,0.00656258244450307
 obj_var = 'isFraud'
 actual = df[[obj_var]]
 
-var_excluded =c('D2', 'D15', 'D4', 'D10', 'D1', 'D11', 'D12', 'D6', 'D7','id_20','id_13','id_02','C2','C4','C6','C8','C14','C10','C13','C11','V307','V91','V90','V294')
+var_excluded =c('D2', 'D15', 'D4', 'D10', 'D1', 'D11', 'D12', 'D6', 'D7','id_20','id_13','id_02','C1','C2','C4','C6','C7','C8','C14','C10','C13','C11','V307','V91','V90'
+                ,'V294', 'V127', 'V133','V128', 'V323', 'V332', 'V213', 'V333', 'V179', 'V134', 'V318', 'V324', 'V280', 'V322')
+var_excluded[duplicated(var_excluded)]
 
 exclude_vars = c('TransactionID', 'TransactionDT', 'is_train', obj_var, cat_vars, var_excluded) #remove variables that are different in 
 
@@ -267,16 +267,15 @@ print(importance_matrix)
 fwrite( importance_matrix, file.path(working_folder,'ieee_fraud/var.imp.xgb.v3.csv'))
 #importance_matrix = fread(file.path(working_folder,'santander_transaction/var.imp.xgb.csv'))
 
-xgb.ggplot.importance(importance_matrix = importance_matrix)
+xgb.ggplot.importance(importance_matrix = importance_matrix[1:50,])
 xgb.ggplot.deepness(model.xgb)
 
-plots = llply(as.character(importance_matrix$Feature), function(var_name) {
+gplots = llply(as.character(importance_matrix$Feature), function(var_name) {
   p = plot_profile(pred.xgb[s_index], actual[s_index],df[[var_name]][s_index], bucket_count = 20, error_band = 'binom') +
     ggtitle(var_name) +  theme(title =element_text(size=6))
-  return( p )
+  return( ggplotGrob(p) )
 })
 #marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
-gplots = lapply(plots, ggplotGrob)
 ggsave(filename = file.path(working_folder,"ieee_fraud/xgb.profiles.v3.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 240)
 
 # Check cat vars -----------
@@ -300,7 +299,7 @@ ggsave(filename = file.path(working_folder,"ieee_fraud/xgb_exc_vars.v3.pdf"), pl
 ## Post Processing
 ```{r xgb_model_post_processing}
 #df[1:1000, c('isFraud', as.character(importance_matrix$Feature)[1:30]), with = FALSE]
-var_name = 'C14' #'D15', 'D4', 'D10', 'D1'
+var_name = 'C1_13_diff' #'D15', 'D4', 'D10', 'D1'
 plot_profile(pred.xgb[s_index], actual[s_index], df[[var_name]][s_index],  bucket_count = 25, error_band = 'binom') + ggtitle(var_name)
 
 x = df[s_index, C1 - C2]
@@ -319,11 +318,12 @@ gplots = llply(head(as.character(importance_matrix$Feature),100), function(var_n
 ggsave(filename = file.path(working_folder,"ieee_fraud/ecdf_test-train.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 240)
 
 #correlation
-num_vars  = as.character(importance_matrix$Feature[1:60]) %in_set% names(which(sapply(df, is.numeric)))
+num_vars  = as.character(importance_matrix$Feature[1:200]) %in_set% names(which(sapply(df, is.numeric)))
+var_count = ceiling(length(num_vars)/100)
 corr_matrix = cor(df[s_index,..num_vars], use="pairwise.complete.obs")
 cor_plot = ggplot( melt(corr_matrix), aes(Var1, Var2, fill = value, alpha = abs(value), label = ifelse(abs(value)>0.1, sprintf('%.2f', value), ''))) + geom_tile() + scale_fill_custom('jet', discrete = FALSE) + 
   theme(axis.text.x  = element_text(angle = 45, hjust = 1, size = 6), axis.text.y  = element_text(size = 6), axis.title.x = element_blank(), axis.title.y = element_blank()) + geom_text(size = 2)
-ggsave(filename = file.path(working_folder,"ieee_fraud/cor_matrix.pdf"), plot = ggplotGrob(cor_plot), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+ggsave(filename = file.path(working_folder,"ieee_fraud/cor_matrix.pdf"), plot = ggplotGrob(cor_plot), device = 'pdf', width = 14*var_count, height = 8.5*var_count, dpi = 240)
 
 #corrMatOrder(corr_matrix[1:10, 1:10], order = "hclust")
 #corrplot(corr_matrix[1:10, 1:10], method="number", number.cex = 0.8, order = 'hclust')
@@ -410,7 +410,7 @@ gbm - 0.9268
 xbg - 0.9340 max_depth =  7, eta = 0.01,  nthread = 4, subsample = 0.9,  min_child_weight = 5,  gamma = 0.1
 xbg - 0.9305 max_depth = 10, eta = 0.02,  nthread = 4, subsample = 0.9,  min_child_weight = 5,  gamma = 0.1
 xbg - 0.9313 max_depth = 9,  eta = 0.012, nthread = 4, subsample = 0.9,  min_child_weight = 4,  gamma = 0.3 ('D2', 'D15', 'D4', 'D10', 'D1', 'D11')
-
+      0.9308
 ```{r save_results}
 
 submit = df[,.(TransactionID, isFraud  = pred.xgb)]

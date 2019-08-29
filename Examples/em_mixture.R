@@ -10,7 +10,7 @@ df = data.table(p_id, x = rnorm(n)*x_sig[p_id] + x_avg[p_id] )
 
 ggplot(df, aes(x)) + geom_density(adjust = 0.2) 
 
-params = fit_em(3, df$x)
+params = fit_em(1, df$x)
 
 ggplot(df, aes(x)) + geom_density(adjust = 0.2) + 
   geom_line(data = data.frame(sx = sort(df$x) , mp = rowSums(mixture_prob(sort(df$x), params)) ), aes(sx, mp), color = 'red')
@@ -44,7 +44,7 @@ fit_em<-function(k, x){
   
   prev_log_like = NA
   
-  for(it in 1:100){
+  for(it in 1:200){
     #E-step
     for(i in 1:k){
       gamma[,i] = wt_est[i] * dnorm(x, mu_est[i], sm_est[i])

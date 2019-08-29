@@ -56,6 +56,37 @@ platt_scaling <- function(actual, model, model_pred) {
   return (1.0 / (1.0 + exp(res$par[1] * model_pred + res$par[2])))
 }
 
+# Create function to handle missing Current UPBs in the last record by setting them to the record prior
+na.lomf <- function(x) {
+  
+  na.lomf.0 <- function(x) {
+    non.na.idx <- intersect(which(!is.na(x)),which(x>0))
+    if (is.na(x[1L]) || x[1L]==0) {
+      non.na.idx <- c(1L, non.na.idx)
+    }
+    rep.int(x[non.na.idx], diff(c(non.na.idx, length(x) + 1L)))
+  }
+  
+  dim.len <- length(dim(x))
+  
+  if (dim.len == 0L) {
+    na.lomf.0(x)
+  } else {
+    apply(x, dim.len, na.lomf.0)
+  }
+}
+
+na.lomf_L <- function(x) {
+  
+  non.na.idx <- intersect(which(!is.na(x)),which(x[length(x)-1]>0))
+  if (is.na(x[length(x)]) || x[length(x)]==0) {
+    XX<-c(x[1:length(x)-1], rep.int(x[length(x)-1], 1))
+  } else {
+    XX<-x
+  }
+  
+}
+
 
 .ls.objects <- function (pos = 1, pattern, order.by,
                          decreasing=FALSE, head=FALSE, n=5) {
@@ -566,8 +597,8 @@ cc <- function(x,...){
   if(is_linux()){
     write.clipboard(x,...)
   }else{
-    #write.table(x, "clipboard-16384", sep="\t", row.names=FALSE,...)
-    write.table(x, "clipboard-1024", sep="\t", row.names=FALSE,...)
+    write.table(x, "clipboard-16384", sep="\t", row.names=FALSE,...)
+    #write.table(x, "clipboard-1024", sep="\t", row.names=FALSE,...)
   }
 }
 
@@ -687,6 +718,15 @@ binmodel_ks<-function(actual, model){
   q1 = ecdf(m1)(xc)
   q0 = ecdf(m0)(xc)
   ks = 100.0 * max(abs(q1 - q0), na.rm = T)
+  return (ks)
+}
+
+ecdf_ks<-function(x1, x2){
+  #estimate difference between cdf
+  xc = sort(c(0, x1, x2, 1))
+  q1 = ecdf(x1)(xc)
+  q2 = ecdf(x2)(xc)
+  ks = 100.0 * max(abs(q1 - q2), na.rm = T)
   return (ks)
 }
 #plot cdf of predictions

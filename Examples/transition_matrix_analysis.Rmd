@@ -73,12 +73,12 @@ ggplot(df[,.(rate = sum(bal)/sum(bal_from)), by =.(step,  state_to, state_from)]
 ggplot(df[,.(bal = sum(bal)), by =.(step)], aes(step, bal)) + geom_line()
 ```
 
-## Rate Sensetivity
+## Rate sensitivity
 
-```{r rate_sensetivity, echo=FALSE}
+```{r rate_sensitivity, echo=FALSE}
 
 #shift the transition rate
-rate_sensetivity <- function(df_sim, shift_state_from, shift_state_to, shift_state_bal,  shift = 0.1){
+rate_sensitivity <- function(df_sim, shift_state_from, shift_state_to, shift_state_bal,  shift = 0.1){
   
   steps = sort(unique(df_sim$step))
   
@@ -106,12 +106,12 @@ rate_sensetivity <- function(df_sim, shift_state_from, shift_state_to, shift_sta
   return (df_out)
 }
 
-rate_sensetivity_full <- function(df_sim, shift = 0.1){
+rate_sensitivity_full <- function(df_sim, shift = 0.1){
   df_transitions = df_sim[, .(bal = sum(bal)), by =.(state_from, state_to)]
   df_transitions = df_transitions[bal>0,] #exclude impossible transitions
   
   df_out = foreach(i = 1:nrow(df_transitions), .combine = 'rbind') %do% {
-    df_sim_up = rate_sensetivity(df_sim, df_transitions$state_from[i], df_transitions$state_to[i], 'NA', shift)
+    df_sim_up = rate_sensitivity(df_sim, df_transitions$state_from[i], df_transitions$state_to[i], 'NA', shift)
     
     df_temp = df_sim_up[step == max(step),.(bal = sum(bal)), by =.(step,  state_to)] 
     df_temp[, shift_state_from := df_transitions$state_from[i]]
@@ -121,11 +121,11 @@ rate_sensetivity_full <- function(df_sim, shift = 0.1){
   return (df_out)
 }
 
-balance_sensetivity <- function(df_sim, shift = 0.1){
+balance_sensitivity <- function(df_sim, shift = 0.1){
   df_bal_start = df_sim[step == min(step),.(bal_from = sum(bal)), by =.( state_from)] 
   
   df_out = foreach(i = 1:nrow(df_bal_start), .combine = 'rbind') %do% {
-    df_sim_up = rate_sensetivity(df_sim, 'NA', 'NA', df_bal_start$state_from[i],  shift)
+    df_sim_up = rate_sensitivity(df_sim, 'NA', 'NA', df_bal_start$state_from[i],  shift)
     
     df_temp = df_sim_up[step == max(step),.(bal = sum(bal)), by =.(step,  state_to)] 
     df_temp[, shift_state := df_bal_start$state_from[i]]
@@ -137,14 +137,14 @@ balance_sensetivity <- function(df_sim, shift = 0.1){
 df_sim = df
 
 #change a single transition rate and redo the simulation
-df_out = rate_sensetivity(df_sim, 'A', 'B', 0.1)
+df_out = rate_sensitivity(df_sim, 'A', 'B', 0.1)
 df_out_comp =  merge(df_out, df_sim, by = c('step', 'state_from', 'state_to')) #- compare with original
 
 ggplot(df_sim[,.(bal = sum(bal)), by =.(step,  state_to)], aes(step, bal, group = state_to, color = state_to)) + geom_line() + 
   geom_line(data = df_out[,.(bal = sum(bal)), by =.(step,  state_to)], aes(step, bal, group = state_to, color = state_to), linetype = 'dashed')
 
 #change all transition rates and redo the simulation
-df_out = rate_sensetivity_full(df_sim, shift = 0.1)
+df_out = rate_sensitivity_full(df_sim, shift = 0.1)
 df_out =  merge(df_out, df_sim[step == max(step), .(bal_base = sum(bal)), by = .(step, state_to )], by = c('step', 'state_to'), all.x = TRUE)
 df_out[, rel_sens:=100*(bal - bal_base)/bal_base]
 #df_out[step == 23 & shift_state_from == 'A' & shift_state_to == 'B',]
@@ -152,12 +152,12 @@ df_out[, rel_sens:=100*(bal - bal_base)/bal_base]
 ggplot(df_out,aes(shift_state_to, shift_state_from, fill =  rel_sens, label = sprintf('%.2f',  rel_sens )) ) + geom_tile() + geom_text() + 
   facet_wrap(~state_to) + scale_fill_gradient2() + ggtitle('ClearDerivative')
 
-## balance sensetivity
-df_bal_sens = balance_sensetivity (df_sim, 1.0)
+## balance sensitivity
+df_bal_sens = balance_sensitivity (df_sim, 1.0)
 df_bal_sens =  merge(df_bal_sens, df_sim[step == max(step), .(bal_base = sum(bal)), by = .(step, state_to )], by = c('step', 'state_to'), all.x = TRUE)
 
 ggplot(df_bal_sens,aes( shift_state, state_to, bal - bal_base, fill =   bal - bal_base, label = sprintf('%.2f',   bal-bal_base )) ) + geom_tile() + geom_text() +
-  scale_fill_gradient2() + ggtitle('Balance sensetivity')
+  scale_fill_gradient2() + ggtitle('Balance sensitivity')
 
 ```
 

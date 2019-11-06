@@ -1,0 +1,191 @@
+---
+title: "GBM Fraud Model"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(plyr)
+library(foreach)
+
+library(data.table)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(forcats)
+library(corrplot)
+library(forcats)
+#library(pdp)
+library(e1071)
+library(zoo)
+library(lubridate)
+
+library(gbm)
+#library(randomForestSRC)
+library(xgboost)
+#library(lightgbm)
+
+#working_folder = 'C:/Dev/Kaggle/'
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+source(file.path(working_folder, '/Utils/common.R'))
+```
+
+## Gen Predictions by meter 
+
+```{r gen_predictions}
+
+ weather_vars = c('air_temperature','air_temperature_m3','air_temperature_m6', 'air_temperature_m12', 'air_temperature_m24',
+                     'air_temperature_max24','air_temperature_min24','air_temperature_max12', 'air_temperature_min12',
+                     'sea_level_pressure', 'sea_level_pressure_m6', 'sea_level_pressure_m12', 'sea_level_pressure_m24',
+                     'cloud_coverage','dew_temperature', 'precip_depth_1_hr',  'wind_direction', 'wind_speed','wind_speed_m3','wind_speed_m6','wind_speed_m12')
+    
+   # should we use building_id
+   all_vars = c('site_id', 'primary_use', 'square_feet_log', 'floor_count', 'time_day', 'time_wday', 'time_month','time_hour','year_built','rank_lm_m0','cl10_m0','cl20_m0','cl15_m0',weather_vars)
+   
+ model.xgb.m0 = xgb.load(file.path(working_folder,'energy_predictor/xgb.model.m0'))
+ model.xgb.m1 = xgb.load(file.path(working_folder,'energy_predictor/xgb.model.m1'))
+ model.xgb.m2 = xgb.load(file.path(working_folder,'energy_predictor/xgb.model.m2'))
+ model.xgb.m3 = xgb.load(file.path(working_folder,'energy_predictor/xgb.model.m3'))
+ 
+ model.list = list(model.xgb.m0, model.xgb.m1, model.xgb.m2, model.xgb.m3)
+
+ data_folder = file.path(working_folder,'energy_predictor/data/')
+
+ #building_meta
+ df_building = fread(file.path(data_folder,'building_metadata_ex.csv'), check.names=T)
+ 
+ #load weather files
+ df_weather_tn = fread(file.path(data_folder,'weather_train.csv'), check.names=T)
+ df_weather_tt = fread(file.path(data_folder,'weather_test.csv'), check.names=T)
+ df_weather_tn[, source:='train']
+ df_weather_tt[, source:='test']
+ df_weather = rbind(df_weather_tn, df_weather_tt)
+ 
+ df_weather[,time:= ymd_hms(timestamp)]
+ df_weather[, date := ymd(10000*year(time) + 100*month(time) + day(time)) ]
+ df_weather[order(time), air_temperature_m3  := rollmeanr(air_temperature, na.pad = TRUE, na.rm =TRUE, k = 3), by =.(site_id)]
+ df_weather[order(time), air_temperature_m6  := rollmeanr(air_temperature, na.pad = TRUE, na.rm =TRUE, k = 6), by =.(site_id)]
+ df_weather[order(time), air_temperature_m12 := rollmeanr(air_temperature, na.pad = TRUE, na.rm =TRUE, k = 12), by =.(site_id)]
+ df_weather[order(time), air_temperature_m24 := rollmeanr(air_temperature, na.pad = TRUE, na.rm =TRUE, k = 24), by =.(site_id)]
+ df_weather[order(time), air_temperature_m2d := rollmeanr(air_temperature, na.pad = TRUE, na.rm =TRUE, k = 24*2), by =.(site_id)]
+ df_weather[order(time), air_temperature_m3d := rollmeanr(air_temperature, na.pad = TRUE, na.rm =TRUE, k = 24*3), by =.(site_id)]
+ 
+ df_weather[order(time), air_temperature_max24 :=  rollmaxr( air_temperature, na.pad = TRUE, na.rm =TRUE, k = 24), by =.(site_id)]
+ df_weather[order(time), air_temperature_min24 := -rollmaxr(-air_temperature, na.pad = TRUE, na.rm =TRUE, k = 24), by =.(site_id)]
+ df_weather[order(time), air_temperature_max12 :=  rollmaxr( air_temperature, na.pad = TRUE, na.rm =TRUE, k = 12), by =.(site_id)]
+ df_weather[order(time), air_temperature_min12 := -rollmaxr(-air_temperature, na.pad = TRUE, na.rm =TRUE, k = 12), by =.(site_id)]
+ 
+ df_weather[order(time), sea_level_pressure_m6  := rollmeanr(sea_level_pressure, na.pad = TRUE, na.rm =TRUE, k =  6), by =.(site_id)]
+ df_weather[order(time), sea_level_pressure_m12 := rollmeanr(sea_level_pressure, na.pad = TRUE, na.rm =TRUE, k = 12), by =.(site_id)]
+ df_weather[order(time), sea_level_pressure_m24 := rollmeanr(sea_level_pressure, na.pad = TRUE, na.rm =TRUE, k = 24), by =.(site_id)]
+ 
+ df_weather[order(time), wind_speed_m3  := rollmeanr(wind_speed, na.pad = TRUE, na.rm =TRUE, k =  3), by =.(site_id)]
+ df_weather[order(time), wind_speed_m6  := rollmeanr(wind_speed, na.pad = TRUE, na.rm =TRUE, k =  6), by =.(site_id)]
+ df_weather[order(time), wind_speed_m12 := rollmeanr(wind_speed, na.pad = TRUE, na.rm =TRUE, k = 12), by =.(site_id)]
+ 
+ submit = foreach(my_meter_id = seq(0, 3), .combine = 'rbind') %do% { 
+   print(my_meter_id)
+   df = fread(file.path(data_folder,'test.csv'), check.names=T)
+   
+   #merge in building info
+   df[df_building, site_id := i.site_id, on =.(building_id)]
+   df = df[meter == my_meter_id,]# to save space
+   #df = df[1:100,]
+    
+   df[df_building, primary_use := i.primary_use, on =.(building_id)]
+   df[df_building, square_feet := i.square_feet, on =.(building_id)]
+   df[df_building, year_built := i.year_built, on =.(building_id)]
+   df[df_building, floor_count := i.floor_count, on =.(building_id)]
+   
+   df[df_building, m0_obs := i.m0_obs, on =.(building_id)]
+   df[df_building, m1_obs := i.m1_obs, on =.(building_id)]
+   df[df_building, m2_obs := i.m2_obs, on =.(building_id)]
+   df[df_building, m3_obs := i.m3_obs, on =.(building_id)]
+   
+   df[df_building, rank_lm_m0 := i.rank_lm_m0, on =.(building_id)]
+   df[df_building, cl10_m0    := i.cl10_m0, on =.(building_id)]
+   df[df_building, cl20_m0    := i.cl20_m0, on =.(building_id)]
+   df[df_building, cl15_m0    := i.cl15_m0, on =.(building_id)]
+   
+   df[,time:= ymd_hms(timestamp)]  
+   
+   df[, primary_use := factor(primary_use)]
+   df[, square_feet_log := log(square_feet)]
+   
+  #merge in weather info
+   df[df_weather, air_temperature := i.air_temperature, on =.(site_id, time)]
+   df[df_weather, cloud_coverage := i.cloud_coverage, on =.(site_id, time)]
+   df[df_weather, dew_temperature := i.dew_temperature, on =.(site_id, time)]
+   df[df_weather, precip_depth_1_hr := i.precip_depth_1_hr, on =.(site_id, time)]
+   df[df_weather, sea_level_pressure := i.sea_level_pressure, on =.(site_id, time)]
+   df[df_weather, wind_direction := i.wind_direction, on =.(site_id, time)]
+   df[df_weather, wind_speed := i.wind_speed, on =.(site_id, time)]
+   
+   df[df_weather, air_temperature_m3 := i.air_temperature_m3, on =.(site_id, time)]
+   df[df_weather, air_temperature_m6 := i.air_temperature_m6, on =.(site_id, time)]
+   df[df_weather, air_temperature_m12 := i.air_temperature_m12, on =.(site_id, time)]
+   df[df_weather, air_temperature_m24 := i.air_temperature_m24, on =.(site_id, time)]
+   df[df_weather, air_temperature_max24 := i.air_temperature_max24, on =.(site_id, time)]
+   df[df_weather, air_temperature_min24 := i.air_temperature_min24, on =.(site_id, time)]
+   df[df_weather, air_temperature_max12 := i.air_temperature_max12, on =.(site_id, time)]
+   df[df_weather, air_temperature_min12 := i.air_temperature_min12, on =.(site_id, time)]
+   df[df_weather, sea_level_pressure_m6  := i.sea_level_pressure_m6, on =.(site_id, time)]
+   df[df_weather, sea_level_pressure_m12 := i.sea_level_pressure_m12, on =.(site_id, time)]
+   df[df_weather, sea_level_pressure_m24 := i.sea_level_pressure_m24, on =.(site_id, time)]
+   df[df_weather, wind_speed_m3  := i.wind_speed_m3, on =.(site_id, time)]
+   df[df_weather, wind_speed_m6  := i.wind_speed_m6, on =.(site_id, time)]
+   df[df_weather, wind_speed_m12 := i.wind_speed_m12, on =.(site_id, time)]
+  
+   
+   df[,time_month := month(time) ]
+   df[,time_day := day(time) ]
+   df[,time_wday := wday(time) ]
+   df[,time_hour := hour(time) ]
+   df[, date := ymd(10000*year(time) + 100*time_month + time_day) ]
+   
+   row_id = df$row_id
+   
+   dm = data.matrix(df[,all_vars, with = F])
+   
+   pred.xgb_part = predict(model.list[[my_meter_id+1]], dm )
+   
+   rm(df)
+   gc(reset = TRUE)
+   
+   return(data.frame(row_id = row_id, meter_reading  = round(pmax(0, exp(pred.xgb_part)-1), 4) )) 
+ }
+ 
+```
+
+## Save Results
+gbm - 1.62
+xgboost = 1.45
+
+```{r save_results}
+
+#submit = data.table(row_id = df$row_id[!t_index], meter_reading  = round(exp(pred.gbm[!t_index])-1, 4) )
+#submit = data.table(row_id = df$row_id[!t_index], meter_reading  = round(pmax(0, exp(pred.xgb[!t_index])-1), 4) )
+
+setDT(submit)
+
+setorder(submit, row_id)
+
+file = file.path(working_folder, "energy_predictor/solution.xgb.csv")
+  
+fwrite(submit, file = file, row.names = FALSE)
+
+zip::zipr(paste(file, '.zip', sep = ''), file)
+  
+print(file)
+
+rm(submit)
+
+```
+

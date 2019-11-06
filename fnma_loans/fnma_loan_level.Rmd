@@ -17,7 +17,6 @@ library(ggplot2)
 library(gridExtra)
 library(zip)
 library(forcats)
-library(forcats)
 library(lubridate)
 
 library(gbm)
@@ -29,12 +28,14 @@ source(file.path(working_folder, '/Utils/common.R'))
 
 ```
 
-## Load FNMA loan Data
+## Load FNMA loan data
+load 1% of loans
 ```{r load_data}
-data_folder = file.path(Sys.getenv("HOME"),'/data/fnma/')
+data_folder = '/home/data/fnma/'
 
 # Define Acquisition Variables, variable classes and read the files into R
-acquisition_files <- list.files(file.path(data_folder,'Acquisition_All'), pattern = glob2rx("*Acquisition*bz2"), full.names=TRUE)
+#acquisition_files <- list.files(file.path(data_folder,'Acquisition_All'), pattern = glob2rx("*Acquisition*bz2"), full.names=TRUE)
+acquisition_files <- list.files(file.path(data_folder,'Acquisition_All_1pct'), pattern = glob2rx("*Acquisition*.txt"), full.names=TRUE)
 
 Acquisitions_Variables = c("LOAN_ID", "ORIG_CHN", "Seller.Name", "ORIG_RT", "ORIG_AMT", "ORIG_TRM", "ORIG_DTE"
                            ,"FRST_DTE", "OLTV", "OCLTV", "NUM_BO", "DTI", "CSCORE_B", "FTHB_FLG", "PURPOSE", "PROP_TYP"
@@ -46,7 +47,7 @@ Acquisition_ColClasses = c("character", "character", "character", "numeric", "nu
 
 
 # Define Performance Variables, variable classes and read the files into R                                 
-performance_files <- list.files(file.path(data_folder,'Performance_All'), pattern = glob2rx("Performance*bz2"), full.names=TRUE)
+performance_files <- list.files(file.path(data_folder,'Performance_All_1pct'), pattern = glob2rx("Performance*.txt"), full.names=TRUE)
 
 Performance_Variables = c("LOAN_ID", "MonthlyRptPrd", "ServicerName", "LAST_RT", "LAST_UPB", "LoanAge", "MonthsToLegalMat"
                           , "AdjMonthToMat", "MaturityDate", "MSA", "DelqStatus", "MOD_FLAG", "ZeroBalCode", 
@@ -61,38 +62,37 @@ Performance_ColClasses = c("character", "character", "character", "numeric", "nu
 env <- foreach:::.foreachGlobals
 rm(list=ls(name=env), pos=env)
 
-## read and take 1% random sample ---- 
-set.seed(122345)
-acquisition_1pct_filename = file.path(data_folder,'Acquisition_1pct.Rds')
+## read acquisition data
+acquisition_filename = file.path(data_folder,'Acquisition_1pct.Rds')
 
-if( file.exists(acquisition_1pct_filename) ) {
-  Acquisitions_Data = readRDS(acquisition_1pct_filename)
+if( file.exists(acquisition_filename) ) {
+  Acquisitions_Data = readRDS(acquisition_filename)
 }else{
   Acquisitions_Data <- foreach(k=1:length(acquisition_files), .inorder=FALSE, .combine=rbind, .packages=c("data.table")) %do%   {
                                 Data_A<- fread(acquisition_files[k], sep = "|", colClasses=Acquisition_ColClasses, showProgress=FALSE)
                                 setnames(Data_A, Acquisitions_Variables)
                                 setkey(Data_A, "LOAN_ID")
   }
-  Acquisitions_Data<-Acquisitions_Data[sample.int(nrow(Acquisitions_Data), floor(0.01*nrow(Acquisitions_Data)) ), ] # random sample
-  saveRDS(Acquisitions_Data, acquisition_1pct_filename)
+  saveRDS(Acquisitions_Data, acquisition_filename)
 }
 
-## read performance data but only keep loans from 1% random sample ----
-performance_1pct_filename = file.path(data_folder,'Performance_1pct.Rds')
+## read performance data 
+performance_filename = file.path(data_folder,'Performance_1pct.Rds')
 
-if( file.exists(performance_1pct_filename) ) {
-  Performance_Data = readRDS(performance_1pct_filename)
+if( file.exists(performance_filename) ) {
+  Performance_Data = readRDS(performance_filename)
 }else{
-  Performance_Data <- foreach(k=1:2, .inorder=FALSE, .combine=rbind,.packages=c("data.table")) %do% {
+  Performance_Data <- foreach(k=1:length(performance_files), .inorder=FALSE, .combine=rbind,.packages=c("data.table")) %do% {
                               print(performance_files[k])
                               Data_P<- fread(performance_files[k], sep = "|", colClasses=Performance_ColClasses, showProgress=FALSE)
                               setnames(Data_P, Performance_Variables)
                               setkey(Data_P, "LOAN_ID")
-                              Data_P <- Data_P[LOAN_ID %in% Acquisitions_Data$LOAN_ID,] # only take data from the 1% sample
                               return(Data_P)
                             }
-  saveRDS(Performance_Data, performance_1pct_filename)
+  saveRDS(Performance_Data, performance_filename)
 }
+
+gc(reset = TRUE)
 
 #rm(list= ls()[!(ls() %in% c('Acquisitions_Data', 'Performance_Data'))])
 # Obtain the Minimum Fico Score of the Borrower and Co-Borrower, Calculate House Price, and Replace Missing OCLTV values with OLTV values where available
@@ -104,7 +104,6 @@ Acquisitions_Data[, vintage := year(orig_date)]
 
 Performance_Data[, date:=mdy(MonthlyRptPrd) ]
 Performance_Data[, maturity_date:=dmy(stri_join('01/', MaturityDate)) ]
-
 Performance_Data[, disp_date:=mdy(DISP_DT)]
 Performance_Data[, fcc_date:=mdy(FCC_DTE)]
 Performance_Data[,PRIN_FORG_UPB := PRIN_FORG_UPB_FHFA + PRIN_FORG_UPB_OTH] ## LLPUB 16.2 release breaks the principle forgiveness UPB into two categories. 
@@ -126,25 +125,27 @@ Performance_Data[, LAST_STAT:=
 
 CreditEvents <- c("F", "S", "T", "N")
 
-# Calculate Interest Cost, total expenses and total proceeds
-Data_P[, c("INT_COST","total_expense", "total_proceeds") := 
-       list(ifelse(LAST_STAT %in% CreditEvents & !is.na(DISP_DT), pmax(Fin_UPB *(((LAST_RT/100) - .0035)/12)*lpi2disp, 0),0),
-            ifelse(LAST_STAT %in% CreditEvents & !is.na(DISP_DT), rowSums(Data_P[, list(FCC_COST,PP_COST,AR_COST,TAX_COST,IE_COST)], na.rm = TRUE),0),
-            ifelse(LAST_STAT %in% CreditEvents & !is.na(DISP_DT),(-1*rowSums(Data_P[, list(NS_PROCS,CE_PROCS,RMW_PROCS,O_PROCS)], na.rm = TRUE)),0))]
+# Count the number of months a loan is active 
+Performance_Data[,Count:=1:.N, by="LOAN_ID"]
 
-# Calculate Net Loss, Net Severity, Total Costs, Total Proceeds, and Total Liquidation Expenses.  Define Last Date variable.
-Data_P[,c("NET_LOSS","NET_SEV", "Total_Cost", "Tot_Procs", "Tot_Liq_Ex", "LAST_DTE"):=
-                list(ifelse(LAST_STAT %in% CreditEvents & !is.na(DISP_DT), rowSums(Data_P[, list(LAST_UPB,INT_COST,total_expense,total_proceeds)], na.rm=TRUE),0),
-                     ifelse(LAST_STAT %in% CreditEvents & !is.na(DISP_DT), (rowSums(Data_P[, list(LAST_UPB,INT_COST,total_expense,total_proceeds)], na.rm=TRUE)/LAST_UPB),0),
-                     ifelse(LAST_STAT %in% CreditEvents, rowSums(Data_P[, list(LAST_UPB, INT_COST,FCC_COST,PP_COST, AR_COST, IE_COST, TAX_COST)], na.rm = TRUE),0), 
-                     ifelse(LAST_STAT %in% CreditEvents, rowSums(Data_P[, list(NS_PROCS, CE_PROCS, RMW_PROCS, O_PROCS)], na.rm = TRUE),0),
-                     ifelse(LAST_STAT %in% CreditEvents, rowSums(Data_P[, list(FCC_COST, PP_COST, AR_COST, IE_COST, TAX_COST)], na.rm = TRUE),0),
-                     as.Date(ifelse(!(is.na(Data_P$DISP_DT)), Data_P$DISP_DT, Data_P$Monthly.Rpt.Prd)))]
+setkeyv(Performance_Data, c("LOAN_ID", "date"))
 
+loans_all = unique(Acquisitions_Data$LOAN_ID)
+loans_10pct = sample(loans_all, 0.1*length(loans_all))
 
+#merge in some static info
+df = merge(Performance_Data[LOAN_ID %in% loans_10pct], Acquisitions_Data, by = 'LOAN_ID', all.x = TRUE)
+df = df[sample.int(nrow(df), nrow(df)),]
 
-setorderv(Performance_Data, c("LOAN_ID", "date"))
-setkey(Performance_Data, "LOAN_ID")
+rm(list = c('Performance_Data','Acquisitions_Data'))
+gc(reset = TRUE)
+
+df[,NUM_BO := as.numeric(NUM_BO)]
+df[,NUM_UNIT := as.numeric(NUM_UNIT)]
+
+cat_vars = names(df)[which(sapply(df, is.character))] %!in_set% c('LOAN_ID')
+fac_vars = stri_join(cat_vars, '_factor')
+df[, (fac_vars):=lapply(.SD, function(x) factor(x)), .SDcols = cat_vars]
 
 ```
 
@@ -162,11 +163,16 @@ ggplot(mtg_rate, aes(date, MORTGAGE30US ))  + geom_line()
 mtg_rate[, date_month := as_date(ISOdate(year(date), month(date), 1)) ]
 mtg_rate_mon = mtg_rate[, .(mtg30=mean(MORTGAGE30US, na.rm = TRUE)), by =.(date_month) ]
 setnames(mtg_rate_mon, 'date_month', 'date')
+mtg_rate_mon[, date_1m := date %m+% months(1)]
+mtg_rate_mon[, date_2m := date %m+% months(2)]
+mtg_rate_mon[, date_3m := date %m+% months(3)]
 
 # Unemployment Rate -----
 uer = fread(file.path(data_folder,'/macro/UNRATE.csv'))
 uer[, date := ymd(DATE)]
 uer[, DATE := NULL]
+uer[, date_1y := date %m+% months(12)]
+
 
 # HPI Index -----
 hpi = fread(file.path(data_folder,'/macro/USSTHPI.csv'))
@@ -176,6 +182,11 @@ hpi[, DATE := NULL]
 #interpolate HPI to monthly 
 dates = seq(min(hpi$date), max(hpi$date), by = '1 month')
 hpi_mon = data.table(date = dates, hpi = approx(hpi$date, hpi$USSTHPI, dates)$y)
+
+hpi_mon[, date_1y := date %m+% months(12)]
+hpi_mon[hpi_mon, hpi_1y:=i.hpi, on = c('date'='date_1y')]
+hpi_mon[, hpa:=(hpi - hpi_1y)/hpi_1y]
+
 
 #join 
 df_macro = merge(mtg_rate_mon, merge(uer, hpi_mon, by = 'date', all = TRUE), by = 'date', all = TRUE)
@@ -197,11 +208,14 @@ df_agg = Acquisitions_Data[,.(.N, upb = 1e-6*sum(ORIG_AMT),
                               rate = weighted.mean(ORIG_RT, ORIG_AMT, na.rm = TRUE)), by =.(orig_date)]
 
 ggplot(df_agg, aes(orig_date, N)) + geom_line() + ggtitle('monthly origination volume (1%), loans') + scale_x_date(date_breaks = "1 year", date_labels = "%Y")
-ggplot(df_agg, aes(orig_date, 0.1*upb)) + geom_line() + ggtitle('monthly origination volume, B') + scale_x_date(date_breaks = "1 year", date_labels = "%Y")
+ggplot(df_agg, aes(orig_date, 1e-3*upb)) + geom_line() + ggtitle('monthly origination volume, B') + scale_x_date(date_breaks = "1 year", date_labels = "%Y")
 ggplot(df_agg, aes(orig_date, als)) + geom_line() + ggtitle('average loan size, k') + scale_x_date(date_breaks = "1 year", date_labels = "%Y")
-ggplot(df_agg, aes(orig_date, dti)) + geom_line() + ggtitle('average loan size, k') + scale_x_date(date_breaks = "1 year", date_labels = "%Y")
-ggplot(df_agg, aes(orig_date, oltv)) + geom_line() + ggtitle('average loan size, k') + scale_x_date(date_breaks = "1 year", date_labels = "%Y")
+ggplot(df_agg, aes(orig_date, dti)) + geom_line() + ggtitle('dti, k') + scale_x_date(date_breaks = "1 year", date_labels = "%Y")
+ggplot(df_agg, aes(orig_date, oltv)) + geom_line() + ggtitle('oltv, k') + scale_x_date(date_breaks = "1 year", date_labels = "%Y")
 ggplot(df_agg, aes(orig_date, rate)) + geom_line() + ggtitle('average rate') + scale_x_date(date_breaks = "1 year", date_labels = "%Y")
+
+ggplot(Acquisitions_Data[vintage %in% c(2006, 2010, 2017, 2018),], aes(DTI, group = vintage, color =  factor(vintage) ))  + geom_density()
+ggplot(Acquisitions_Data[vintage %in% c(2006, 2010, 2017, 2018),], aes(OLTV, group = vintage, color =  factor(vintage) ))  + geom_density() 
 
 #compare to 30y rate
 ggplot(df_agg, aes(orig_date, rate)) + geom_line() + ggtitle('average rate') + scale_x_date(date_breaks = "1 year", date_labels = "%Y") + geom_line(data = mtg_rate, aes(date, rate), color = 'red')
@@ -209,5 +223,149 @@ ggplot(df_agg, aes(orig_date, rate)) + geom_line() + ggtitle('average rate') + s
 ggplot(Acquisitions_Data, aes(factor(vintage ), DTI)) + geom_boxplot() 
 ggplot(Acquisitions_Data, aes(factor(vintage ), CSCORE_B)) + geom_boxplot()
 ggplot(Acquisitions_Data, aes(factor(vintage ), ORIG_RT)) + geom_boxplot() 
+
+```
+
+## Prepayments
+• 01 = Prepaid or Matured
+• 02 = Third Party Sale
+• 03 = Short Sale 
+• 06 = Repurchased
+• 09 = Deed-in-Lieu,REO
+• 15 = Note Sale
+• 16 = Reperforming Loan Sale
+```{r prepayments_data}
+
+df[,po_flag:=as.numeric( ZeroBalCode == '01') ]
+df[,  mtg30_lag0 := mtg_rate_mon[df, .(mtg30), on = c('date')]]
+df[,  mtg30_lag1 := mtg_rate_mon[df, .(mtg30), on = c('date_1m' = 'date')]]
+df[,  mtg30_lag2 := mtg_rate_mon[df, .(mtg30), on = c('date_2m' = 'date')]]
+df[,  mtg30_lag3 := mtg_rate_mon[df, .(mtg30), on = c('date_3m' = 'date')]]
+
+df[uer,  unrate:=i.UNRATE,  on = 'date']
+df[uer,  unrate_1y:=i.UNRATE,  on = c('date' = 'date_1y')]
+df[,unrate_change_1y:=unrate -unrate_1y] 
+
+df[hpi_mon,  hpi_curr:=i.hpi,  on = 'date']
+df[hpi_mon,  hpa_curr:=i.hpa,  on = 'date']
+df[hpi_mon,  hpi_orig:=i.hpi,  on = c('orig_date'='date')]
+df[, hpa_total := (hpi_curr-hpi_orig)/hpi_orig]
+
+df[, CLTV := 100*LAST_UPB / ( (ORIG_AMT/(OLTV/100)) * (hpi_curr / hpi_orig)) ]
+
+df[, inc_lag0 := 100*(LAST_RT - mtg30_lag0)]
+df[, inc_lag1 := 100*(LAST_RT - mtg30_lag1)]
+df[, inc_lag2 := 100*(LAST_RT - mtg30_lag2)]
+df[, inc_lag3 := 100*(LAST_RT - mtg30_lag3)]
+df[,STATE_10:=fct_infreq(fct_lump(STATE, n = 10))]
+df[,STATE_20:=fct_infreq(fct_lump(STATE, n = 20))]
+df[,Seller_10:=fct_infreq(fct_lump(Seller.Name, n = 10))]
+df[,Seller_20:=fct_infreq(fct_lump(Seller.Name, n = 20))]
+
+df[,loan_size:=1e-3*LAST_UPB]
+df[,date_month:=month(date)]
+
+df[ZeroBalCode == '01' & LAST_UPB < 1000,.(date, LOAN_ID, LAST_UPB, ORIG_AMT, ZeroBalCode, CLTV, LoanAge, ORIG_TRM)][order(LAST_UPB),]
+
+df = df[ZeroBalCode %in% c('01','') & LAST_UPB > 1000 & DelqStatus == '0',] # take only current loans
+
+#a = df[LOAN_ID == '444895384985',][order(date),]
+#df[LOAN_ID == '444895384985',.(date, mtg30, mtg30_lag1, mtg30_lag2, mtg30_lag3)]
+#df[ZeroBalCode == '01', .(LAST_UPB)]
+
+po_agg = df[, .( smm = sum(LAST_UPB * po_flag, na.rm = TRUE) / sum(LAST_UPB, na.rm = TRUE), prob = sum(po_flag, na.rm = TRUE) / length(po_flag) ), by = .(date)]
+
+ggplot(po_agg[date>'2001-01-01',], aes(date, prob) ) + geom_line() + geom_line(aes(date, smm), color = 'red')
+```
+
+```{r prepayment_model}
+  actual.po = df$po_flag
+  
+  all_vars = c('inc_lag0','inc_lag1','inc_lag2', 'inc_lag3', 'LoanAge', 'ORIG_TRM','loan_size', 'ORIG_CHN_factor','OCC_STAT_factor', 'OLTV', 'CLTV', 'NUM_BO', 'DTI', 'PURPOSE_factor', 'PROP_TYP_factor', 'NUM_UNIT', 
+               'OCC_STAT_factor', 'CSCORE_MN', 'STATE_10', 'Seller_10','unrate','unrate_change_1y', 'date_month', 'hpa_curr','hpa_total', 'MI_TYPE','MOD_FLAG_factor')
+  
+  set.seed(1012356)
+  
+  formula.po = formula(stri_join( 'po_flag ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+  
+  model_vars = all.vars(formula.po) %!in_set% c('po_flag')
+  var.monotone = rep(0, length(model_vars))
+  
+  mon_inc_vars = c()
+  mon_dec_vars = c()
+  var.monotone[model_vars %in% mon_inc_vars]  =  1
+  var.monotone[model_vars %in% mon_dec_vars]  = -1
+  
+  max_it = 5000
+  
+  model.po  = gbm(formula.po,
+                   distribution = "bernoulli",
+                   n.trees = max_it,
+                   cv.folds = 0,
+                   shrinkage = 0.01,
+                   interaction.depth=7,
+                   train.fraction = 0.5,
+                   bag.fraction = 0.8,# 0.5 for small samples, 0.7 for large
+                   n.cores = 4,
+                   var.monotone = var.monotone,
+                   data = df[ , all.vars(formula.po), with = F],
+                   verbose = FALSE)
+  
+  saveRDS(model.po, file.path(data_folder,'models/model_po.rds'))
+  #model.po = readRDS(file.path(data_folder,'models/model_po.rds'))
+  
+  plot_gbmiterations(model.po)
+  
+  best_it.po = gbm.perf(model.po, plot.it = F) #ifelse(cv_folds==0, max_it, gbm.perf(model.pd, plot.it = F))
+  
+  pred.po  = predict(model.po, n.trees = best_it.po, newdata = df, type = 'response')
+  
+  #plot_binmodel_predictions(actual.po, pred.po)
+  gbm.roc.area(actual.po, pred.po) 
+
+#influence
+var_inf = summary(model.po, n.trees = best_it.po, plotit = F)
+var_inf = subset(var_inf, rel.inf>0.1)
+#fwrite(var_inf, file = file.path(data_folder, "models/variables.csv"), row.names = FALSE)
+plot_gbminfluence(var_inf)
+print(var_inf)
+
+imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.1])
+#df_agg[1:100,..imp_vars]
+
+plots = plot_gbmpartial(model.po, best_it.po, imp_vars, output_type = 'response')
+marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+
+plots = llply(all.vars(formula.po), function(var_name) {
+  p = plot_profile(pred.po, actual.po, df[[var_name]], error_band = 'binom') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+
+
+plots = llply(names(df) %!in_set% c(all.vars(formula.po), 'LOAN_ID', 'FRST_DTE', 'ORIG_DTE', 'MonthlyRptPrd', 'PRIN_FORG_UPB'), function(var_name) {
+  print(var_name)
+  p = plot_profile(pred.po, actual.po, df[[var_name]], error_band = 'binom') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( p )
+})
+marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+
+
+
+plot_profile(pred.po, actual.po, df$Seller.Name, error_band = 'binom')
+plot_profile(pred.po, actual.po, df$STATE, error_band = 'binom')
+plot_profile(pred.po, actual.po, df$date, error_band = 'binom')
+plot_profile(pred.po, actual.po, df$ORIG_AMT, error_band = 'binom')
+plot_profile(pred.po, actual.po, 1e-3*df$LAST_UPB, error_band = 'binom')
+plot_profile(pred.po, actual.po, df$ORIG_TRM, error_band = 'binom')
+plot_profile(pred.po, actual.po, df$unrate, error_band = 'binom')
+plot_profile(pred.po, actual.po, df$unrate_change_1y, error_band = 'binom')
+plot_profile(pred.po, actual.po, df$date_month, error_band = 'binom')
+plot_profile(pred.po, actual.po, df$CLTV, error_band = 'binom')
+
+plot_profile(df$unrate, df$unrate, df$date, error_band = 'norm')
+
 
 ```

@@ -1,0 +1,35 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r setup}
+library(plyr)
+library(data.table)
+
+```
+
+```{r get_data}
+
+#assume 3 possibilities A, B, C
+states = c('A', 'B', 'C')
+n = 1000
+df = ldply(1:n, function(i){
+  
+  probs = exp(rnorm(3))
+  probs = probs/sum(probs)
+  cum_p = cumsum(probs)
+  cum_p = cumsum(c(0.2, 0.3, 0.5))
+  return ( c(obs = states[1 + findInterval(runif(1), cum_p)]))
+})
+setDT(df)
+
+df_ab = df[obs %in% c('A', 'B'),]
+
+n_ij = nrow(df_ab)
+x_ij = sum(df_ab$obs == 'A')
+binom.test
+```

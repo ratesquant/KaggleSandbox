@@ -1,0 +1,1015 @@
+---
+title: "GBM Fraud Model"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(plyr)
+library(foreach)
+
+library(data.table)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(forcats)
+library(corrplot)
+library(forcats)
+#library(pdp)
+library(e1071)
+library(zoo)
+library(lubridate)
+
+library(gbm)
+#library(randomForestSRC)
+library(xgboost)
+#library(lightgbm)
+
+#working_folder = 'C:/Dev/Kaggle/'
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+source(file.path(working_folder, '/Utils/common.R'))
+```
+
+
+## Load Data
+
+```{r load_data}
+
+ data_folder = file.path(working_folder,'energy_predictor/data/')
+
+ #building_meta
+ df_building = fread(file.path(data_folder,'building_metadata_ex.csv'), check.names=T)
+ 
+ #load weather files
+ df_weather_tn = fread(file.path(data_folder,'weather_train.csv'), check.names=T)
+ df_weather_tt = fread(file.path(data_folder,'weather_test.csv'), check.names=T)
+ df_weather_tn[, source:='train']
+ df_weather_tt[, source:='test']
+ df_weather = rbind(df_weather_tn, df_weather_tt)
+ 
+ df_weather[,time:= ymd_hms(timestamp)]
+ df_weather[, date := ymd(10000*year(time) + 100*month(time) + day(time)) ]
+ df_weather[order(time), air_temperature_m3  := rollmeanr(air_temperature, na.pad = TRUE, na.rm =TRUE, k = 3), by =.(site_id)]
+ df_weather[order(time), air_temperature_m6  := rollmeanr(air_temperature, na.pad = TRUE, na.rm =TRUE, k = 6), by =.(site_id)]
+ df_weather[order(time), air_temperature_m12 := rollmeanr(air_temperature, na.pad = TRUE, na.rm =TRUE, k = 12), by =.(site_id)]
+ df_weather[order(time), air_temperature_m24 := rollmeanr(air_temperature, na.pad = TRUE, na.rm =TRUE, k = 24), by =.(site_id)]
+ df_weather[order(time), air_temperature_m2d := rollmeanr(air_temperature, na.pad = TRUE, na.rm =TRUE, k = 24*2), by =.(site_id)]
+ df_weather[order(time), air_temperature_m3d := rollmeanr(air_temperature, na.pad = TRUE, na.rm =TRUE, k = 24*3), by =.(site_id)]
+ 
+ df_weather[order(time), air_temperature_max24 :=  rollmaxr( air_temperature, na.pad = TRUE, na.rm =TRUE, k = 24), by =.(site_id)]
+ df_weather[order(time), air_temperature_min24 := -rollmaxr(-air_temperature, na.pad = TRUE, na.rm =TRUE, k = 24), by =.(site_id)]
+ df_weather[order(time), air_temperature_max12 :=  rollmaxr( air_temperature, na.pad = TRUE, na.rm =TRUE, k = 12), by =.(site_id)]
+ df_weather[order(time), air_temperature_min12 := -rollmaxr(-air_temperature, na.pad = TRUE, na.rm =TRUE, k = 12), by =.(site_id)]
+ 
+ df_weather[order(time), sea_level_pressure_m6  := rollmeanr(sea_level_pressure, na.pad = TRUE, na.rm =TRUE, k =  6), by =.(site_id)]
+ df_weather[order(time), sea_level_pressure_m12 := rollmeanr(sea_level_pressure, na.pad = TRUE, na.rm =TRUE, k = 12), by =.(site_id)]
+ df_weather[order(time), sea_level_pressure_m24 := rollmeanr(sea_level_pressure, na.pad = TRUE, na.rm =TRUE, k = 24), by =.(site_id)]
+ 
+ df_weather[order(time), wind_speed_m3  := rollmeanr(wind_speed, na.pad = TRUE, na.rm =TRUE, k =  3), by =.(site_id)]
+ df_weather[order(time), wind_speed_m6  := rollmeanr(wind_speed, na.pad = TRUE, na.rm =TRUE, k =  6), by =.(site_id)]
+ df_weather[order(time), wind_speed_m12 := rollmeanr(wind_speed, na.pad = TRUE, na.rm =TRUE, k = 12), by =.(site_id)]
+ 
+ df = fread(file.path(data_folder,'train.csv'),  check.names=T)
+ 
+ df = df[meter_reading>0,] #exclude zero or smaller readings
+
+ #compute number of records for each meter
+ #meter_obs = df_tn[,.(.N), by=.(meter, building_id)]
+ #meter_obs[,obs:=N/max(N)]
+ #df_building[meter_obs[meter==0,], m0_obs:= i.obs, on =.(building_id)]
+ #df_building[meter_obs[meter==1,], m1_obs:= i.obs, on =.(building_id)]
+ #df_building[meter_obs[meter==2,], m2_obs:= i.obs, on =.(building_id)]
+ #df_building[meter_obs[meter==3,], m3_obs:= i.obs, on =.(building_id)]
+ #fwrite(df_building, file.path(data_folder,'building_metadata_ex.csv'))
+ 
+ df = df[sample.int(nrow(df)),] #shuffle
+
+ df[,time:= ymd_hms(timestamp)]  
+ 
+ #merge in building info
+ df[df_building, site_id := i.site_id, on =.(building_id)]
+ 
+ #get a subset for testing
+ #df = df[site_id %in% c(7, 10),]# to save space
+ #df = df[meter == 0,]# to save space
+ 
+ df[df_building, primary_use := i.primary_use, on =.(building_id)]
+ df[df_building, square_feet := i.square_feet, on =.(building_id)]
+ df[df_building, year_built := i.year_built, on =.(building_id)]
+ df[df_building, floor_count := i.floor_count, on =.(building_id)]
+ df[df_building, m0_obs := i.m0_obs, on =.(building_id)]
+ df[df_building, m1_obs := i.m1_obs, on =.(building_id)]
+ df[df_building, m2_obs := i.m2_obs, on =.(building_id)]
+ df[df_building, m3_obs := i.m3_obs, on =.(building_id)]
+ 
+ df[df_building, rank_lm_m0 := i.rank_lm_m0, on =.(building_id)]
+ df[df_building, cl10_m0    := i.cl10_m0, on =.(building_id)]
+ df[df_building, cl20_m0    := i.cl20_m0, on =.(building_id)]
+ df[df_building, cl15_m0    := i.cl15_m0, on =.(building_id)]
+ 
+ df[, primary_use := factor(primary_use)]
+ df[, square_feet_log := log(square_feet)]
+ 
+#merge in weather info
+ df[, meter_reading_log := log(meter_reading + 1)]
+ df[df_weather, air_temperature := i.air_temperature, on =.(site_id, time)]
+ df[df_weather, cloud_coverage := i.cloud_coverage, on =.(site_id, time)]
+ df[df_weather, dew_temperature := i.dew_temperature, on =.(site_id, time)]
+ df[df_weather, precip_depth_1_hr := i.precip_depth_1_hr, on =.(site_id, time)]
+ df[df_weather, sea_level_pressure := i.sea_level_pressure, on =.(site_id, time)]
+ df[df_weather, wind_direction := i.wind_direction, on =.(site_id, time)]
+ df[df_weather, wind_speed := i.wind_speed, on =.(site_id, time)]
+ 
+ df[df_weather, air_temperature_m3 := i.air_temperature_m3, on =.(site_id, time)]
+ df[df_weather, air_temperature_m6 := i.air_temperature_m6, on =.(site_id, time)]
+ df[df_weather, air_temperature_m12 := i.air_temperature_m12, on =.(site_id, time)]
+ df[df_weather, air_temperature_m24 := i.air_temperature_m24, on =.(site_id, time)]
+ df[df_weather, air_temperature_max24 := i.air_temperature_max24, on =.(site_id, time)]
+ df[df_weather, air_temperature_min24 := i.air_temperature_min24, on =.(site_id, time)]
+ df[df_weather, air_temperature_max12 := i.air_temperature_max12, on =.(site_id, time)]
+ df[df_weather, air_temperature_min12 := i.air_temperature_min12, on =.(site_id, time)]
+ df[df_weather, sea_level_pressure_m6  := i.sea_level_pressure_m6, on =.(site_id, time)]
+ df[df_weather, sea_level_pressure_m12 := i.sea_level_pressure_m12, on =.(site_id, time)]
+ df[df_weather, sea_level_pressure_m24 := i.sea_level_pressure_m24, on =.(site_id, time)]
+ df[df_weather, wind_speed_m3  := i.wind_speed_m3, on =.(site_id, time)]
+ df[df_weather, wind_speed_m6  := i.wind_speed_m6, on =.(site_id, time)]
+ df[df_weather, wind_speed_m12 := i.wind_speed_m12, on =.(site_id, time)]
+
+ 
+ df[, time_month := month(time) ]
+ df[, time_day := day(time) ]
+ df[, time_wday := wday(time) ]
+ df[, time_hour := hour(time) ]
+ df[, date := ymd(10000*year(time) + 100*time_month + time_day) ]
+ 
+ #% Clean up -------------
+ gc(reset = TRUE)
+ tables()
+ 
+```
+
+## Data View
+meter = {0-electricity, 1-chilledwater, 2-steam, 3-hotwater}
+        0         1         2         3 
+11.530741  3.525936  2.361753  0.923694 
+```{r data, echo=FALSE, eval = FALSE}
+
+ggplot(df[is_test == FALSE & date > '2016-10-10',.(meter_reading = mean(meter_reading)), by =.(time, meter)], aes(time, meter_reading)) + geom_line(color = 'red') + facet_wrap(~meter, scales = 'free')
+
+ggplot(df_weather[site_id == 10,], aes(time, air_temperature_m24, group = source, color = source)) + geom_line()
+ggplot(df_weather[site_id == 10 & date == '2016-10-10',], aes(time, sea_level_pressure, group = source, color = source)) + geom_line()
+
+ggplot(df_weather[site_id == 10 & date > '2016-10-10' & date < '2016-10-20',], aes(time, sea_level_pressure, group = source, color = source)) + geom_line() +
+    geom_line(aes(time, sea_level_pressure_m12, group = source, color = source), color = 'black')
+
+ggplot(df_weather[site_id == 10 & date > '2016-10-10' & date < '2016-10-20',], aes(time, air_temperature, group = source, color = source)) + geom_line() + 
+  geom_line(aes(time, air_temperature_min24, group = source, color = source), color = 'black')
+
+ggplot(df_weather[site_id == 10 & date > '2016-10-10' & date < '2016-10-20',], aes(time, wind_speed, group = source, color = source)) + geom_line() + 
+  geom_line(aes(time, wind_speed_m12, group = source, color = source), color = 'black')
+
+ggplot(df_weather[site_id == 10 & date >= '2016-10-01' & date <= '2016-11-01',], aes(time, precip_depth_1_hr, group = source, color = source)) + geom_line()
+
+ggplot(df_weather, aes(time, air_temperature, group = source, color = source)) + geom_line() + facet_wrap(~site_id)
+ggplot(df_weather, aes(time, cloud_coverage, group = source, color = source)) + geom_line() + facet_wrap(~site_id)
+
+ggplot(df[,.(count=.N), by =.(building_id, is_test, meter) ], aes(building_id, count, group = is_test, color = is_test)) + geom_point() + facet_wrap(~meter)
+
+ggplot(df[t_index & building_id == 197, ], aes(time, meter_reading, group = meter, color = meter)) + geom_line() + facet_wrap(~meter)
+ggplot(df[t_index & building_id == 197 & time>='2016-12-31', ], aes(time, meter_reading, group = meter, color = meter)) + geom_line() + facet_wrap(~meter)
+
+ggplot(df[t_index & building_id %in% c(434, 404, 1169, 954, 551, 1221, 1092, 1135, 831, 849, 857,416) & time>='2016-12-31', ], aes(time, meter_reading, group = meter, color = meter)) + 
+  geom_line() + facet_wrap(~building_id)
+
+```
+
+## Linear Model
+```{r linear_model, eval = FALSE}
+  model.lm = lm(meter_reading_log ~ square_feet_log + factor(time_wday) + factor(primary_use) + factor(site_id) + factor(time_month), df)
+  summary(model.lm)
+  
+  pred.lm  = predict(model.lm, newdata = df)
+  pred.lm_t = pred.lm[t_index]
+      
+  summary(model.lm)
+
+  plot_profile(pred.lm_t,   actual, df[['square_feet_log']][t_index], bucket_count = 20, error_band = 'normal')
+  plot_profile(pred.lm_t,   actual, factor(df[['meter']][t_index]), bucket_count = 20, error_band = 'normal')
+  
+  plot_profile(pred.lm_t,   actual, df[['air_temperature']][t_index], bucket_count = 20, error_band = 'normal')
+  plot_profile(pred.lm_t,   actual, df[['air_temperature_m3']][t_index], bucket_count = 20, error_band = 'normal')
+  plot_profile(pred.lm_t,   actual, df[['air_temperature_m24']][t_index], bucket_count = 20, error_band = 'normal')
+  plot_profile(pred.lm_t,   actual, df[['time_hour']][t_index], bucket_count = 20, error_band = 'normal')
+  plot_profile(pred.lm_t,   actual, factor(df[['time_month']][t_index]), bucket_count = 20, error_band = 'normal')
+  plot_profile(pred.lm_t,   actual, factor(df[['time_day']][t_index]), bucket_count = 20, error_band = 'normal')
+  plot_profile(pred.lm_t,   actual, factor(df[['time_wday']][t_index]), bucket_count = 20, error_band = 'normal')
+  plot_profile(pred.lm_t,   actual, factor(df[['primary_use']][t_index]), bucket_count = 20, error_band = 'normal')
+ 
+```
+
+## GBM Model
+                                   var     rel.inf
+meter                             meter 35.96964866
+square_feet_log         square_feet_log 30.00615434
+air_temperature_m24 air_temperature_m24 11.16617825
+time_month                   time_month  6.74008741
+floor_count                 floor_count  5.14970181
+primary_use                 primary_use  2.35049794
+time_hour                     time_hour  1.49600808
+time_day                       time_day  1.36595614
+air_temperature         air_temperature  1.34930491
+air_temperature_m6   air_temperature_m6  1.13374333
+air_temperature_m3   air_temperature_m3  0.73646024
+sea_level_pressure   sea_level_pressure  0.65506774
+time_wday                     time_wday  0.62044201
+air_temperature_m12 air_temperature_m12  0.58191064
+dew_temperature         dew_temperature  0.33277896
+wind_direction           wind_direction  0.13748674
+wind_speed                   wind_speed  0.10045511
+cloud_coverage           cloud_coverage  0.06661212
+precip_depth_1_hr     precip_depth_1_hr  0.04150555
+site_id                         site_id  0.00000000
+```{r gbm_model, eval = FALSE}
+    
+    obj_var = 'meter_reading_log'
+    actual = df[[obj_var]][t_index]
+    
+    weather_vars = c('air_temperature','air_temperature_m3','air_temperature_m6', 'air_temperature_m12', 'air_temperature_m24',
+                     'air_temperature_max24','air_temperature_min24','air_temperature_max12', 'air_temperature_min12',
+                     'sea_level_pressure', 'sea_level_pressure_m6', 'sea_level_pressure_m12', 'sea_level_pressure_m24',
+                     'cloud_coverage','dew_temperature', 'precip_depth_1_hr',  'wind_direction', 'wind_speed','wind_speed_m3','wind_speed_m6','wind_speed_m12')
+    
+    # shoudl we use building_id and site_id
+    all_vars = c('meter', 'site_id', 'primary_use', 'square_feet_log', 'floor_count', 'time_day', 'time_wday', 'time_month','time_hour',weather_vars) #'year_built'
+
+ 
+    set.seed(1012356)
+    
+    formula.gbm = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+    
+    model_vars = all.vars(formula.gbm) %!in_set% c(obj_var)
+    
+    var.monotone = rep(0, length(model_vars))
+    mon_inc_vars = c()
+    mon_dec_vars = c()
+    var.monotone[model_vars %in% mon_inc_vars]  =  1
+    var.monotone[model_vars %in% mon_dec_vars]  = -1
+    
+    #dfs = df[t_index , all.vars(formula.gbm), with = F][sample.int(sum(t_index), 300000),]
+    dfs = df[t_index , all.vars(formula.gbm), with = F]
+    
+    max_it = 20000
+    
+    model.gbm  = gbm(formula.gbm,
+                     distribution = "gaussian",
+                     n.trees = max_it,
+                     cv.folds = 0,
+                     shrinkage = 0.01,
+                     interaction.depth=7,
+                     train.fraction = 0.5,
+                     bag.fraction = 0.9,# 0.5 for small samples, 0.9 for large
+                     n.cores = 4,
+                     var.monotone = var.monotone,
+                     data = dfs,
+                     keep.data = FALSE,
+                     verbose = TRUE)
+    #Error: (0.7)
+    #saveRDS(model.gbm, file.path(working_folder,'energy_predictor/model_gbm.rds'))
+    #model.gbm = readRDS(file.path(working_folder,'energy_predictor/model_gbm.rds'))
+    
+    plot_gbmiterations(model.gbm)
+    
+    best_it.gbm = gbm.perf(model.gbm, plot.it = FALSE)
+    
+    #pred.gbm_t  = predict(model.gbm, n.trees = best_it.gbm, newdata = df[tindex,], type = 'link')
+    pred.gbm  = predict(model.gbm, n.trees = best_it.gbm, newdata = df, type = 'link')
+    pred.gbm_t = pred.gbm[t_index]
+    
+    summary(lm('actual ~ model', data = data.frame(model = pred.gbm_t, actual) ))
+    
+    #influence
+    var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
+    #fwrite(var_inf, file = file.path(working_folder, "energy_predictor/variables.csv"), row.names = FALSE)
+    var_inf = subset(var_inf, rel.inf>0.1)
+    plot_gbminfluence(var_inf)
+    print(var_inf)
+  
+    imp_vars = as.character(var_inf$var[var_inf$rel.inf>0.1])
+    #df_agg[1:100,..imp_vars]
+  
+    plots = plot_gbmpartial(model.gbm, best_it.gbm, imp_vars, output_type = 'link')
+    #marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+    gplots = lapply(plots, ggplotGrob)
+    ggsave(filename = file.path(working_folder,"energy_predictor/gbm.pd.v1.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+  
+    # Profiles -----------
+  plots = llply(as.character(var_inf$var), function(var_name) {
+    p = plot_profile(pred.gbm_t, actual, df[[var_name]][t_index], bucket_count = 20, error_band = 'normal') +
+      ggtitle(var_name) +  theme(title =element_text(size=6))
+    return( p )
+  })
+  #marrangeGrob(plots, nrow = 5, ncol = 7, top = NULL)
+  gplots = lapply(plots, ggplotGrob)
+  ggsave(filename = file.path(working_folder,"energy_predictor/gbm.profiles.v1.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+
+  # Check weather vars -----------
+  #df[1:100, cat_vars, with = FALSE]
+  plots = llply(weather_vars, function(var_name) {
+    p = plot_profile(pred.gbm_t, actual, df[[var_name]][t_index], bucket_count = 20, error_band = 'normal') +
+      ggtitle(var_name) +  theme(title =element_text(size=6))
+    return( p )
+  })
+  #marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+  gplots = lapply(plots, ggplotGrob)
+  ggsave(filename = file.path(working_folder,"energy_predictor/weather_vars.pdf"), plot = marrangeGrob(gplots, nrow=3, ncol=4), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+  
+  plot_profile(pred.gbm_t, actual,factor(df[['site_id']][t_index]), error_band = 'normal')
+  plot_profile(pred.gbm_t, actual,factor(df[['primary_use']][t_index]), error_band = 'normal')
+  plot_profile(pred.gbm_t, actual,factor(df[['building_id']][t_index]), error_band = 'normal')
+  
+  plot_profile(pred.gbm_t,   actual, df[['time_hour']][t_index], bucket_count = 20, error_band = 'normal')
+  plot_profile(pred.gbm_t,   actual, df[['time_month']][t_index], bucket_count = 20, error_band = 'normal')
+  plot_profile(pred.gbm_t,   actual, df[['time_day']][t_index], bucket_count = 20, error_band = 'normal')
+  plot_profile(pred.gbm_t,   actual, df[['time_wday']][t_index], bucket_count = 20, error_band = 'normal')
+  plot_profile(pred.gbm_t,   actual, df[['square_feet_log']][t_index], bucket_count = 20, error_band = 'normal')
+  plot_profile(pred.gbm_t,   actual, factor(df[['meter']][t_index]), bucket_count = 20, error_band = 'normal')
+  
+  plot_profile(pred.gbm_t,   actual, df[['air_temperature']][t_index], bucket_count = 20, error_band = 'normal')
+  plot_profile(pred.gbm_t,   actual, df[['air_temperature_m3']][t_index], bucket_count = 20, error_band = 'normal')
+  plot_profile(pred.gbm_t,   actual, df[['air_temperature_m2d']][t_index], bucket_count = 20, error_band = 'normal')
+  plot_profile(pred.gbm_t,   actual, df[['cloud_coverage']][t_index], bucket_count = 25, error_band = 'normal')
+  
+  
+  #df[, model := pred.lm]
+  df[, model := pred.gbm]
+  df[, model_error := meter_reading_log - model]
+  ggplot(df[meter == 0 & building_id == 1000 &  date >= '2016-08-01' & date <= '2016-11-01',], aes(time, meter_reading_log)) + geom_line(aes(time, model ), color = 'red') +
+    geom_line(alpha = 0.4)
+  ggplot(df[building_id == 1002,], aes(model, meter_reading_log)) + geom_point(alpha = 0.2) + facet_wrap(~meter)
+  
+  num_vars  = names(which(sapply(df, is.numeric))) %!in_set% c('row_id','site_id')
+  corr_matrix = cor(df[t_index, num_vars, with =FALSE], use="pairwise.complete.obs")
+  #corrplot(corr_matrix, method="number", number.cex = 0.8)
+  var_count = ceiling(length(num_vars)/100)
+  cor_plot = ggplot( melt(corr_matrix), aes(Var1, Var2, fill = value, alpha = abs(value), label = ifelse(abs(value)>0.1, sprintf('%.2f', value), ''))) + geom_tile() + scale_fill_custom('jet', discrete = FALSE) + 
+  theme(axis.text.x  = element_text(angle = 45, hjust = 1, size = 6), axis.text.y  = element_text(size = 6), axis.title.x = element_blank(), axis.title.y = element_blank()) + geom_text(size = 2)
+ggsave(filename = file.path(working_folder,"energy_predictor/cor_matrix.pdf"), plot = ggplotGrob(cor_plot), device = 'pdf', width = 14*var_count, height = 8.5*var_count, dpi = 240)
+
+
+```
+
+## XGBOOST Model
+    Feature         Gain       Cover   Frequency                   name
+ 1:       3 0.3249686260 0.208399898 0.190367566        square_feet_log
+ 2:       0 0.1629448688 0.060844090 0.109646142                  meter
+ 3:       1 0.1406083916 0.062046938 0.059531037                site_id
+ 4:       2 0.0667220439 0.062101667 0.083429110            primary_use
+ 5:       7 0.0619486384 0.038004107 0.072344980             time_month
+ 6:       9 0.0598554024 0.082213584 0.062388333             year_built
+ 7:      14 0.0416910187 0.032516816 0.026122552    air_temperature_m24
+ 8:       4 0.0290090897 0.032667920 0.026224382            floor_count
+ 9:      10 0.0229665151 0.019086715 0.016841961        air_temperature
+10:      15 0.0121465639 0.031815308 0.024395549  air_temperature_max24
+11:       8 0.0113244642 0.040046540 0.051190050              time_hour
+12:      24 0.0108993307 0.027944195 0.024636611        dew_temperature
+13:      16 0.0105586794 0.033268155 0.023340494  air_temperature_min24
+14:       5 0.0089114025 0.027037013 0.042798472               time_day
+15:      22 0.0070752812 0.023271271 0.017368408 sea_level_pressure_m24
+16:      17 0.0042084093 0.015775821 0.010403316  air_temperature_max12
+17:      13 0.0033294747 0.015670630 0.011014729    air_temperature_m12
+18:       6 0.0032798554 0.019147974 0.021474474              time_wday
+19:      21 0.0029807235 0.015952654 0.010294352 sea_level_pressure_m12
+20:      11 0.0026788240 0.011319932 0.008719553     air_temperature_m3
+21:      18 0.0020442224 0.019076694 0.010782531  air_temperature_min12
+22:      20 0.0020067198 0.015075227 0.009802281  sea_level_pressure_m6
+23:      12 0.0018960754 0.013539218 0.009719693     air_temperature_m6
+24:      25 0.0014480620 0.008018832 0.006729434      precip_depth_1_hr
+25:      30 0.0010742779 0.015987624 0.014615320         wind_speed_m12
+26:      19 0.0010521438 0.017725998 0.014772281     sea_level_pressure
+27:      29 0.0007535392 0.013479024 0.009732448          wind_speed_m6
+28:      26 0.0005684383 0.014585613 0.012876425         wind_direction
+29:      23 0.0004585393 0.006177053 0.005633301         cloud_coverage
+30:      28 0.0003789186 0.009010906 0.007571099          wind_speed_m3
+31:      27 0.0002114599 0.008192583 0.005233115             wind_speed
+    Feature         Gain       Cover   Frequency                   name
+```{r xgb_model, eval = FALSE}
+   obj_var = 'meter_reading_log'
+   actual = df[[obj_var]][t_index]
+    
+   weather_vars = c('air_temperature','air_temperature_m3','air_temperature_m6', 'air_temperature_m12', 'air_temperature_m24',
+                     'air_temperature_max24','air_temperature_min24','air_temperature_max12', 'air_temperature_min12',
+                     'sea_level_pressure', 'sea_level_pressure_m6', 'sea_level_pressure_m12', 'sea_level_pressure_m24',
+                     'cloud_coverage','dew_temperature', 'precip_depth_1_hr',  'wind_direction', 'wind_speed','wind_speed_m3','wind_speed_m6','wind_speed_m12')
+    
+   # should we use building_id
+   all_vars = c('meter', 'site_id', 'primary_use', 'square_feet_log', 'floor_count', 'time_day', 'time_wday', 'time_month','time_hour','year_built',weather_vars) #'year_built'
+ 
+    set.seed(1012356)
+    
+    t_index_v = which(t_index)
+    t_index_v1 = sample(t_index_v, 0.6*length(t_index_v))
+    t_index_v2 = setdiff(t_index_v, t_index_v1)
+    dtrain <- xgb.DMatrix(data.matrix(df[t_index_v1, all_vars, with = F]), label = df[[obj_var]][t_index_v1] )
+    deval  <- xgb.DMatrix(data.matrix(df[t_index_v2, all_vars, with = F]), label = df[[obj_var]][t_index_v2] )
+
+my_params <- list(max_depth = 9, 
+              eta =  0.01, 
+              nthread = 4,
+              subsample = 0.9,
+              min_child_weight = 4,
+              gamma = 0.3,
+              objective = "reg:squarederror",
+              eval_metric = "rmse",
+              base_score = mean(actual))
+
+model.xgb <- xgb.train(my_params, data = dtrain, 
+                       watchlist = list(train = dtrain, eval = deval),
+                       nrounds = 10000, 
+                       verbose = 1, 
+                       print_every_n = 100)
+
+
+#xgb.save(model.xgb, file.path(working_folder,'energy_predictor/xgb.model'))
+#model.xgb = xgb.load(file.path(working_folder,'energy_predictor/xgb.model'))
+ggplot(model.xgb$evaluation_log, aes(iter, train_rmse)) + geom_line() + geom_line(aes(iter, eval_rmse), color = 'red')
+
+pred.xgb   <- predict(model.xgb, data.matrix(df[,all_vars, with = F]) )
+#pred.xgb_t <- predict(model.xgb, data.matrix(df[t_index,all_vars, with = F]) )
+pred.xgb_t = pred.xgb[t_index]
+
+importance_matrix <- xgb.importance(model = model.xgb)
+importance_matrix$Name = all_vars[as.numeric(importance_matrix$Feature)+1]
+print(importance_matrix)
+#fwrite( importance_matrix, file.path(working_folder,'energy_predictor/var.imp.xgb.csv'))
+xgb.ggplot.importance(importance_matrix = importance_matrix)
+xgb.ggplot.deepness(model.xgb)
+
+gplots = llply(as.character(importance_matrix$Name), function(var_name) {
+  p = plot_profile(pred.xgb_t, actual,df[[var_name]][t_index], bucket_count = 20, error_band = 'norm') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( ggplotGrob(p) )
+})
+#marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+ggsave(filename = file.path(working_folder,"energy_predictor/xgb.profiles.pdf"), plot = marrangeGrob(gplots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+
+# Check cat vars -----------
+#df[1:100, cat_vars, with = FALSE]
+num_vars  = names(which(sapply(df, is.numeric))) %!in_set% c('row_id','site_id', 'year_built')
+gplots = llply(num_vars, function(var_name) {
+  print(var_name)
+  p = plot_profile(pred.xgb_t, actual ,df[[var_name]][t_index], bucket_count = 20, error_band = 'norm') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( ggplotGrob(p) )
+})
+ggsave(filename = file.path(working_folder,"energy_predictor/xgb_num_vars.pdf"), plot = marrangeGrob(gplots, nrow=4, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 240)
+
+plot_profile(pred.xgb_t, actual,factor(df[['site_id']][t_index]), error_band = 'norm')
+plot_profile(pred.xgb_t, actual,fct_infreq(factor(df[['year_built']][t_index])), error_band = 'norm')
+
+plot_profile(pred.gbm_t, actual,factor(df[['site_id']][t_index]), error_band = 'normal')
+plot_profile(pred.gbm_t, actual,factor(df[['primary_use']][t_index]), error_band = 'normal')
+plot_profile(pred.gbm_t, actual,factor(df[['building_id']][t_index]), error_band = 'normal')
+  
+plot_profile(pred.gbm_t,   actual, df[['time_hour']][t_index], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.gbm_t,   actual, df[['time_month']][t_index], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.gbm_t,   actual, df[['time_day']][t_index], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.gbm_t,   actual, df[['time_wday']][t_index], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.gbm_t,   actual, df[['square_feet_log']][t_index], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.gbm_t,   actual, factor(df[['meter']][t_index]), bucket_count = 20, error_band = 'normal')
+  
+plot_profile(pred.gbm_t,   actual, df[['air_temperature']][t_index], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.gbm_t,   actual, df[['air_temperature_m3']][t_index], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.gbm_t,   actual, df[['air_temperature_m2d']][t_index], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.gbm_t,   actual, df[['cloud_coverage']][t_index], bucket_count = 25, error_band = 'normal')
+
+```
+
+##  XGBOOST Model: meter == 0
+                   Feature         Gain        Cover   Frequency   Importance
+ 1:        square_feet_log 5.611817e-01 0.1721982298 0.108887935 5.611817e-01
+ 2:             rank_lm_m0 2.280666e-01 0.1287867210 0.098734643 2.280666e-01
+ 3:                cl20_m0 4.231006e-02 0.0240484143 0.026522413 4.231006e-02
+ 4:                site_id 3.216058e-02 0.0792072795 0.070314300 3.216058e-02
+ 5:                cl10_m0 2.565332e-02 0.0137073827 0.015392679 2.565332e-02
+ 6:            primary_use 1.880949e-02 0.1104225924 0.080194950 1.880949e-02
+ 7:                cl15_m0 1.307853e-02 0.0306136994 0.025332508 1.307853e-02
+ 8:              time_hour 1.232186e-02 0.1112195743 0.115917463 1.232186e-02
+ 9:  sea_level_pressure_m6 1.182006e-02 0.0049556603 0.006380681 1.182006e-02
+10: sea_level_pressure_m12 1.172439e-02 0.0051078241 0.006175671 1.172439e-02
+
+```{r xgb_model}
+   obj_var = 'meter_reading_log'
+   t_index.m0 = df$meter == 0
+   actual = df[[obj_var]][t_index.m0]
+    
+   weather_vars = c('air_temperature','air_temperature_m3','air_temperature_m6', 'air_temperature_m12', 'air_temperature_m24',
+                     'air_temperature_max24','air_temperature_min24','air_temperature_max12', 'air_temperature_min12',
+                     'sea_level_pressure', 'sea_level_pressure_m6', 'sea_level_pressure_m12', 'sea_level_pressure_m24',
+                     'cloud_coverage','dew_temperature', 'precip_depth_1_hr',  'wind_direction', 'wind_speed','wind_speed_m3','wind_speed_m6','wind_speed_m12')
+    
+   # should we use building_id
+   all_vars = c('site_id', 'primary_use', 'square_feet_log', 'floor_count', 'time_day', 'time_wday', 'time_month','time_hour','year_built','rank_lm_m0','cl10_m0','cl20_m0','cl15_m0',weather_vars)
+ 
+    set.seed(1012356)
+    
+    t_index_v = which(t_index.m0)
+    t_index_v1 = sample(t_index_v, 0.7*length(t_index_v))
+    t_index_v2 = setdiff(t_index_v, t_index_v1)
+    dtrain <- xgb.DMatrix(data.matrix(df[t_index_v1, all_vars, with = F]), label = df[[obj_var]][t_index_v1] )
+    deval  <- xgb.DMatrix(data.matrix(df[t_index_v2, all_vars, with = F]), label = df[[obj_var]][t_index_v2] )
+
+my_params <- list(max_depth = 9, 
+              eta =  0.01, 
+              nthread = 4,
+              subsample = 0.9,
+              min_child_weight = 4,
+              gamma = 0.3,
+              objective = "reg:squarederror",
+              eval_metric = "rmse",
+              base_score = mean(actual))
+
+model.xgb.m0 <- xgb.train(my_params, data = dtrain, 
+                       watchlist = list(train = dtrain, eval = deval),
+                       nrounds = 3000, 
+                       verbose = 1, 
+                       print_every_n = 10,
+                       early_stopping_rounds = 50)
+
+#0.505217 (2000) 
+xgb.save(model.xgb.m0, file.path(working_folder,'energy_predictor/xgb.model.m0'))
+#model.xgb.m0 = xgb.load(file.path(working_folder,'energy_predictor/xgb.model.m0'))
+ggplot(model.xgb.m0$evaluation_log, aes(iter, train_rmse)) + geom_line() + geom_line(aes(iter, eval_rmse), color = 'red')
+
+pred.xgb.m0_t <- predict(model.xgb.m0, data.matrix(df[t_index.m0,all_vars, with = F]) )
+
+importance_matrix <- xgb.importance(model = model.xgb.m0)
+#importance_matrix$Name = all_vars[as.numeric(importance_matrix$Feature)+1]
+print(importance_matrix)
+xgb.ggplot.importance(importance_matrix = importance_matrix)
+#fwrite( importance_matrix, file.path(working_folder,'energy_predictor/var.imp.xgb.m0.csv'))
+    
+plot_profile(pred.xgb.m0_t, actual,factor(df[['site_id']][t_index.m0]), error_band = 'normal')
+plot_profile(pred.xgb.m0_t, actual,factor(df[['year_built']][t_index.m0]), error_band = 'normal')
+plot_profile(pred.xgb.m0_t, actual,factor(df[['building_id']][t_index.m0]), error_band = 'normal')
+plot_profile(pred.xgb.m0_t, actual,factor(df[['rank_lm_m0']][t_index.m0]), error_band = 'normal')
+plot_profile(pred.xgb.m0_t, actual,factor(df[['cl20_m0']][t_index.m0]), error_band = 'normal')
+
+plot_profile(pred.xgb.m0_t,   actual, df[['time_hour']][t_index.m0], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m0_t,   actual, df[['square_feet_log']][t_index.m0], bucket_count = 50, error_band = 'normal')
+plot_profile(pred.xgb.m0_t,   actual, factor(df[['time_day']][t_index.m0]), bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m0_t,   actual, factor(df[['time_month']][t_index.m0]), bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m0_t,   actual, df[['date']][t_index.m0], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m0_t,   actual, df[['air_temperature_m3']][t_index.m0], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m0_t,   actual, factor(df[['primary_use']][t_index.m0]), bucket_count = 20, error_band = 'normal')
+
+plot_profile(pred.xgb.m0_t,   actual, df[['m0_obs']][t_index.m0]>0.1, bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m0_t,   actual, df[['m1_obs']][t_index.m0]>0.1, bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m0_t,   actual, df[['m2_obs']][t_index.m0]>0.1, bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m0_t,   actual, df[['m3_obs']][t_index.m0]>0.1, bucket_count = 20, error_band = 'normal')
+
+index = df$date[t_index.m0] > '2016-05-01'
+plot_profile(pred.xgb.m0_t[index],   actual[index], df[['date']][t_index.m0][index], bucket_count = 20, error_band = 'normal')
+
+index = df$building_id[t_index.m0]  <  300
+plot_profile(pred.xgb.m0_t[index], actual[index], fct_reorder(factor(df[['building_id']][t_index.m0][index]), df[['meter_reading_log']][t_index.m0][index], sum), error_band = 'normal')
+
+#df_building[building_id == 740,]
+index = df$building_id[t_index.m0] == 1212 #434, 404, 1169, 954, 551, 1221, 1092, 1135, 831, 849, 857,416, 740, 434 , 805, 53, 301, 1019, 816, 740, 1212, 805, 53, 301
+plot_profile(pred.xgb.m0_t[index], actual[index], df[['date']][t_index.m0][index], min_obs = 1)
+
+#identify strange buildings
+temp = data.table(model = pred.xgb.m0_t, actual = actual, building_id = df[['building_id']][t_index.m0],  site_id = df[['site_id']][t_index.m0])
+#temp = temp[, .(r2 = summary(lm(actual ~ model))$r.squared), by=.(building_id)]
+#temp[order(r2),]
+#ggplot(temp, aes(r2)) + geom_histogram(binwidth = 0.01)
+```
+
+##  XGBOOST Model: meter == 1
+ 1:        square_feet_log 2.546639e-01 0.177556525 0.129148317
+ 2:                site_id 1.863499e-01 0.043672907 0.036408085
+ 3:             rank_lm_m0 1.290866e-01 0.176995958 0.124994538
+ 4:    air_temperature_m24 9.566292e-02 0.038527961 0.046121278
+ 5:        dew_temperature 5.373264e-02 0.031658248 0.036931253
+ 6:                cl15_m0 5.075988e-02 0.026643515 0.012268338
+ 7:             year_built 4.038276e-02 0.051503531 0.044762985
+ 8:              time_hour 3.620269e-02 0.069493130 0.081277888
+ 9:            primary_use 3.093511e-02 0.032864380 0.047764825
+10:                cl20_m0 2.476996e-02 0.015383915 0.014216560
+```{r xgb_model_m1}
+   obj_var = 'meter_reading_log'
+   t_index.m1 = df$meter == 1
+   actual = df[[obj_var]][t_index.m1]
+    
+   weather_vars = c('air_temperature','air_temperature_m3','air_temperature_m6', 'air_temperature_m12', 'air_temperature_m24',
+                     'air_temperature_max24','air_temperature_min24','air_temperature_max12', 'air_temperature_min12',
+                     'sea_level_pressure', 'sea_level_pressure_m6', 'sea_level_pressure_m12', 'sea_level_pressure_m24',
+                     'cloud_coverage','dew_temperature', 'precip_depth_1_hr',  'wind_direction', 'wind_speed','wind_speed_m3','wind_speed_m6','wind_speed_m12')
+    
+   # should we use building_id
+   all_vars = c('site_id', 'primary_use', 'square_feet_log', 'floor_count', 'time_day', 'time_wday', 'time_month','time_hour','year_built','rank_lm_m0','cl10_m0','cl20_m0','cl15_m0',weather_vars)
+ 
+    set.seed(1012356)
+    
+    t_index_v = which(t_index.m1)
+    t_index_v1 = sample(t_index_v, 0.7*length(t_index_v))
+    t_index_v2 = setdiff(t_index_v, t_index_v1)
+    dtrain <- xgb.DMatrix(data.matrix(df[t_index_v1, all_vars, with = F]), label = df[[obj_var]][t_index_v1] )
+    deval  <- xgb.DMatrix(data.matrix(df[t_index_v2, all_vars, with = F]), label = df[[obj_var]][t_index_v2] )
+
+my_params <- list(max_depth = 9, 
+              eta =  0.01, 
+              nthread = 4,
+              subsample = 0.9,
+              min_child_weight = 4,
+              gamma = 0.3,
+              objective = "reg:squarederror",
+              eval_metric = "rmse",
+              base_score = mean(actual))
+
+model.xgb.m1 <- xgb.train(my_params, data = dtrain, 
+                       watchlist = list(train = dtrain, eval = deval),
+                       nrounds = 3000, 
+                       verbose = 1, 
+                       print_every_n = 10,
+                       early_stopping_rounds = 100)
+
+#0.505217 (2000) 
+xgb.save(model.xgb.m1, file.path(working_folder,'energy_predictor/xgb.model.m1'))
+#model.xgb.m1 = xgb.load(file.path(working_folder,'energy_predictor/xgb.model.m1'))
+ggplot(model.xgb.m1$evaluation_log, aes(iter, train_rmse)) + geom_line() + geom_line(aes(iter, eval_rmse), color = 'red')
+
+pred.xgb.m1_t <- predict(model.xgb.m1, data.matrix(df[t_index.m1,all_vars, with = F]) )
+
+importance_matrix <- xgb.importance(model = model.xgb.m1)
+#importance_matrix$Name = all_vars[as.numeric(importance_matrix$Feature)+1]
+print(importance_matrix)
+xgb.ggplot.importance(importance_matrix = importance_matrix)
+#fwrite( importance_matrix, file.path(working_folder,'energy_predictor/var.imp.xgb.m1.csv'))
+    
+plot_profile(pred.xgb.m1_t, actual,factor(df[['site_id']][t_index.m1]), error_band = 'normal')
+plot_profile(pred.xgb.m1_t, actual,factor(df[['year_built']][t_index.m1]), error_band = 'normal')
+plot_profile(pred.xgb.m1_t, actual,factor(df[['building_id']][t_index.m1]), error_band = 'normal')
+plot_profile(pred.xgb.m1_t, actual,factor(df[['rank_lm_m1']][t_index.m1]), error_band = 'normal')
+plot_profile(pred.xgb.m1_t, actual,factor(df[['cl20_m1']][t_index.m1]), error_band = 'normal')
+
+plot_profile(pred.xgb.m1_t,   actual, df[['time_hour']][t_index.m1], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m1_t,   actual, df[['square_feet_log']][t_index.m1], bucket_count = 50, error_band = 'normal')
+plot_profile(pred.xgb.m1_t,   actual, factor(df[['time_day']][t_index.m1]), bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m1_t,   actual, factor(df[['time_month']][t_index.m1]), bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m1_t,   actual, df[['date']][t_index.m1], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m1_t,   actual, df[['air_temperature_m3']][t_index.m1], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m1_t,   actual, factor(df[['primary_use']][t_index.m1]), bucket_count = 20, error_band = 'normal')
+
+plot_profile(pred.xgb.m1_t,   actual, df[['m1_obs']][t_index.m1]>0.1, bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m1_t,   actual, df[['m1_obs']][t_index.m1]>0.1, bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m1_t,   actual, df[['m2_obs']][t_index.m1]>0.1, bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m1_t,   actual, df[['m3_obs']][t_index.m1]>0.1, bucket_count = 20, error_band = 'normal')
+
+index = df$date[t_index.m1] > '2016-05-01'
+plot_profile(pred.xgb.m1_t[index],   actual[index], df[['date']][t_index.m1][index], bucket_count = 20, error_band = 'normal')
+
+index = df$building_id[t_index.m1]  <  300
+plot_profile(pred.xgb.m1_t[index], actual[index], fct_reorder(factor(df[['building_id']][t_index.m1][index]), df[['meter_reading_log']][t_index.m1][index], sum), error_band = 'normal')
+
+#df_building[building_id == 740,]
+index = df$building_id[t_index.m1] == 1212 #434, 404, 1169, 954, 551, 1221, 1092, 1135, 831, 849, 857,416, 740, 434 , 805, 53, 301, 1019, 816, 740, 1212, 805, 53, 301
+plot_profile(pred.xgb.m1_t[index], actual[index], df[['date']][t_index.m1][index], min_obs = 1)
+
+#identify strange buildings
+temp = data.table(model = pred.xgb.m1_t, actual = actual, building_id = df[['building_id']][t_index.m1],  site_id = df[['site_id']][t_index.m1])
+#temp = temp[, .(r2 = summary(lm(actual ~ model))$r.squared), by=.(building_id)]
+#temp[order(r2),]
+#ggplot(temp, aes(r2)) + geom_histogram(binwidth = 0.01)
+```
+
+##  XGBOOST Model: meter == 2
+ 1:        square_feet_log 0.3000487379 0.182594505 0.136047401
+ 2:             rank_lm_m0 0.1534965410 0.161310901 0.114358998
+ 3:                site_id 0.1042949422 0.031780167 0.028484379
+ 4:                cl15_m0 0.0957763783 0.012966152 0.008172102
+ 5:        air_temperature 0.0782356340 0.025423885 0.032864928
+ 6:    air_temperature_m24 0.0562553987 0.028999691 0.041521556
+ 7:            primary_use 0.0531585815 0.038192207 0.050154769
+ 8:  air_temperature_max24 0.0345067577 0.026258022 0.028639283
+ 9:             year_built 0.0285191289 0.057247584 0.023840852
+10:                cl20_m0 0.0199781767 0.015141827 0.015351736
+```{r xgb_model_m2}
+   obj_var = 'meter_reading_log'
+   t_index.m2 = df$meter == 2
+   actual = df[[obj_var]][t_index.m2]
+    
+   weather_vars = c('air_temperature','air_temperature_m3','air_temperature_m6', 'air_temperature_m12', 'air_temperature_m24',
+                     'air_temperature_max24','air_temperature_min24','air_temperature_max12', 'air_temperature_min12',
+                     'sea_level_pressure', 'sea_level_pressure_m6', 'sea_level_pressure_m12', 'sea_level_pressure_m24',
+                     'cloud_coverage','dew_temperature', 'precip_depth_1_hr',  'wind_direction', 'wind_speed','wind_speed_m3','wind_speed_m6','wind_speed_m12')
+    
+   # should we use building_id
+   all_vars = c('site_id', 'primary_use', 'square_feet_log', 'floor_count', 'time_day', 'time_wday', 'time_month','time_hour','year_built','rank_lm_m0','cl10_m0','cl20_m0','cl15_m0',weather_vars)
+ 
+    set.seed(1012356)
+    
+    t_index_v = which(t_index.m2)
+    t_index_v1 = sample(t_index_v, 0.7*length(t_index_v))
+    t_index_v2 = setdiff(t_index_v, t_index_v1)
+    dtrain <- xgb.DMatrix(data.matrix(df[t_index_v1, all_vars, with = F]), label = df[[obj_var]][t_index_v1] )
+    deval  <- xgb.DMatrix(data.matrix(df[t_index_v2, all_vars, with = F]), label = df[[obj_var]][t_index_v2] )
+
+my_params <- list(max_depth = 9, 
+              eta =  0.01, 
+              nthread = 4,
+              subsample = 0.9,
+              min_child_weight = 4,
+              gamma = 0.3,
+              objective = "reg:squarederror",
+              eval_metric = "rmse",
+              base_score = mean(actual))
+
+model.xgb.m2 <- xgb.train(my_params, data = dtrain, 
+                       watchlist = list(train = dtrain, eval = deval),
+                       nrounds = 3000, 
+                       verbose = 1, 
+                       print_every_n = 10,
+                       early_stopping_rounds = 50)
+
+#0.505217 (2000) 
+xgb.save(model.xgb.m2, file.path(working_folder,'energy_predictor/xgb.model.m2'))
+#model.xgb.m2 = xgb.load(file.path(working_folder,'energy_predictor/xgb.model.m2'))
+ggplot(model.xgb.m2$evaluation_log, aes(iter, train_rmse)) + geom_line() + geom_line(aes(iter, eval_rmse), color = 'red')
+
+pred.xgb.m2_t <- predict(model.xgb.m2, data.matrix(df[t_index.m2,all_vars, with = F]) )
+
+importance_matrix <- xgb.importance(model = model.xgb.m2)
+#importance_matrix$Name = all_vars[as.numeric(importance_matrix$Feature)+1]
+print(importance_matrix)
+xgb.ggplot.importance(importance_matrix = importance_matrix)
+fwrite( importance_matrix, file.path(working_folder,'energy_predictor/var.imp.xgb.m2.csv'))
+    
+plot_profile(pred.xgb.m2_t, actual,factor(df[['site_id']][t_index.m2]), error_band = 'normal')
+plot_profile(pred.xgb.m2_t, actual,factor(df[['year_built']][t_index.m2]), error_band = 'normal')
+plot_profile(pred.xgb.m2_t, actual,factor(df[['building_id']][t_index.m2]), error_band = 'normal')
+plot_profile(pred.xgb.m2_t, actual,factor(df[['rank_lm_m0']][t_index.m2]), error_band = 'normal')
+plot_profile(pred.xgb.m2_t, actual,factor(df[['cl20_m0']][t_index.m2]), error_band = 'normal')
+
+plot_profile(pred.xgb.m2_t,   actual, df[['time_hour']][t_index.m2], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m2_t,   actual, df[['square_feet_log']][t_index.m2], bucket_count = 50, error_band = 'normal')
+plot_profile(pred.xgb.m2_t,   actual, factor(df[['time_day']][t_index.m2]), bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m2_t,   actual, factor(df[['time_month']][t_index.m2]), bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m2_t,   actual, df[['date']][t_index.m2], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m2_t,   actual, df[['air_temperature_m3']][t_index.m2], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m2_t,   actual, factor(df[['primary_use']][t_index.m2]), bucket_count = 20, error_band = 'normal')
+
+index = df$date[t_index.m2] > '2016-05-01'
+plot_profile(pred.xgb.m2_t[index],   actual[index], df[['date']][t_index.m2][index], bucket_count = 20, error_band = 'normal')
+
+index = df$building_id[t_index.m2]  <  300
+plot_profile(pred.xgb.m2_t[index], actual[index], fct_reorder(factor(df[['building_id']][t_index.m2][index]), df[['meter_reading_log']][t_index.m2][index], sum), error_band = 'normal')
+
+#df_building[building_id == 740,]
+index = df$building_id[t_index.m2] == 1212 #434, 404, 1169, 954, 551, 1221, 1092, 1135, 831, 849, 857,416, 740, 434 , 805, 53, 301, 1019, 816, 740, 1212, 805, 53, 301
+plot_profile(pred.xgb.m2_t[index], actual[index], df[['date']][t_index.m2][index], min_obs = 1)
+
+#identify strange buildings
+temp = data.table(model = pred.xgb.m2_t, actual = actual, building_id = df[['building_id']][t_index.m2],  site_id = df[['site_id']][t_index.m2])
+#temp = temp[, .(r2 = summary(lm(actual ~ model))$r.squared), by=.(building_id)]
+#temp[order(r2),]
+#ggplot(temp, aes(r2)) + geom_histogram(binwidth = 0.01)
+```
+
+##  XGBOOST Model: meter == 3
+ 1:        square_feet_log 0.2740962847 0.103304651 0.121364526
+ 2:             rank_lm_m0 0.1815155167 0.091465655 0.091856012
+ 3:                site_id 0.1579209493 0.024544715 0.014626526
+ 4:    air_temperature_m24 0.0976981516 0.051183581 0.044845708
+ 5:            primary_use 0.0400309950 0.021913477 0.041214570
+ 6:             time_month 0.0375326419 0.047235958 0.061210008
+ 7:        air_temperature 0.0243496767 0.023145964 0.023984012
+ 8:             year_built 0.0215813281 0.028295108 0.022817086
+ 9:  air_temperature_min24 0.0200910701 0.034281115 0.025018476
+10:                cl10_m0 0.0198271967 0.011653613 0.018962024
+```{r xgb_model_m3}
+   obj_var = 'meter_reading_log'
+   t_index.m3 = df$meter == 3
+   actual = df[[obj_var]][t_index.m3]
+    
+   weather_vars = c('air_temperature','air_temperature_m3','air_temperature_m6', 'air_temperature_m12', 'air_temperature_m24',
+                     'air_temperature_max24','air_temperature_min24','air_temperature_max12', 'air_temperature_min12',
+                     'sea_level_pressure', 'sea_level_pressure_m6', 'sea_level_pressure_m12', 'sea_level_pressure_m24',
+                     'cloud_coverage','dew_temperature', 'precip_depth_1_hr',  'wind_direction', 'wind_speed','wind_speed_m3','wind_speed_m6','wind_speed_m12')
+    
+   # should we use building_id
+   all_vars = c('site_id', 'primary_use', 'square_feet_log', 'floor_count', 'time_day', 'time_wday', 'time_month','time_hour','year_built','rank_lm_m0','cl10_m0','cl20_m0','cl15_m0',weather_vars)
+ 
+    set.seed(1012356)
+    
+    t_index_v = which(t_index.m3)
+    t_index_v1 = sample(t_index_v, 0.7*length(t_index_v))
+    t_index_v2 = setdiff(t_index_v, t_index_v1)
+    dtrain <- xgb.DMatrix(data.matrix(df[t_index_v1, all_vars, with = F]), label = df[[obj_var]][t_index_v1] )
+    deval  <- xgb.DMatrix(data.matrix(df[t_index_v2, all_vars, with = F]), label = df[[obj_var]][t_index_v2] )
+
+my_params <- list(max_depth = 9, 
+              eta =  0.01, 
+              nthread = 4,
+              subsample = 0.9,
+              min_child_weight = 4,
+              gamma = 0.3,
+              objective = "reg:squarederror",
+              eval_metric = "rmse",
+              base_score = mean(actual))
+
+model.xgb.m3 <- xgb.train(my_params, data = dtrain, 
+                       watchlist = list(train = dtrain, eval = deval),
+                       nrounds = 3000, 
+                       verbose = 1, 
+                       print_every_n = 10,
+                       early_stopping_rounds = 50)
+
+#0.505217 (2000) 
+xgb.save(model.xgb.m3, file.path(working_folder,'energy_predictor/xgb.model.m3'))
+#model.xgb.m3 = xgb.load(file.path(working_folder,'energy_predictor/xgb.model.m3'))
+ggplot(model.xgb.m3$evaluation_log, aes(iter, train_rmse)) + geom_line() + geom_line(aes(iter, eval_rmse), color = 'red')
+
+pred.xgb.m3_t <- predict(model.xgb.m3, data.matrix(df[t_index.m3,all_vars, with = F]) )
+
+importance_matrix <- xgb.importance(model = model.xgb.m3)
+#importance_matrix$Name = all_vars[as.numeric(importance_matrix$Feature)+1]
+print(importance_matrix)
+xgb.ggplot.importance(importance_matrix = importance_matrix)
+fwrite( importance_matrix, file.path(working_folder,'energy_predictor/var.imp.xgb.m3.csv'))
+    
+plot_profile(pred.xgb.m3_t, actual,factor(df[['site_id']][t_index.m3]), error_band = 'normal')
+plot_profile(pred.xgb.m3_t, actual,factor(df[['year_built']][t_index.m3]), error_band = 'normal')
+plot_profile(pred.xgb.m3_t, actual,factor(df[['building_id']][t_index.m3]), error_band = 'normal')
+plot_profile(pred.xgb.m3_t, actual,factor(df[['rank_lm_m0']][t_index.m3]), error_band = 'normal')
+plot_profile(pred.xgb.m3_t, actual,factor(df[['cl20_m0']][t_index.m3]), error_band = 'normal')
+
+plot_profile(pred.xgb.m3_t,   actual, df[['time_hour']][t_index.m3], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m3_t,   actual, df[['square_feet_log']][t_index.m3], bucket_count = 50, error_band = 'normal')
+plot_profile(pred.xgb.m3_t,   actual, factor(df[['time_day']][t_index.m3]), bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m2_t,   actual, factor(df[['time_month']][t_index.m2]), bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m2_t,   actual, df[['date']][t_index.m2], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m2_t,   actual, df[['air_temperature_m3']][t_index.m2], bucket_count = 20, error_band = 'normal')
+plot_profile(pred.xgb.m2_t,   actual, factor(df[['primary_use']][t_index.m2]), bucket_count = 20, error_band = 'normal')
+
+index = df$date[t_index.m3] > '2016-02-01'
+plot_profile(pred.xgb.m3_t[index],   actual[index], df[['date']][t_index.m3][index], bucket_count = 20, error_band = 'normal')
+
+index = df$building_id[t_index.m3]  <  300
+plot_profile(pred.xgb.m3_t[index], actual[index], fct_reorder(factor(df[['building_id']][t_index.m3][index]), df[['meter_reading_log']][t_index.m3][index], sum), error_band = 'normal')
+
+#df_building[building_id == 740,]
+index = df$building_id[t_index.m3] == 187 #434, 404, 1169, 954, 551, 1221, 1092, 1135, 831, 849, 857,416, 740, 434 , 805, 53, 301, 1019, 816, 740, 1212, 805, 53, 301
+plot_profile(pred.xgb.m3_t[index], actual[index], df[['date']][t_index.m3][index], min_obs = 1)
+
+#identify strange buildings
+temp = data.table(model = pred.xgb.m3_t, actual = actual, building_id = df[['building_id']][t_index.m3],  site_id = df[['site_id']][t_index.m3])
+#temp = temp[, .(r2 = summary(lm(actual ~ model))$r.squared), by=.(building_id)]
+#temp[order(r2),]
+#ggplot(temp, aes(r2)) + geom_histogram(binwidth = 0.01)
+```
+
+## Save Results
+
+gbm - 1.62
+xgboost = 1.45
+
+```{r save_results}
+
+#submit = data.table(row_id = df$row_id[!t_index], meter_reading  = round(exp(pred.gbm[!t_index])-1, 4) )
+submit = data.table(row_id = df$row_id[!t_index], meter_reading  = round(pmax(0, exp(pred.xgb[!t_index])-1), 4) )
+
+setorder(submit, row_id)
+
+file = file.path(working_folder, "energy_predictor/solution.gbm.csv")
+  
+fwrite(submit, file = file, row.names = FALSE)
+
+zip::zipr(paste(file, '.zip', sep = ''), file)
+  
+print(file)
+
+rm(submit)
+
+```
+
+## Gen Predictions by meter 
+
+```{r gen_predictions}
+ model.xgb.m0 = xgb.load(file.path(working_folder,'energy_predictor/xgb.model.m0'))
+ model.xgb.m1 = xgb.load(file.path(working_folder,'energy_predictor/xgb.model.m1'))
+ model.xgb.m2 = xgb.load(file.path(working_folder,'energy_predictor/xgb.model.m2'))
+ model.xgb.m3 = xgb.load(file.path(working_folder,'energy_predictor/xgb.model.m3'))
+ 
+ model.list = list(model.xgb.m0, model.xgb.m1, model.xgb.m2, model.xgb.m3)
+
+ data_folder = file.path(working_folder,'energy_predictor/data/')
+
+ #building_meta
+ df_building = fread(file.path(data_folder,'building_metadata.csv'), check.names=T)
+ 
+ #load weather files
+ df_weather_tn = fread(file.path(data_folder,'weather_train.csv'), check.names=T)
+ df_weather_tt = fread(file.path(data_folder,'weather_test.csv'), check.names=T)
+ df_weather_tn[, source:='train']
+ df_weather_tt[, source:='test']
+ df_weather = rbind(df_weather_tn, df_weather_tt)
+ 
+ df_weather[,time:= ymd_hms(timestamp)]
+ df_weather[, date := ymd(10000*year(time) + 100*month(time) + day(time)) ]
+ df_weather[order(time), air_temperature_m3  := rollmeanr(air_temperature, na.pad = TRUE, na.rm =TRUE, k = 3), by =.(site_id)]
+ df_weather[order(time), air_temperature_m6  := rollmeanr(air_temperature, na.pad = TRUE, na.rm =TRUE, k = 6), by =.(site_id)]
+ df_weather[order(time), air_temperature_m12 := rollmeanr(air_temperature, na.pad = TRUE, na.rm =TRUE, k = 12), by =.(site_id)]
+ df_weather[order(time), air_temperature_m24 := rollmeanr(air_temperature, na.pad = TRUE, na.rm =TRUE, k = 24), by =.(site_id)]
+ df_weather[order(time), air_temperature_m2d := rollmeanr(air_temperature, na.pad = TRUE, na.rm =TRUE, k = 24*2), by =.(site_id)]
+ df_weather[order(time), air_temperature_m3d := rollmeanr(air_temperature, na.pad = TRUE, na.rm =TRUE, k = 24*3), by =.(site_id)]
+ 
+ df_weather[order(time), air_temperature_max24 :=  rollmaxr( air_temperature, na.pad = TRUE, na.rm =TRUE, k = 24), by =.(site_id)]
+ df_weather[order(time), air_temperature_min24 := -rollmaxr(-air_temperature, na.pad = TRUE, na.rm =TRUE, k = 24), by =.(site_id)]
+ df_weather[order(time), air_temperature_max12 :=  rollmaxr( air_temperature, na.pad = TRUE, na.rm =TRUE, k = 12), by =.(site_id)]
+ df_weather[order(time), air_temperature_min12 := -rollmaxr(-air_temperature, na.pad = TRUE, na.rm =TRUE, k = 12), by =.(site_id)]
+ 
+ df_weather[order(time), sea_level_pressure_m6  := rollmeanr(sea_level_pressure, na.pad = TRUE, na.rm =TRUE, k =  6), by =.(site_id)]
+ df_weather[order(time), sea_level_pressure_m12 := rollmeanr(sea_level_pressure, na.pad = TRUE, na.rm =TRUE, k = 12), by =.(site_id)]
+ df_weather[order(time), sea_level_pressure_m24 := rollmeanr(sea_level_pressure, na.pad = TRUE, na.rm =TRUE, k = 24), by =.(site_id)]
+ 
+ df_weather[order(time), wind_speed_m3  := rollmeanr(wind_speed, na.pad = TRUE, na.rm =TRUE, k =  3), by =.(site_id)]
+ df_weather[order(time), wind_speed_m6  := rollmeanr(wind_speed, na.pad = TRUE, na.rm =TRUE, k =  6), by =.(site_id)]
+ df_weather[order(time), wind_speed_m12 := rollmeanr(wind_speed, na.pad = TRUE, na.rm =TRUE, k = 12), by =.(site_id)]
+ 
+ submit = foreach(my_meter_id = seq(0, 3), .combine = 'rbind') %do% { 
+   print(my_site_id)
+   df = fread(file.path(data_folder,'test.csv'), check.names=T)
+   
+   #merge in building info
+   df[df_building, site_id := i.site_id, on =.(building_id)]
+   df = df[meter == my_meter_id,]# to save space
+    
+   df[df_building, primary_use := i.primary_use, on =.(building_id)]
+   df[df_building, square_feet := i.square_feet, on =.(building_id)]
+   df[df_building, year_built := i.year_built, on =.(building_id)]
+   df[df_building, floor_count := i.floor_count, on =.(building_id)]
+   
+   df[df_building, m0_obs := i.m0_obs, on =.(building_id)]
+   df[df_building, m1_obs := i.m1_obs, on =.(building_id)]
+   df[df_building, m2_obs := i.m2_obs, on =.(building_id)]
+   df[df_building, m3_obs := i.m3_obs, on =.(building_id)]
+   
+   df[df_building, rank_lm_m0 := i.rank_lm_m0, on =.(building_id)]
+   df[df_building, cl10_m0    := i.cl10_m0, on =.(building_id)]
+   df[df_building, cl20_m0    := i.cl20_m0, on =.(building_id)]
+   df[df_building, cl15_m0    := i.cl15_m0, on =.(building_id)]
+   
+   df[,time:= ymd_hms(timestamp)]  
+   
+   df[, primary_use := factor(primary_use)]
+   df[, square_feet_log := log(square_feet)]
+   
+  #merge in weather info
+   df[, meter_reading_log := log(meter_reading + 1)]
+   df[df_weather, air_temperature := i.air_temperature, on =.(site_id, time)]
+   df[df_weather, cloud_coverage := i.cloud_coverage, on =.(site_id, time)]
+   df[df_weather, dew_temperature := i.dew_temperature, on =.(site_id, time)]
+   df[df_weather, precip_depth_1_hr := i.precip_depth_1_hr, on =.(site_id, time)]
+   df[df_weather, sea_level_pressure := i.sea_level_pressure, on =.(site_id, time)]
+   df[df_weather, wind_direction := i.wind_direction, on =.(site_id, time)]
+   df[df_weather, wind_speed := i.wind_speed, on =.(site_id, time)]
+   
+   df[df_weather, air_temperature_m3 := i.air_temperature_m3, on =.(site_id, time)]
+   df[df_weather, air_temperature_m6 := i.air_temperature_m6, on =.(site_id, time)]
+   df[df_weather, air_temperature_m12 := i.air_temperature_m12, on =.(site_id, time)]
+   df[df_weather, air_temperature_m24 := i.air_temperature_m24, on =.(site_id, time)]
+   df[df_weather, air_temperature_max24 := i.air_temperature_max24, on =.(site_id, time)]
+   df[df_weather, air_temperature_min24 := i.air_temperature_min24, on =.(site_id, time)]
+   df[df_weather, air_temperature_max12 := i.air_temperature_max12, on =.(site_id, time)]
+   df[df_weather, air_temperature_min12 := i.air_temperature_min12, on =.(site_id, time)]
+   df[df_weather, sea_level_pressure_m6  := i.sea_level_pressure_m6, on =.(site_id, time)]
+   df[df_weather, sea_level_pressure_m12 := i.sea_level_pressure_m12, on =.(site_id, time)]
+   df[df_weather, sea_level_pressure_m24 := i.sea_level_pressure_m24, on =.(site_id, time)]
+   df[df_weather, wind_speed_m3  := i.wind_speed_m3, on =.(site_id, time)]
+   df[df_weather, wind_speed_m6  := i.wind_speed_m6, on =.(site_id, time)]
+   df[df_weather, wind_speed_m12 := i.wind_speed_m12, on =.(site_id, time)]
+  
+   
+   df[,time_month := month(time) ]
+   df[,time_day := day(time) ]
+   df[,time_wday := wday(time) ]
+   df[,time_hour := hour(time) ]
+   df[, date := ymd(10000*year(time) + 100*time_month + time_day) ]
+   
+   pred.xgb_part = predict(model.list[[my_meter_id]], data.matrix(df[,all_vars, with = F]) )
+   #% Clean up -------------
+   #df = df[site_id %in% c(0, 7, 10),]# to save space
+   t_index = df$is_test == FALSE
+   gc(reset = TRUE)
+   
+   return(data.frame(row_id = df$row_id, meter = my_meter_id, meter_reading  = round(pmax(0, exp(pred.xgb_part)-1), 4) )) 
+ }
+ 
+```

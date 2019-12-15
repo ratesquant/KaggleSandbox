@@ -1,0 +1,54 @@
+---
+title: "Santa 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(data.table)
+
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+source(file.path(working_folder, '/Utils/common.R'))
+
+```
+
+## Load Data
+   choice_n    N    np
+1:        0 4235 17239
+2:        1  580  2854
+3:        2  129   603
+4:        3   37   200
+5:        4   11    56
+6:        5    6    36
+7:        6    2    15
+```{r load_data}
+    
+    df_met = fread(file.path(working_folder, 'Santa2019/data/family_data.csv'))
+    
+    df_met = melt(df_met, id.vars = c('family_id', 'n_people'), variable.name = 'choice', value.name = "day")
+    df_met[, choice_n := tstrsplit(as.character(choice), "_", fixed=TRUE, keep=2L)]
+    
+    df_sol = fread(file.path(working_folder, 'Santa2019/data/ex/solution.csv'))
+    
+    df_sol[df_met, n_people := i.n_people, on =.(family_id) ]
+    df_sol[df_met, choice_n := i.choice_n, on =c('family_id', 'assigned_day' = 'day') ]
+    
+    ggplot(df_sol[order(assigned_day),.(.N, np = sum(n_people)), by =.(assigned_day)], aes(assigned_day, np)) + geom_point() + 
+      geom_line() + geom_hline(yintercept = c(125, 300), linetype = 'dashed', color = 'red') 
+    
+    ggplot(df_met[choice == 'choice_0',.(.N, np = sum(n_people)), by =.(day)], aes(day, np)) + geom_point() + 
+      geom_line() + geom_hline(yintercept = c(125, 300), linetype = 'dashed', color = 'red') + 
+      geom_line(data = df_sol[order(assigned_day),.(.N, np = sum(n_people)), by =.(assigned_day)], aes(assigned_day, np), color ='blue') 
+  
+  df_sol[,.(.N, np = sum(n_people)), by =.(assigned_day)][np > 300 | np < 125, ]
+  df_sol[order(choice_n),.(.N, np = sum(n_people)), by =.(choice_n)]
+  
+  dim(df_sol)
+  table(df_sol$assigned_day)
+  df_sol[order(assigned_day),.(.N, np = sum(n_people)), by =.(assigned_day)]
+
+df_sol[family_id == '4942',]
+```
+

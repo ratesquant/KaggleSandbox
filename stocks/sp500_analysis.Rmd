@@ -12,6 +12,10 @@ library(data.table)
 library(BatchGetSymbols)
 library(zoo)
 library(corrplot)
+library(xgboost)
+library(stringi)
+library(vip)
+library(pdp)
 
 working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 data_folder = file.path(working_folder,'stocks/data/')
@@ -27,7 +31,7 @@ source(file.path(working_folder, '/Utils/common.R'))
 sp500_filename = file.path(data_folder, 'sp500.Rds')
 
 if( file.exists(sp500_filename) ) {
-  l.out = loadRDS(sp500_filename)
+  l.out = readRDS(sp500_filename)
 }else{
   first.date <- Sys.Date() %m-% months(12*20)
   last.date <- Sys.Date()
@@ -86,8 +90,8 @@ setkey(df, ticker, ref.date)
 
 ```{r risk_analysis, echo=FALSE}
 df[, date := ref.date]
-df[,price      :=  price.adjusted, by =.(ticker) ]
-df[,price_prev := shift(price), by =.(ticker) ]
+df[, price      :=  price.adjusted, by =.(ticker) ]
+df[, price_prev := shift(price), by =.(ticker) ]
 df[, ret := log(price/price_prev) ]
 df[, date_year := year(date)]
 
@@ -112,4 +116,190 @@ corrplot(corr_matrix, method="circle", order="hclust")
 
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## Analysis
+
+```{r analysis, echo=FALSE}
+df = data.table(l.out$df.tickers)
+df[, date:=ymd(ref.date)]
+df[, var_date_m := month(date)]
+df[, var_date_w := wday(date)]
+
+df[, price := price.adjusted]
+
+#add lag
+for(i in seq(256)){
+  df[order(date), c(stri_join('price_', i)):=shift(price, n = i)/price, by =.(ticker)]
+}
+
+df[order(date), var_price_avg90:=frollmean(price, 90)/price, by =.(ticker)]
+df[order(date), var_price_avg80:=frollmean(price, 80)/price, by =.(ticker)]
+df[order(date), var_price_avg70:=frollmean(price, 70)/price, by =.(ticker)]
+df[order(date), var_price_avg60:=frollmean(price, 60)/price, by =.(ticker)]
+df[order(date), var_price_avg50:=frollmean(price, 50)/price, by =.(ticker)]
+df[order(date), var_price_avg40:=frollmean(price, 40)/price, by =.(ticker)]
+df[order(date), var_price_avg30:=frollmean(price, 30)/price, by =.(ticker)]
+df[order(date), var_price_avg20:=frollmean(price, 20)/price, by =.(ticker)]
+df[order(date), var_price_avg10:=frollmean(price, 10)/price, by =.(ticker)]
+
+df[order(date), price_next1:=shift(price, n = -1), by =.(ticker)]
+df[order(date), price_next5:=shift(price, n = -5), by =.(ticker)]
+
+df[order(date), var_volume_avg30:=frollmean(volume, 30)/volume, by =.(ticker)]
+df[order(date), var_volume_avg20:=frollmean(volume, 20)/volume, by =.(ticker)]
+df[order(date), var_volume_avg10:=frollmean(volume, 10)/volume, by =.(ticker)]
+
+df[, ret1 := log(price_next1/price)]
+df[, ret5 := log(price_next5/price)]
+
+df[, var_price_oc:=price.open/price.close]
+df[, var_price_hl:=price.high/price.low]
+df[, var_price_op:=price.high/price.open]
+
+#df[ticker == 'T' & date > '2016-01-01',]
+ggplot(df[ticker == 'MCK' & date > '2016-01-01',])  + geom_line(aes(date, var_price_avg60*price), color = 'red') + 
+  geom_line(aes(date, price), color = 'black')
+
+```
+
+## Model Single
+```{r gbm_model_single, echo=FALSE}
+
+   obj_var = 'ret5'
+
+   dfs = df[!is.na(ret5) & ticker %in% c('AMD'),]
+   
+   var_names = grep('var_',names(dfs), value = TRUE)
+    
+   all_vars =  c(grep('price_[0-9]+',names(dfs), value = TRUE), var_names)
+ 
+   set.seed(1012356)
+   
+   oot_date = max(dfs$date) %m-% months(24)
+    
+   t_index = sample.int(nrow(dfs), 0.7*nrow(dfs))
+   oot_index = which(dfs$date>oot_date)
+   t_index = setdiff(t_index, oot_index)
+   dtrain <- xgb.DMatrix(data.matrix(dfs[ t_index, all_vars, with = F]), label = dfs[[obj_var]][ t_index] )
+   deval  <- xgb.DMatrix(data.matrix(dfs[-t_index, all_vars, with = F]), label = dfs[[obj_var]][-t_index] )
+
+my_params <- list(max_depth = 9, 
+              eta =  0.01, 
+              nthread = 4,
+              subsample = 0.9,
+              min_child_weight = 4,
+              gamma = 0.2,
+              objective = "reg:squarederror",
+              eval_metric = "rmse",
+              base_score = mean(dfs[[obj_var]], na.rm = TRUE))
+
+model.xgb <- xgb.train(my_params, data = dtrain, 
+                       watchlist = list(train = dtrain, eval = deval),
+                       nrounds = 1000, 
+                       verbose = 1, 
+                       print_every_n = 100,
+                       early_stopping_rounds = 100)
+
+ggplot(model.xgb$evaluation_log, aes(iter, train_rmse)) + geom_line() + geom_line(aes(iter, eval_rmse), color = 'red')
+
+pred.xgb   <- predict(model.xgb, data.matrix(dfs[,all_vars, with = F]) )
+dfs[, ret5_model := pred.xgb]
+
+#variable importance
+vip(model.xgb)
+importance_matrix <- xgb.importance(model = model.xgb)
+#print(importance_matrix)
+xgb.ggplot.importance(importance_matrix = importance_matrix)
+xgb.ggplot.deepness(model.xgb)
+xgb.ggplot.deepness(model.xgb, which = "max.depth")
+  
+sample_train = data.matrix(dfs[sample.int(nrow(dfs), 200), all_vars, with = F])
+partial(model.xgb, pred.var = "price_219", ice = TRUE, train = sample_train, plot.engine = 'ggplot2', plot = TRUE, type = 'regression', alpha = 0.1)
+partial(model.xgb, pred.var = "price_25", ice = TRUE, train = sample_train, plot.engine = 'ggplot2', plot = TRUE, type = 'regression', alpha = 0.1)
+partial(model.xgb, pred.var = "price_avg60", ice = TRUE, train = sample_train, plot.engine = 'ggplot2', plot = TRUE, type = 'regression', alpha = 0.1)
+partial(model.xgb, pred.var = "volume", ice = TRUE, train = sample_train, plot.engine = 'ggplot2', plot = TRUE, type = 'regression', alpha = 0.1)
+partial(model.xgb, pred.var = "ticker", ice = TRUE, train = sample_train, plot.engine = 'ggplot2', plot = TRUE, type = 'regression', alpha = 0.1)
+partial(model.xgb, pred.var = "date_m", ice = TRUE, train = sample_train, plot.engine = 'ggplot2', plot = TRUE, type = 'regression', alpha = 0.1)
+
+ggplot(dfs[date > oot_date,])  + geom_line(aes(date, ret5), color = 'red') + 
+  geom_line(aes(date, ret5_model), color = 'black')
+
+ggplot(dfs[date > oot_date,])  + geom_line(aes(date, cumsum(ret5 * (ret5_model>0) ) + 0*cumsum(-ret5 * (ret5_model<0) ) ), color = 'red') + 
+  geom_line(aes(date, cumsum(ret5) ), color = 'black') + geom_vline(xintercept = oot_date, linetype = 'dashed')
+
+#dfs_r2 = dfs[, .(r2 = summary(lm(ret5 ~ ret5_model))$r.squared), by =.(ticker)]
+
+```
+
+## Model
+409:    LNC 0.3496081998
+410:    HIG 0.3671654252
+411:    WMB 0.3688062321
+412:   EQIX 0.3797779551
+413:    AIG 0.5470472214
+```{r gbm_model, echo=FALSE}
+
+   obj_var = 'ret5_AMD'
+
+   #dfs = df[!is.na(ret5) & ticker %in% c('AIG', 'AMD'),]
+   dfs = df[!is.na(ret5),]
+   
+   var_names = grep('var_',names(dfs), value = TRUE)
+   
+   dfs = dcast(dfs, date ~ ticker, value.var = c(var_names,'ret5') )
+    
+   # should we use building_id
+   all_vars =  c(grep('var_',names(dfs), value = TRUE))
+ 
+   set.seed(1012356)
+    
+   t_index = sample.int(nrow(dfs), 0.7*nrow(dfs))
+   dtrain <- xgb.DMatrix(data.matrix(dfs[ t_index, all_vars, with = F]), label = dfs[[obj_var]][ t_index] )
+   deval  <- xgb.DMatrix(data.matrix(dfs[-t_index, all_vars, with = F]), label = dfs[[obj_var]][-t_index] )
+
+my_params <- list(max_depth = 9, 
+              eta =  0.01, 
+              nthread = 4,
+              subsample = 0.9,
+              min_child_weight = 4,
+              gamma = 0.2,
+              objective = "reg:squarederror",
+              eval_metric = "rmse",
+              base_score = mean(dfs[[obj_var]], na.rm = TRUE))
+
+model.xgb <- xgb.train(my_params, data = dtrain, 
+                       watchlist = list(train = dtrain, eval = deval),
+                       nrounds = 1000, 
+                       verbose = 1, 
+                       print_every_n = 100,
+                       early_stopping_rounds = 50)
+
+ggplot(model.xgb$evaluation_log, aes(iter, train_rmse)) + geom_line() + geom_line(aes(iter, eval_rmse), color = 'red')
+
+pred.xgb   <- predict(model.xgb, data.matrix(dfs[,all_vars, with = F]) )
+#dfs[, ret5_model := pred.xgb]
+
+#variable importance
+vip(model.xgb)
+importance_matrix <- xgb.importance(model = model.xgb)
+#print(importance_matrix)
+xgb.ggplot.importance(importance_matrix = importance_matrix)
+xgb.ggplot.deepness(model.xgb)
+xgb.ggplot.deepness(model.xgb, which = "max.depth")
+  
+sample_train = data.matrix(dfs[sample.int(nrow(dfs), 200), all_vars, with = F])
+partial(model.xgb, pred.var = "var_price_avg50_GLW", ice = TRUE, train = sample_train, plot.engine = 'ggplot2', plot = TRUE, type = 'regression', alpha = 0.1)
+partial(model.xgb, pred.var = "price_avg50", ice = TRUE, train = sample_train, plot.engine = 'ggplot2', plot = TRUE, type = 'regression', alpha = 0.1)
+partial(model.xgb, pred.var = "price_avg60", ice = TRUE, train = sample_train, plot.engine = 'ggplot2', plot = TRUE, type = 'regression', alpha = 0.1)
+partial(model.xgb, pred.var = "volume", ice = TRUE, train = sample_train, plot.engine = 'ggplot2', plot = TRUE, type = 'regression', alpha = 0.1)
+partial(model.xgb, pred.var = "ticker", ice = TRUE, train = sample_train, plot.engine = 'ggplot2', plot = TRUE, type = 'regression', alpha = 0.1)
+partial(model.xgb, pred.var = "date_m", ice = TRUE, train = sample_train, plot.engine = 'ggplot2', plot = TRUE, type = 'regression', alpha = 0.1)
+
+ggplot(dfs[date > '2010-01-01',])  + geom_line(aes(date, ret5_AMD), color = 'red') + 
+  geom_line(aes(date, ret5_model), color = 'black')
+
+ggplot(dfs[date > '2010-01-01',])  + geom_line(aes(date, cumsum(ret5_AMD) ), color = 'red') + 
+  geom_line(aes(date, cumsum(ret5_model) ), color = 'black')
+
+#dfs_r2 = dfs[, .(r2 = summary(lm(ret5 ~ ret5_model))$r.squared), by =.(ticker)]
+
+```

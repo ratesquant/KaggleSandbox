@@ -12,12 +12,12 @@ int read_tour(const string& filename, vector<int>& tour)
 {
 	std::ifstream ifs (filename.c_str(), std::ifstream::in);
 	
-	tour.resize(0);	
+	tour.resize(0);
 
 	while (ifs)
 	{
 		string s;
-		
+
 		if (!getline( ifs, s )) break;
 
 		tour.push_back(atoi(s.c_str()));
@@ -34,7 +34,7 @@ int read_tour(const string& filename, vector<int>& tour)
 int save_tour(const string& filename, const vector<int>& tour)
 {
 	std::ofstream ofs (filename.c_str(), std::ofstream::out);
-	
+
 	for(size_t i=0; i<tour.size(); i++)
 	{
 		ofs<<tour[i]<<std::endl;
@@ -58,7 +58,7 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	//string filename("F:/Github/KaggleSandbox/Santa/data/cities_ex.1k.csv");
 	//string tour_filename("F:/Github/KaggleSandbox/Santa/data/tour.1k.txt");
-	//string solution_filename("F:/Github/KaggleSandbox/Santa/data/cpp.solution.tour.1k.txt");	
+	//string solution_filename("F:/Github/KaggleSandbox/Santa/data/cpp.solution.tour.1k.txt");
 
 	//string filename("F:/Github/KaggleSandbox/Santa/data/cities_ex.csv");
 	//string tour_filename("F:/Github/KaggleSandbox/Santa/data/concorde_tour.lin.txt");
@@ -84,7 +84,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		tour[i] = i;
 	tour[tour.size()-1] = 0;
 	*/
-	clock_t start = clock();	
+	clock_t start = clock();
 
 	double starting_distance = nodes.tour_distance(tour);
 
@@ -97,7 +97,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	int maxit  =  1000;//000;
 	//int maxit  =  50;
 	int p_size =  100;
-	int span = 2000; 
+	int span = 2000;
     //span 100   - 0.5 sec per it
 	//span 1000  - 4.0 sec per it
 	//span  5000  - 20 sec
@@ -112,7 +112,7 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	//cout<<"Final tour distance: "<<std::fixed << std::setprecision( 6 ) << nodes.tour_distance(tour)<<", ";
 	//cout<<"Final tour distance: "<<std::fixed << std::setprecision( 6 ) << nodes.tour_distance(tour, 0, tour.size())<<", ";
-	
+
     //best 1516669.487072
 	std::vector<int> best_tour = solver.random_search(tour, method, maxit, span);
 
@@ -120,7 +120,7 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	cout<<"Final tour distance: "<<std::fixed << std::setprecision( 6 ) << final_distance<<", ";
 	cout<<"Improvement: "<<std::fixed << std::setprecision( 6 ) <<  starting_distance - final_distance <<std::endl;
-	 
+
 	if(final_distance<starting_distance)
 	{
 		save_tour(solution_filename, best_tour);
@@ -134,5 +134,3 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	return 0;
 }
-
-

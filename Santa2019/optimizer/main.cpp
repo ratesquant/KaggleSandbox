@@ -74,7 +74,7 @@ int shuffle(std::vector<int>& schedule)
 //assign random date to each family
 int solver_2(const Request& request, const std::vector<int>& schedule, std::vector<int>& solution, int n_rounds = 1, double initial_temp = 1.0)
 {
-   std::cout << "Random Chooser " << std::endl;
+   std::cout << "Random Chooser Plus" << std::endl;
 
    const double choice_mult = 1.0;
    const double constr_mult = 1.0;
@@ -106,37 +106,67 @@ int solver_2(const Request& request, const std::vector<int>& schedule, std::vect
       //double temperature = std::max(0.0, initial_temp*exp(-double(i)/n_runs) * (0.8 + 0.2*cos(100*double(i)/n_runs)) );
       double temperature = initial_temp * 0.5*(1.0 + cos(100*double(i)/n_runs));
 
-      int g_index = floor( solution.size() * r_scale * rgen());
-
       int r_day  = 1; //from [1 to 101] - generate extra day
-      
-      if( r_scale * rgen() < 0.01  ) //1% chance
-         r_day = 1 + floor( 101.0 * r_scale * rgen() ); //from [1 to 101] - generate extra day;
-      else
-      {
-         int r_choice  = floor( 10.0 * r_scale * rgen() ); //from [0 to 9]
-         r_day = request.get_choice(g_index, r_choice); //from [0 to 9];
-      }
-      
-      int prev = cur_solution[g_index];      
-      cur_solution[g_index] = r_day;
 
-      double new_objective = request.objective(cur_solution, choice_mult, constr_mult, acct_mult);
+      //try swapping days
+      bool is_swap = r_scale * rgen() < 0.1; //10% change of swap 
+
+      int g_index1, g_index2, prev1, prev2; 
+
+      g_index1 = floor( solution.size() * r_scale * rgen());
+      
+      if(is_swap)
+      {         
+         g_index2 = floor( solution.size() * r_scale * rgen());
+               
+         prev1 = cur_solution[g_index1];
+         prev2 = cur_solution[g_index2];
+
+         cur_solution[g_index1] = prev2;
+         cur_solution[g_index2] = prev1;
+
+         r_day = prev2;
+
+      }else{       
+         if( r_scale * rgen() < 0.1  ) //10% chance to pick random date            
+            r_day = 1 + floor( 100.0 * r_scale * rgen() ); //from [1 to 100]
+         else
+            r_day = request.get_choice(g_index1, floor( 10.0 * r_scale * rgen() )); //from [0 to 9];
+         
+         prev1 = cur_solution[g_index1];      
+         cur_solution[g_index1] = r_day;
+      }   
+
+      bool is_change = !((prev1 == r_day) || (is_swap && g_index1 == g_index2));  
+
+      double new_objective = cur_objective;
+
+      if(is_change)   //compute new objective  only when there is a change
+      {     
+         new_objective = request.objective(cur_solution, choice_mult, constr_mult, acct_mult);
+      }
 
       if(new_objective<best_objective)
       {
-         std::cout << i << ": " << best_objective<< " -> " << new_objective << ", " << best_objective - new_objective<< " temp: " << temperature << " ["<<g_index<<"]: " <<prev<< " -> " <<r_day <<  std::endl;
+         std::cout << i << ": " << best_objective<< " -> " << new_objective << ", " << best_objective - new_objective<< " temp: " << temperature << " ["<<g_index1<<"]: " <<prev1<< " -> " <<r_day <<" swap: " << is_swap <<  std::endl;
          best_objective = new_objective;
          solution = cur_solution;
       }
 
       if( new_objective < cur_objective || r_scale * rgen() < exp( -(new_objective - cur_objective)/temperature) )
       {
-            //std::cout << i << ": " << cur_objective<< "->" << new_objective << ", " << cur_objective - new_objective<< " temp:= " << temperature << std::endl;
-            cur_objective = new_objective;
+         cur_objective = new_objective;
       }else
       {
-            cur_solution[g_index] = prev; //roll back
+          //roll back
+          if(is_swap)
+          {
+              cur_solution[g_index1] = prev1;
+              cur_solution[g_index2] = prev2;
+          }else
+          {
+            cur_solution[g_index1] = prev1;
+          }
       }
 
       if(i % n_round_size == 0)
@@ -198,7 +228,7 @@ int solver_3(const Request& request, const std::vector<int>& schedule, std::vect
 
       if(new_objective<best_objective)
       {
-         std::cout << i << ": " << best_objective<< " -> " << new_objective << ", " << best_objective - new_objective<< " temp:= " << temperature << std::endl;
+         std::cout << i << ": " << best_objective<< " -> " << new_objective << ", " << best_objective - new_objective<< " temp:= " << temperature << std::endl;         
          best_objective = new_objective;
          solution = cur_solution;
       }
@@ -228,8 +258,8 @@ int solver_3(const Request& request, const std::vector<int>& schedule, std::vect
 
 int main(int argc, char* argv[])
 {
-   //inputs -n 10 -t 1.0 -f /home/chirokov/source/github/KaggleSandbox/Santa2019/data/ex/solution.csv
-   std::string input_filename = "/home/chirokov/source/github/KaggleSandbox/Santa2019/data/ex/solution.csv";
+   //inputs -n 10 -t 1.0 -f solution.csv
+   std::string input_filename = "./data/ex/solution.csv";
 
    int rounds = 10;  ////1 - in 24 sec, 100 - 40 min,  900 - 6h
    double initial_temp = 10.0;

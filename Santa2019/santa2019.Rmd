@@ -31,24 +31,27 @@ source(file.path(working_folder, '/Utils/common.R'))
     df_met[, choice_n := tstrsplit(as.character(choice), "_", fixed=TRUE, keep=2L)]
     
     df_sol = fread(file.path(working_folder, 'Santa2019/data/ex/solution.csv'))
+    #df_sol = fread(file.path(working_folder, 'Santa2019/data/ex/solution.73123.csv'))
     
     df_sol[df_met, n_people := i.n_people, on =.(family_id) ]
     df_sol[df_met, choice_n := i.choice_n, on =c('family_id', 'assigned_day' = 'day') ]
+    
+    df_agg = df_sol[order(assigned_day),.(.N, np = sum(n_people)), by =.(assigned_day)]
     
     ggplot(df_sol[order(assigned_day),.(.N, np = sum(n_people)), by =.(assigned_day)], aes(assigned_day, np)) + geom_point() + 
       geom_line() + geom_hline(yintercept = c(125, 300), linetype = 'dashed', color = 'red') 
     
     ggplot(df_met[choice == 'choice_0',.(.N, np = sum(n_people)), by =.(day)], aes(day, np)) + geom_point() + 
       geom_line() + geom_hline(yintercept = c(125, 300), linetype = 'dashed', color = 'red') + 
-      geom_line(data = df_sol[order(assigned_day),.(.N, np = sum(n_people)), by =.(assigned_day)], aes(assigned_day, np), color ='blue') 
+      geom_line(data = df_agg, aes(assigned_day, np), color ='blue') + 
+      geom_point(data = df_agg, aes(assigned_day, np), color ='blue')
   
-  df_sol[,.(.N, np = sum(n_people)), by =.(assigned_day)][np > 300 | np < 125, ]
-  df_sol[order(choice_n),.(.N, np = sum(n_people)), by =.(choice_n)]
+  df_agg[np > 300 | np < 125, ]
+  df_agg
   
   dim(df_sol)
   table(df_sol$assigned_day)
   df_sol[order(assigned_day),.(.N, np = sum(n_people)), by =.(assigned_day)]
 
-df_sol[family_id == '4942',]
 ```
 

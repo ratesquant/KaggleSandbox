@@ -132,7 +132,7 @@ double Request::objective(const std::vector<int>& schedule, const double choice_
  //   std::cout<<" total "<<penalty + accounting_cost<<endl;
   //   std::cout<<" extra_day "<<extra_day<<endl;
 
-	return penalty * choice_mult + constraint * constr_mult +  accounting_cost * acct_mult + extra_day*20.0;
+	return penalty * choice_mult + constraint * constr_mult +  accounting_cost * acct_mult + extra_day*30.0;
 }
 
 

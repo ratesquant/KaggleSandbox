@@ -26,32 +26,41 @@ source(file.path(working_folder, '/Utils/common.R'))
 ```{r load_data}
     
     df_met = fread(file.path(working_folder, 'Santa2019/data/family_data.csv'))
+
+    ggplot(df_met, aes(factor(n_people) )) + geom_histogram(stat="count")
     
     df_met = melt(df_met, id.vars = c('family_id', 'n_people'), variable.name = 'choice', value.name = "day")
     df_met[, choice_n := tstrsplit(as.character(choice), "_", fixed=TRUE, keep=2L)]
+    df_met[, choice_n := as.numeric(choice_n)]
     
-    df_sol = fread(file.path(working_folder, 'Santa2019/data/ex/solution.csv'))
+    df_sol = fread(file.path(working_folder, 'Santa2019/data/ex2/solution.csv'))
     #df_sol = fread(file.path(working_folder, 'Santa2019/data/ex/solution.73123.csv'))
     
     df_sol[df_met, n_people := i.n_people, on =.(family_id) ]
     df_sol[df_met, choice_n := i.choice_n, on =c('family_id', 'assigned_day' = 'day') ]
     
-    df_agg = df_sol[order(assigned_day),.(.N, np = sum(n_people)), by =.(assigned_day)]
+    df_agg = df_sol[order(assigned_day),.(.N, np = sum(n_people), avg_choice = mean(choice_n)), by =.(assigned_day)]
     
-    ggplot(df_sol[order(assigned_day),.(.N, np = sum(n_people)), by =.(assigned_day)], aes(assigned_day, np)) + geom_point() + 
+    ggplot(df_agg, aes(assigned_day, np)) + geom_point(aes(color = avg_choice)) + 
       geom_line() + geom_hline(yintercept = c(125, 300), linetype = 'dashed', color = 'red') 
     
     ggplot(df_met[choice == 'choice_0',.(.N, np = sum(n_people)), by =.(day)], aes(day, np)) + geom_point() + 
       geom_line() + geom_hline(yintercept = c(125, 300), linetype = 'dashed', color = 'red') + 
       geom_line(data = df_agg, aes(assigned_day, np), color ='blue') + 
       geom_point(data = df_agg, aes(assigned_day, np), color ='blue')
-  
-  df_agg[np > 300 | np < 125, ]
-  df_agg
+      
+      #df_agg[np > 300 | np < 125, ]
+  #df_agg
   
   dim(df_sol)
   table(df_sol$assigned_day)
   df_sol[order(assigned_day),.(.N, np = sum(n_people)), by =.(assigned_day)]
+  df_sol[order(choice_n),.(.N, np = sum(n_people)), by =.(choice_n)]
+  
+  # -------- deep dive
+  df_sol[choice_n == 6,]
+  df_met[family_id == 4278 ,]
 
+  ggplot(df_met[family_id %in% sample(unique(df_met$family_id), 10), ], aes(day, family_id, group =family_id, color = choice_n)) + geom_point()
 ```
 

@@ -20,6 +20,22 @@
 
 using namespace std;
 
+class my_random
+{
+   std::mt19937 m_rgen; 
+   double m_r_scale;
+
+   public:
+      my_random(unsigned seed = std::chrono::system_clock::now().time_since_epoch().count()): m_rgen(seed)
+      {
+         m_r_scale = 1.0 / ((double)m_rgen.max() + 1);         
+      }  
+
+      inline const double operator()() //random number in thge interval [0, 1)
+      {
+         return m_r_scale * m_rgen();         
+      } 
+};
 
 int solver_1(const Request& request, const std::vector<int>& schedule, std::vector<int>& solution)
 {
@@ -60,15 +76,11 @@ int solver_1(const Request& request, const std::vector<int>& schedule, std::vect
 
 int shuffle(std::vector<int>& schedule)
 {
-    unsigned seed1 = std::chrono::system_clock::now().time_since_epoch().count();
-
-   std::mt19937 rgen (seed1);
-
-   double r_scale = 1.0 / ((double)rgen.max() + 1);
+   my_random rgen;
 
    for(int i=0; i<schedule.size(); i++)
    {
-      schedule[i] = 1 + floor( 100.0 * r_scale * rgen() ); 
+      schedule[i] = 1 + floor( 100.0 * rgen() ); 
    }
 }
 //assign random date to each family
@@ -76,9 +88,9 @@ int solver_2(const Request& request, const std::vector<int>& schedule, std::vect
 {
    std::cout << "Random Chooser Plus" << std::endl;
 
-   const double choice_mult = 1.0;
-   const double constr_mult = 1.0;
-   const double acct_mult = 1.0;
+   double choice_mult = 1.0;
+   double constr_mult = 0; //1e-4 = 100 per violation
+   double acct_mult = 0;
 
    std::vector<int> cur_solution = schedule; 
 
@@ -86,12 +98,8 @@ int solver_2(const Request& request, const std::vector<int>& schedule, std::vect
    double best_objective = cur_objective;
 
    solution = schedule; //this is what we return
-
-   unsigned seed1 = std::chrono::system_clock::now().time_since_epoch().count();
-
-   std::mt19937 rgen (seed1);
-
-   double r_scale = 1.0 / ((double)rgen.max() + 1);
+   
+   my_random rgen;   
 
    int ng = request.group_count();
    
@@ -106,18 +114,20 @@ int solver_2(const Request& request, const std::vector<int>& schedule, std::vect
       //double temperature = std::max(0.0, initial_temp*exp(-double(i)/n_runs) * (0.8 + 0.2*cos(100*double(i)/n_runs)) );
       double temperature = initial_temp * 0.5*(1.0 + cos(100*double(i)/n_runs));
 
-      int r_day  = 1; //from [1 to 101] - generate extra day
+      int r_day  = 1; //from [1 to 100]
 
       //try swapping days
-      bool is_swap = r_scale * rgen() < 0.1; //10% change of swap 
+      bool is_swap = rgen() < 0.1; //10% change of swap 
 
       int g_index1, g_index2, prev1, prev2; 
 
-      g_index1 = floor( solution.size() * r_scale * rgen());
+      bool is_change = true;
+
+      g_index1 = floor( solution.size() * rgen());
       
       if(is_swap)
       {         
-         g_index2 = floor( solution.size() * r_scale * rgen());
+         g_index2 = floor( solution.size() * rgen());
                
          prev1 = cur_solution[g_index1];
          prev2 = cur_solution[g_index2];
@@ -127,24 +137,22 @@ int solver_2(const Request& request, const std::vector<int>& schedule, std::vect
 
          r_day = prev2;
 
+         is_change = (g_index1 != g_index2);
+
       }else{       
-         if( r_scale * rgen() < 0.1  ) //10% chance to pick random date            
-            r_day = 1 + floor( 100.0 * r_scale * rgen() ); //from [1 to 100]
+         if( rgen() < 0.01  ) //1% chance to pick random date            
+            r_day = 1 + floor( 100.0 * rgen() ); //from [1 to 100]
          else
-            r_day = request.get_choice(g_index1, floor( 10.0 * r_scale * rgen() )); //from [0 to 9];
+            r_day = request.get_choice(g_index1, floor( 10.0 * rgen() )); //from [0 to 9];
          
          prev1 = cur_solution[g_index1];      
          cur_solution[g_index1] = r_day;
+
+         is_change = (prev1 != r_day);
       }   
 
-      bool is_change = !((prev1 == r_day) || (is_swap && g_index1 == g_index2));  
-
-      double new_objective = cur_objective;
-
-      if(is_change)   //compute new objective  only when there is a change
-      {     
-         new_objective = request.objective(cur_solution, choice_mult, constr_mult, acct_mult);
-      }
+      double new_objective = is_change ? request.objective(cur_solution, choice_mult, constr_mult, acct_mult) : cur_objective;
+      //double new_objective = request.objective(cur_solution, choice_mult, constr_mult, acct_mult);
 
       if(new_objective<best_objective)
       {
@@ -153,7 +161,7 @@ int solver_2(const Request& request, const std::vector<int>& schedule, std::vect
          solution = cur_solution;
       }
 
-      if( new_objective < cur_objective || r_scale * rgen() < exp( -(new_objective - cur_objective)/temperature) )
+      if( new_objective < cur_objective || rgen() < exp( -(new_objective - cur_objective)/temperature) )
       {
          cur_objective = new_objective;
       }else
@@ -172,12 +180,33 @@ int solver_2(const Request& request, const std::vector<int>& schedule, std::vect
       if(i % n_round_size == 0)
       {
          std::cout << std::setw(4)<< i / n_round_size << ": ";
-         std::cout << std::setprecision( 2 ) << cur_objective << ", ";
-         std::cout << std::setprecision( 2 ) << cur_objective/best_objective << ", ";
+         std::cout << std::setprecision( 2 ) << cur_objective << ", ";         
          std::cout << std::setprecision( 2 ) << cur_objective - best_objective << ", ";
-         std::cout << std::setprecision( 2 ) << "temp: " << temperature;
-         std::cout << std::endl;
+         std::cout << std::setprecision( 2 ) << "temp: " << temperature << ", ";
+         //std::cout << std::setprecision( 2 ) << "greedy: " << greedy_found;
+         std::cout << std::endl;       
+
+         //increase penalty slowly
+         double t_run = (double)i/n_runs;
+         choice_mult  = 1.0*(1.0 - exp(-4 * t_run));      
+         constr_mult = 1e-3 * (1.0 - exp(-3 * t_run)); 
+         acct_mult = 1.0 * (1.0 - exp(-3 * t_run));  
+
+         double update_cur_objective = request.objective(cur_solution, choice_mult, constr_mult, acct_mult);
+         double update_best_objective = request.objective(solution, choice_mult, constr_mult, acct_mult);
+
+         std::cout <<std::setprecision( 4 )<< "choice_mult: "<< choice_mult<< " constr_mult: "<< constr_mult<< " acct_mult: "<<acct_mult<< " objective: "<< cur_objective<<" -> "<<update_cur_objective <<std::endl;       
+         
+         cur_objective = update_cur_objective;
+         best_objective = update_best_objective;
       }
+
+      //reset to best found solution every 10 rounds
+      if( (i % (n_round_size * 10))  == 0)
+      {
+         cur_solution = solution;
+      }    
+     
    }
 }
 
@@ -255,13 +284,74 @@ int solver_3(const Request& request, const std::vector<int>& schedule, std::vect
    }
 }
 
+//Greedy Chooser
+int solver_4(const Request& request, const std::vector<int>& schedule, std::vector<int>& solution, int n_rounds = 1)
+{
+   std::cout << "Greedy Chooser" << std::endl;
+
+   my_random rgen;
+
+   std::vector<int> cur_solution = schedule; 
+   std::vector<int> blank_solution(schedule.size(), 0);
+
+   solution = cur_solution; //return initial value
+
+   double solution_obj = request.objective(solution); 
+
+   for(int k=0; k<n_rounds; k++)
+   {
+      //reset solution 
+      cur_solution = blank_solution;            
+
+      int n_assigned = 0;
+
+      while(n_assigned < cur_solution.size())
+      {
+         int g_index1 = floor( cur_solution.size() * rgen());
+
+         if(cur_solution[g_index1] == 0)
+         {
+            double best_obj = 1e12;
+            int best_day = 1;
+            //loop over all days to find the best placement
+            for(int j = 0; j < 100; j++)
+            {
+               cur_solution[g_index1] =  j + 1;           
+               double curr_obj = request.objective(cur_solution);            
+
+               if(curr_obj < best_obj)
+               {
+                  best_obj = curr_obj;       
+                  best_day = j + 1;      
+               }
+            }
+            cur_solution[g_index1] = best_day;
+            n_assigned++;
+         }
+      }
+
+      double obj = request.objective(cur_solution); 
+      if(obj < solution_obj)
+      {
+         solution_obj = obj;
+         solution = cur_solution;
+      }
+
+      std::cout << std::setw(4)<< k << ": ";
+      std::cout << std::setprecision( 2 ) << obj << ", ";         
+      std::cout << std::setprecision( 2 ) << obj - solution_obj << ", ";      
+      std::cout << std::endl;
+   }    
+
+}
+
 
 int main(int argc, char* argv[])
 {
    //inputs -n 10 -t 1.0 -f solution.csv
    std::string input_filename = "./data/ex/solution.csv";
 
-   int rounds = 10;  ////1 - in 24 sec, 100 - 40 min,  900 - 6h
+   int rounds = 10;  ////1 - in 24 sec, 100 - 40 min,  900 - 6h, 3000 - 10h
    double initial_temp = 10.0;
    int solver = 2;
    
@@ -325,6 +415,9 @@ int main(int argc, char* argv[])
    }else if (solver == 3)
    {
       solver_3(request, schedule, solution, rounds, initial_temp);
+   }else if (solver == 4)
+   {
+       solver_4(request, schedule, solution, rounds);
    }
    //shuffle(solution);
 

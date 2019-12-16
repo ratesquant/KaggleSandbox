@@ -9,6 +9,8 @@ Created on Sun Dec  8 23:44:52 2019
 import numpy as np
 import pandas as pd
 import os
+import matplotlib.pyplot as plt
+
 
 DATA_FOLDER = '/home/chirokov/source/github/KaggleSandbox/Santa2019/data' 
 
@@ -17,14 +19,27 @@ DATA_FOLDER = '/home/chirokov/source/github/KaggleSandbox/Santa2019/data'
 #        print(os.path.join(dirname, filename))
         
 data = pd.read_csv(os.path.join(DATA_FOLDER, 'family_data.csv'), index_col='family_id')
-submission = pd.read_csv(os.path.join(DATA_FOLDER,'sample_submission_solution.126653.csv'), index_col='family_id')
-
-
+submission = pd.read_csv(os.path.join(DATA_FOLDER,'ex/solution.csv'), index_col='family_id')
 
 family_size_dict = data[['n_people']].to_dict()['n_people']
 
 cols = [f'choice_{i}' for i in range(10)]
 choice_dict = data[cols].to_dict()
+choice_map = data[cols].transpose().to_dict()
+choice_list = [{choice_map[i]['choice_%d'%j]:j for j in range(10)} for i in range(5000)]
+ordered_choices = [[choice_map[i]['choice_%d'%j] for j in range(10)] for i in range(5000)]
+
+penalty_map = [( 0,   0),
+           ( 50,  0),
+           ( 50,  9),
+           (100,  9),
+           (200,  9),
+           (200, 18),
+           (300, 18),
+           (300, 36),
+           (400, 36),
+           (500, 36 + 199),
+           (500, 36 + 398)]
 
 N_DAYS = 100
 MAX_OCCUPANCY = 300
@@ -34,7 +49,42 @@ MIN_OCCUPANCY = 125
 days = list(range(N_DAYS,0,-1))
 
 #%% Objective function
-def cost_function(prediction):
+
+#curr_solution = submission['assigned_day'].tolist()
+#cost_function(curr_solution) - cost_function_orig(curr_solution)
+#%timeit cost_function(curr_solution) 
+#%timeit cost_function_orig(curr_solution) 
+
+def daily_count(prediction):
+    daily_occupancy = np.zeros(N_DAYS)
+    for f, d in enumerate(prediction):
+        daily_occupancy[d-1] += family_size_dict[f]
+    return daily_occupancy
+
+def daily_accounting_cost(daily_occupancy):    
+    daily_occupancy = np.minimum(MAX_OCCUPANCY, np.maximum(MIN_OCCUPANCY, daily_occupancy))    
+    daily_cost = ((daily_occupancy-125.0) / 400.0) * np.power(daily_occupancy, (0.5 + np.abs(np.diff(daily_occupancy, append = daily_occupancy[-1])) / 50.0))    
+    return daily_cost
+        
+    
+def cost_function(prediction, choice_mult = 1.0, acct_mult = 1.0, constr_mult = 1.0 ):
+    choice_penalty = 0
+    daily_occupancy = np.zeros(N_DAYS)        
+    for f, d in enumerate(prediction):        
+        n = family_size_dict[f]                
+        daily_occupancy[d-1] += n        
+        choices = choice_list[f]
+        pc, pn = penalty_map[choices[d]] if d in choices else penalty_map[-1]
+        choice_penalty += pc + pn * n
+    
+    constr_penalty = np.sum( (daily_occupancy > MAX_OCCUPANCY) | (daily_occupancy < MIN_OCCUPANCY))
+    
+    daily_occupancy = np.minimum(MAX_OCCUPANCY, np.maximum(MIN_OCCUPANCY, daily_occupancy))    
+    accounting_cost = np.sum(((daily_occupancy-125.0) / 400.0) * np.power(daily_occupancy, (0.5 + np.abs(np.diff(daily_occupancy, append = daily_occupancy[-1])) / 50.0)))       
+
+    return choice_mult * choice_penalty + acct_mult * accounting_cost + constr_mult * constr_penalty
+
+def cost_function_orig(prediction):
 
     penalty = 0
 
@@ -108,12 +158,11 @@ def cost_function(prediction):
 
     return penalty
 
-
 #%% Start with the sample submission values
-best = submission['assigned_day'].tolist()
-start_score = cost_function(best)
+best_solution = submission['assigned_day'].tolist()
+start_score = cost_function(best_solution)
 
-new = best.copy()
+new = best_solution.copy()
 # loop over each family
 for fam_id, _ in enumerate(best):
     # loop over each family choice
@@ -130,3 +179,64 @@ score = cost_function(new)
 submission.to_csv(f'submission_{score}.csv')
 print(f'Score: {score}')
 
+plt.plot(daily_count(best_solution) )
+plt.plot(daily_accounting_cost(daily_count(best_solution)))
+plt.grid()
+
+#%% stocastic optimizer
+#best_solution = submission['assigned_day'].tolist()
+#best_objective = cost_function(best_solution)
+
+my_cost_function = lambda x: cost_function(x, 1, 0, 1000)
+runs = 100000
+tempr = 2
+
+it_obj = np.zeros(runs)
+
+#current_solution = [l[0] for l in ordered_choices] #start with optimal
+#current_solution = best_solution.copy()
+best_objective = my_cost_function(current_solution)
+
+for i in range(runs):
+    index = int(np.floor(5000*np.random.rand()))
+    prev = current_solution[index]
+    rday = np.random.choice(ordered_choices[index]) if np.random.rand() > 0.01 else int(1 + np.floor(100*np.random.rand()))
+    if rday != prev:        
+        current_solution[index] = rday
+        new_obj = my_cost_function(current_solution)
+        if new_obj < best_objective or np.random.rand() < np.exp(-(new_obj - best_objective)/tempr):
+            print('%d %.1f -> %.1f' % (i, best_objective, new_obj) )
+            best_solution = current_solution.copy()
+            best_objective = new_obj
+        else:
+            current_solution[index] = prev
+    it_obj[i] = best_objective       
+    
+plt.plot(it_obj)
+
+my_cost_function(current_solution)
+
+#submission['assigned_day'] = new
+#score = cost_function(new)
+#submission.to_csv(f'submission_{score}.csv')
+#print(f'Score: {score}')
+
+plt.plot(daily_count(best_solution) )
+plt.plot(daily_accounting_cost(daily_count(best_solution)))
+plt.grid()
+
+plt.plot(daily_count(best_solution) )
+
+#%% temp
+temp = list(best_solution)
+daily_count(temp)
+temp[4278] = 31 #100
+cost_function(temp)
+
+#%% check all files
+for dirname, _, filenames in os.walk(DATA_FOLDER):
+   for filename in filenames:
+       if filename.endswith('.csv') and 'solution' in filename:
+           submission = pd.read_csv(os.path.join(dirname, filename), index_col='family_id')
+           obj = cost_function(submission['assigned_day'].tolist())
+           print('%s/%s: %f' % (dirname, filename, obj))

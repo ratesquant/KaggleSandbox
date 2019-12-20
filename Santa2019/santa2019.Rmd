@@ -34,7 +34,7 @@ source(file.path(working_folder, '/Utils/common.R'))
       df_met[, choice_n := tstrsplit(as.character(choice), "_", fixed=TRUE, keep=2L)]
       df_met[, choice_n := as.numeric(choice_n)]
       
-      df_sol = fread(file.path(working_folder, 'Santa2019/data/classic/solution.csv'))
+      df_sol = fread(file.path(working_folder, 'Santa2019/data/ex3/solution.csv'))
       #df_sol = fread(file.path(working_folder, 'Santa2019/data/ex/solution.73123.csv'))
       
       df_sol[df_met, n_people := i.n_people, on =.(family_id) ]

@@ -68,6 +68,23 @@ int Request::get_choice(int group, int choice) const
    return m_choices[group * N_CHOICES + choice];
 }
 
+//double Request::eval_delta(const std::vector<int>& schedule, int f_index, int from_d, int to_d, const double choice_mult, const double constr_mult, const double acct_mult) const
+//{
+//}
+
+void Request::get_daily_schedule(int day, const std::vector<int>& schedule, std::vector<int>& fam_index) const
+{
+	fam_index.resize(0);
+
+	for(size_t i=0; i<schedule.size(); i++)
+	{	 	
+		if(schedule[i] == day)
+		{
+		  fam_index.push_back(i);
+		}
+	}
+}
+
 double Request::objective(const std::vector<int>& schedule, const double choice_mult, const double constr_mult, const double acct_mult) const
 {
 	double penalty = 0.0;
@@ -107,11 +124,11 @@ double Request::objective(const std::vector<int>& schedule, const double choice_
     {
         if ( daily_occupancy[i] > MAX_OCCUPANCY )
 		{
-            constraint += 1000000 * (daily_occupancy[i] - MAX_OCCUPANCY);
+            constraint += 1000 * (daily_occupancy[i] - MAX_OCCUPANCY);
 			daily_occupancy[i] = MAX_OCCUPANCY;
 		}else if (daily_occupancy[i] < MIN_OCCUPANCY)
 		{
-            constraint += 1000000 * (MIN_OCCUPANCY - daily_occupancy[i]);
+            constraint += 1000 * (MIN_OCCUPANCY - daily_occupancy[i]);
 			daily_occupancy[i] = MIN_OCCUPANCY;
 		}
     }

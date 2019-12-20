@@ -14,6 +14,8 @@ public:
 	int group_count() const;
 	int get_choice(int group, int choice) const;
 
+	void get_daily_schedule(int day, const std::vector<int>& schedule, std::vector<int>& fam_index) const;
+
 	double objective(const std::vector<int>& schedule, const double choice_mult = 1.0, const double constr_mult = 1.0, const double acct_mult = 1.0) const;
 
 	static int read_schedule(const std::string& filename, std::vector<int>& schedule);

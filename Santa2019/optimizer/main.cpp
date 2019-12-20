@@ -83,14 +83,26 @@ int shuffle(std::vector<int>& schedule)
       schedule[i] = 1 + floor( 100.0 * rgen() ); 
    }
 }
+
+int partial_shuffle(int n, std::vector<int>& schedule)
+{
+   my_random rgen;
+
+   for(int i=0; i<n; i++)
+   {
+      int index = floor( schedule.size() * rgen());
+
+      schedule[index] = 1 + floor( 100.0 * rgen() ); 
+   }
+}
 //assign random date to each family
 int solver_2(const Request& request, const std::vector<int>& schedule, std::vector<int>& solution, int n_rounds = 1, double initial_temp = 1.0)
 {
    std::cout << "Random Chooser Plus" << std::endl;
 
    double choice_mult = 1.0;
-   double constr_mult = 0; //1e-4 = 100 per violation
-   double acct_mult = 0;
+   double constr_mult = 1.0; //1.0 = 1000 per violation
+   double acct_mult = 1.0;
 
    std::vector<int> cur_solution = schedule; 
 
@@ -103,110 +115,103 @@ int solver_2(const Request& request, const std::vector<int>& schedule, std::vect
 
    int ng = request.group_count();
    
-   int n_round_size = (int)1e6;
-   int n_runs = (int)(n_rounds*n_round_size);   
+   int n_round_size = (int)1e6;   
+   //double temperature = initial_temp; 
+   //double final_temp = 0.01; 
+   //double temperature_multiplier = exp(log(final_temp/initial_temp)/n_rounds );
 
-   std::cout << "temp: " << initial_temp<< ", rounds: " << n_rounds << std::endl;
+   //std::cout << "temp: " << temperature<< ", rounds: " << n_rounds << std::endl;   
 
-   for(int i=0; i<n_runs; i++)
+   for(int i=0; i<n_rounds; i++)
    {
       //double temperature = std::max(0.0, initial_temp*(1.0-1.1*double(i)/n_runs) );
       //double temperature = std::max(0.0, initial_temp*exp(-double(i)/n_runs) * (0.8 + 0.2*cos(100*double(i)/n_runs)) );
-      double temperature = initial_temp * 0.5*(1.0 + cos(100*double(i)/n_runs));
+      double temperature = initial_temp * 0.5*(1.0 + cos(50*double(i)/n_rounds));
+      //double temperature = initial_temp;
 
-      int r_day  = 1; //from [1 to 100]
+      int solution_updated_count = 0;
 
-      //try swapping days
-      bool is_swap = rgen() < 0.1; //10% change of swap 
+      for(int j=0; j<n_round_size; j++)
+      {
+         int r_day  = 1; //from [1 to 100]
 
-      int g_index1, g_index2, prev1, prev2; 
+         //try swapping days
+         bool is_swap = rgen() < 0.1; //10% change of swap 
 
-      bool is_change = true;
+         int g_index1, g_index2, prev1, prev2; 
 
-      g_index1 = floor( solution.size() * rgen());
+         bool is_change = true;
+
+         g_index1 = floor( solution.size() * rgen());
+         
+         if(is_swap)
+         {         
+            g_index2 = floor( solution.size() * rgen());
+                  
+            prev1 = cur_solution[g_index1];
+            prev2 = cur_solution[g_index2];
+
+            cur_solution[g_index1] = prev2;
+            cur_solution[g_index2] = prev1;
+
+            r_day = prev2;
+
+            is_change = (g_index1 != g_index2);
+
+         }else{       
+            if( rgen() < 0.01  ) //1% chance to pick random date            
+               r_day = 1 + floor( 100.0 * rgen() ); //from [1 to 100]
+            else
+               r_day = request.get_choice(g_index1, floor( 10.0 * rgen() )); //from [0 to 9];
+            
+            prev1 = cur_solution[g_index1];      
+            cur_solution[g_index1] = r_day;
+
+            is_change = (prev1 != r_day);
+         }   
+
+         double new_objective = is_change ? request.objective(cur_solution, choice_mult, constr_mult, acct_mult) : cur_objective;
+         //double new_objective = request.objective(cur_solution, choice_mult, constr_mult, acct_mult);
+
+         if(new_objective<best_objective)
+         {
+            std::cout << i << "-"<<j<< " :" << best_objective<< " -> " << new_objective << ", " << best_objective - new_objective<< " temp: " << temperature << " ["<<g_index1<<"]: " <<prev1<< " -> " <<r_day <<" swap: " << is_swap <<  std::endl;
+            best_objective = new_objective;
+            solution = cur_solution;
+            solution_updated_count++;
+         }
+
+         if( new_objective < cur_objective || rgen() < exp( -(new_objective - cur_objective)/temperature) )
+         {
+            cur_objective = new_objective;
+         }else
+         {
+            //roll back
+            if(is_swap)
+            {
+               cur_solution[g_index1] = prev1;
+               cur_solution[g_index2] = prev2;
+            }else
+            {
+               cur_solution[g_index1] = prev1;
+            }
+         }        
+      }//end of round
+
+      std::cout << std::setw(4)<< i << ": ";
+      std::cout << std::setprecision( 2 ) << cur_objective << ", ";         
+      std::cout << std::setprecision( 2 ) << cur_objective - best_objective << ", ";
+      std::cout << std::setprecision( 2 ) << "temp: " << temperature << ", ";      
+      std::cout << " updates: " << solution_updated_count; 
+      std::cout << std::endl;   
+
+      //temperature = solution_updated ? temperature : temperature_multiplier * temperature;            
       
-      if(is_swap)
-      {         
-         g_index2 = floor( solution.size() * rgen());
-               
-         prev1 = cur_solution[g_index1];
-         prev2 = cur_solution[g_index2];
-
-         cur_solution[g_index1] = prev2;
-         cur_solution[g_index2] = prev1;
-
-         r_day = prev2;
-
-         is_change = (g_index1 != g_index2);
-
-      }else{       
-         if( rgen() < 0.01  ) //1% chance to pick random date            
-            r_day = 1 + floor( 100.0 * rgen() ); //from [1 to 100]
-         else
-            r_day = request.get_choice(g_index1, floor( 10.0 * rgen() )); //from [0 to 9];
-         
-         prev1 = cur_solution[g_index1];      
-         cur_solution[g_index1] = r_day;
-
-         is_change = (prev1 != r_day);
-      }   
-
-      double new_objective = is_change ? request.objective(cur_solution, choice_mult, constr_mult, acct_mult) : cur_objective;
-      //double new_objective = request.objective(cur_solution, choice_mult, constr_mult, acct_mult);
-
-      if(new_objective<best_objective)
-      {
-         std::cout << i << ": " << best_objective<< " -> " << new_objective << ", " << best_objective - new_objective<< " temp: " << temperature << " ["<<g_index1<<"]: " <<prev1<< " -> " <<r_day <<" swap: " << is_swap <<  std::endl;
-         best_objective = new_objective;
-         solution = cur_solution;
-      }
-
-      if( new_objective < cur_objective || rgen() < exp( -(new_objective - cur_objective)/temperature) )
-      {
-         cur_objective = new_objective;
-      }else
-      {
-          //roll back
-          if(is_swap)
-          {
-              cur_solution[g_index1] = prev1;
-              cur_solution[g_index2] = prev2;
-          }else
-          {
-            cur_solution[g_index1] = prev1;
-          }
-      }
-
-      if(i % n_round_size == 0)
-      {
-         std::cout << std::setw(4)<< i / n_round_size << ": ";
-         std::cout << std::setprecision( 2 ) << cur_objective << ", ";         
-         std::cout << std::setprecision( 2 ) << cur_objective - best_objective << ", ";
-         std::cout << std::setprecision( 2 ) << "temp: " << temperature << ", ";
-         //std::cout << std::setprecision( 2 ) << "greedy: " << greedy_found;
-         std::cout << std::endl;       
-
-         //increase penalty slowly
-         double t_run = (double)i/n_runs;
-         choice_mult  = 1.0*(1.0 - exp(-4 * t_run));      
-         constr_mult = 1e-3 * (1.0 - exp(-3 * t_run)); 
-         acct_mult = 1.0 * (1.0 - exp(-3 * t_run));  
-
-         double update_cur_objective = request.objective(cur_solution, choice_mult, constr_mult, acct_mult);
-         double update_best_objective = request.objective(solution, choice_mult, constr_mult, acct_mult);
-
-         std::cout <<std::setprecision( 4 )<< "choice_mult: "<< choice_mult<< " constr_mult: "<< constr_mult<< " acct_mult: "<<acct_mult<< " objective: "<< cur_objective<<" -> "<<update_cur_objective <<std::endl;       
-         
-         cur_objective = update_cur_objective;
-         best_objective = update_best_objective;
-      }
-
       //reset to best found solution every 10 rounds
-      if( (i % (n_round_size * 10))  == 0)
+      if( i % 10  == 0)
       {
          cur_solution = solution;
       }    
-     
    }
 }
 
@@ -409,8 +414,10 @@ int main(int argc, char* argv[])
    std::vector<int> solution = schedule;
    //solver_1(request, schedule, solution);
 
+   //shuffle(schedule);
+
    if(solver == 2)
-   {
+   {      
       solver_2(request, schedule, solution, rounds, initial_temp);
    }else if (solver == 3)
    {
@@ -418,8 +425,7 @@ int main(int argc, char* argv[])
    }else if (solver == 4)
    {
        solver_4(request, schedule, solution, rounds);
-   }
-   //shuffle(solution);
+   }   
 
    double final_objective = request.objective(solution);
 

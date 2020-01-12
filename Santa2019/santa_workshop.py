@@ -10,9 +10,10 @@ import numpy as np
 import pandas as pd
 import os
 import matplotlib.pyplot as plt
+from ortools.linear_solver import pywraplp
 
 
-DATA_FOLDER = '/home/chirokov/source/github/KaggleSandbox/Santa2019/data' 
+DATA_FOLDER = os.getenv('HOME') + '/source/github/KaggleSandbox/Santa2019/data' 
 
 #for dirname, _, filenames in os.walk(DATA_FOLDER):
 #    for filename in filenames:
@@ -246,9 +247,13 @@ cost_function(temp)
 current_solution = 1+np.random.choice(range(100), 5000)
 
 #%% check all files
+solutions = list()
 for dirname, _, filenames in os.walk(DATA_FOLDER):
    for filename in filenames:
        if filename.endswith('.csv') and 'solution' in filename:
            submission = pd.read_csv(os.path.join(dirname, filename), index_col='family_id')
            obj = cost_function(submission['assigned_day'].tolist())
+           solutions.append((dirname, filename, obj))
            print('%s/%s: %f' % (dirname, filename, obj))
+
+solutions.sort(key = lambda x : x[2])

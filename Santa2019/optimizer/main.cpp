@@ -126,7 +126,7 @@ int solver_2(const Request& request, const std::vector<int>& schedule, std::vect
    {
       //double temperature = std::max(0.0, initial_temp*(1.0-1.1*double(i)/n_runs) );
       //double temperature = std::max(0.0, initial_temp*exp(-double(i)/n_runs) * (0.8 + 0.2*cos(100*double(i)/n_runs)) );
-      double temperature = initial_temp * 0.5*(1.0 + cos(50*double(i)/n_rounds));
+      double temperature = initial_temp * 0.5*(1.0 + cos(100*double(i)/n_rounds));
       //double temperature = initial_temp;
 
       int solution_updated_count = 0;
@@ -159,7 +159,7 @@ int solver_2(const Request& request, const std::vector<int>& schedule, std::vect
             is_change = (g_index1 != g_index2);
 
          }else{       
-            if( rgen() < 0.01  ) //1% chance to pick random date            
+            if( rgen() < 0.1  ) //10% chance to pick random date            
                r_day = 1 + floor( 100.0 * rgen() ); //from [1 to 100]
             else
                r_day = request.get_choice(g_index1, floor( 10.0 * rgen() )); //from [0 to 9];
@@ -353,7 +353,7 @@ int solver_4(const Request& request, const std::vector<int>& schedule, std::vect
 
 int main(int argc, char* argv[])
 {
-   //inputs -n 10 -t 1.0 -f solution.csv
+   //inputs -n 10 -t 1.0 -s 2 -f solution.csv
    std::string input_filename = "./data/ex/solution.csv";
 
    int rounds = 10;  ////1 - in 24 sec, 100 - 40 min,  900 - 6h, 3000 - 10h

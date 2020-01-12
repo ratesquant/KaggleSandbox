@@ -34,7 +34,7 @@ source(file.path(working_folder, '/Utils/common.R'))
       df_met[, choice_n := tstrsplit(as.character(choice), "_", fixed=TRUE, keep=2L)]
       df_met[, choice_n := as.numeric(choice_n)]
       
-      df_sol = fread(file.path(working_folder, 'Santa2019/data/ex3/solution.csv'))
+      df_sol = fread(file.path(working_folder, 'Santa2019/data/ex/solution.csv'))
       #df_sol = fread(file.path(working_folder, 'Santa2019/data/ex/solution.73123.csv'))
       
       df_sol[df_met, n_people := i.n_people, on =.(family_id) ]
@@ -52,7 +52,7 @@ source(file.path(working_folder, '/Utils/common.R'))
     
     ggplot(df_sol[,.(.N, np = sum(n_people)), by =.(choice_n)], aes(factor(choice_n), np)) + geom_bar(stat = 'identity')
       
-      #df_agg[np > 300 | np < 125, ]
+    #df_agg[np > 300 | np < 125, ]
   #df_agg
   
   dim(df_sol)
@@ -67,3 +67,24 @@ source(file.path(working_folder, '/Utils/common.R'))
   ggplot(df_met[family_id %in% sample(unique(df_met$family_id), 10), ], aes(day, family_id, group =family_id, color = choice_n)) + geom_point()
 ```
 
+##Mixed integer linear programming in R
+```{r example}
+library(dplyr)
+library(ROI)
+library(ROI.plugin.glpk)
+library(ompr)
+library(ompr.roi)
+
+result <- MIPModel() %>%
+  add_variable(x, type = "integer") %>%
+  add_variable(y, type = "continuous", lb = 0) %>%
+  set_bounds(x, lb = 0) %>%
+  set_objective(x + y, "max") %>%
+  add_constraint(x + y <= 11.25) %>%
+  solve_model(with_ROI(solver = "glpk")) 
+get_solution(result, x)
+get_solution(result, y)
+
+
+
+```

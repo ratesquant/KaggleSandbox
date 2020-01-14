@@ -1,0 +1,40 @@
+---
+title: "Connect_Position"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(data.table)
+
+working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+source(file.path(working_folder, '/Utils/common.R'))
+
+```
+
+##Load Data
+
+```{r load_data}
+ # Test_L3_R1 Test_L2_R1 Test_L2_R2 Test_L1_R1 Test_L1_R2 Test_L1_R3
+ df = fread(file.path(working_folder, 'connect_x/cpp/Test_All_negamax.csv'))
+ df[,best_score:=trunc(best_score)]
+ #names(df) <- c('index', 'moves', 'score', 'mark', 'board_score_max', 'board_score_min', 'board_score_len')
+  
+ ggplot(df, aes(score, best_score)) + geom_point() + geom_abline(slope = 1, color = 'red')
+ 
+ df[score==best_score,.N] #2290 - match
+ 
+ ggplot(df, aes(abs(score-best_score) )) + stat_ecdf()
+ 
+ ggplot(df, aes(V1, score - best_score)) + geom_point()
+ 
+ sum((df$score-df$best_score)**2)/nrow(df)
+ 
+ summary(lm(score ~ best_score, df))
+ cor(df$score, df$best_score, use = 'complete.obs') #0.7246814
+```
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

@@ -145,7 +145,7 @@ int main(int argc, char** argv) {
       unsigned long long start_time = getTimeMicrosec();
       int score = solver.solve(P, weak);
       unsigned long long end_time = getTimeMicrosec();
-      std::cout << line << " " << score << " " << solver.getNodeCount() << " " << (end_time - start_time);
+      std::cout << line << " score: " << score << " nodes: " << solver.getNodeCount() << " time: " << 1e-6*(end_time - start_time);
     }
     std::cout << std::endl;
   }

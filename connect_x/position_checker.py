@@ -252,7 +252,7 @@ for move, score in  zip(data.move, data.score):
     best_column, best_score = negamax_agent(structify({'board':board, 'mark':mark}), config)
     position_scores.append((move, score, best_score, best_column))
   
-pd.DataFrame(position_scores, columns = ['move', 'score', 'best_score', 'best_column']).to_csv(os.path.join(DATA_FOLDER, 'Test_All_negamax.csv'))      
+pd.DataFrame(position_scores, columns = ['move', 'score', 'best_score', 'best_column']).to_csv(os.path.join(DATA_FOLDER, 'Test_All_negamax7.csv'))      
     
 plt.plot([p[1] for p in position_scores], [p[3] for p in position_scores], '.')    
 

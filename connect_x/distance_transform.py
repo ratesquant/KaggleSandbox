@@ -24,19 +24,22 @@ def print_board(board, columns = 7):
 rows = 6
 cols = 7
 board = [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+board = [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 2, 2, 0, 2, 1, 0, 0, 1, 1, 0, 2, 2, 0, 0, 1, 1, 2, 2, 2, 0, 0, 1, 1, 2, 1, 2, 0, 0]
+
 board_dt = distance_transform(board, rows, cols)
+%timeit distance_transform(board, rows, cols)
 
 print_board(board)
 print_board(board_dt)
 
-def distance_transform(board, rows, cols):
+def distance_transform(board, rows, cols, mark = 1):
     board2 = [0] * len(board)
     board_dt = [0] * len(board)
     #board[row * columns + column] 
     #First Phase - To find Function G 
     for i in range(rows):
         #if border is > 0 make it 0 else 255
-        if board[i * cols] == 1: 
+        if board[i * cols] == mark: 
             board2[i * cols] = 0;
         else:
             board2[i * cols]=255;
@@ -44,7 +47,7 @@ def distance_transform(board, rows, cols):
         #check for obstacle in the entire row
         #Left to right pass
         for j in range(cols):    
-            if board[i * cols + j]==1:
+            if board[i * cols + j]==mark:
                 board2[i * cols + j]=0;
             else:
                 board2[i * columns + j] = min(255,1+board2[i*cols + j-1])    

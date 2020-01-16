@@ -8,33 +8,95 @@ knitr::opts_chunk$set(echo = TRUE)
 
 library(ggplot2)
 library(data.table)
+library(stringi)
 
 working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 source(file.path(working_folder, '/Utils/common.R'))
 
+play_moves<- function(move, rows = 6, cols = 7){
+  board = rep(0, rows * cols)
+  marker = 1
+  
+  for (c in strsplit(move, "")[[1]]) {
+    col = as.numeric(c)
+    for (i in rows:1){
+      if (board[(i-1)*cols + col] == 0) {
+        board[(i-1)*cols + col] = marker
+        marker = ifelse(marker == 1, 2, 1)
+        break;
+        }
+    }
+  }
+  return (board)
+}
+board = play_moves('1234')
+matrix(board, nrow = 6, byrow = TRUE) 
 ```
 
 ##Load Data
-
+ 6 depth reference: 4.962794 min, match: 2372, avg_error: 3.990969, cor: 0.805851
+ 6 depth reference: 2.645965 min, match: 2404, avg_error: 3.802784, cor: 0.811391  max:  0.29 sec (with static move ordering)
+ 7 depth reference: 6.965158 min, match: 2467, avg_error: 4.077111, cor: 0.818551  max:  1.18 sec (with static move ordering)
+ 8 depth reference: 14.29394 min, match: 2795, avg_error: 3.294617, cor: 0.865816  max:  2.05 sec (with static move ordering)
+ 9 depth reference: 35.82927 min, match: 2845, avg_error: 3.517646, cor: 0.873437  max:  6.07 sec (with static move ordering)
+10 depth reference: 77.05532 min, match: 3125, avg_error: 2.769537, cor: 0.909271  max: 18.74 sec (with static move ordering)
 ```{r load_data}
  # Test_L3_R1 Test_L2_R1 Test_L2_R2 Test_L1_R1 Test_L1_R2 Test_L1_R3
- df = fread(file.path(working_folder, 'connect_x/cpp/Test_All_negamax.csv'))
+ #df = fread(file.path(working_folder, 'connect_x/cpp/Test_All_negamax.v2.csv'))
+ df = fread(file.path(working_folder, 'connect_x/cpp/Test_All_negamax.6p.csv'))
+ df[,orig_score:=best_score]
  df[,best_score:=trunc(best_score)]
+ df[, data_set := V1 %/% 1000]
  #names(df) <- c('index', 'moves', 'score', 'mark', 'board_score_max', 'board_score_min', 'board_score_len')
   
- ggplot(df, aes(score, best_score)) + geom_point() + geom_abline(slope = 1, color = 'red')
+ ggplot(df, aes(score, best_score)) + geom_point(alpha = 0.1) + geom_abline(slope = 1, color = 'red')
+ ggplot(df, aes(score, best_score)) + geom_point(position = position_jitter(), alpha = 0.1) + geom_abline(slope = 1, color = 'red')
+ 
+ ggplot(df, aes(score, best_score)) + geom_point(position = position_jitter(), alpha = 0.1) + geom_abline(slope = 1, color = 'red') + facet_wrap(~ data_set )
+ #ggplot(df, aes(abs(score-best_score) )) + stat_ecdf()
+ #ggplot(df, aes(V1, score - best_score)) + geom_point()
  
  df[score==best_score,.N] #2290 - match
- 
- ggplot(df, aes(abs(score-best_score) )) + stat_ecdf()
- 
- ggplot(df, aes(V1, score - best_score)) + geom_point()
- 
- sum((df$score-df$best_score)**2)/nrow(df)
- 
+ sqrt( sum((df$score-df$best_score)**2)/nrow(df) )
  summary(lm(score ~ best_score, df))
  cor(df$score, df$best_score, use = 'complete.obs') #0.7246814
+ 
+ ggplot(df, aes(elapsed_time)) + stat_ecdf()
+ sum(df$elapsed_time)/60
+ max(df$elapsed_time)
+ 
+ ggplot(df, aes(V1, log10(elapsed_time) )) + geom_point(alpha = 0.2) + facet_wrap(~(score == best_score))
+ ggplot(df, aes(V1, elapsed_time )) + geom_point(alpha = 0.2) + facet_wrap(~(score == best_score))
+ 
+ 
+ df[score != best_score,][order(elapsed_time),]
+ df[order(elapsed_time),]
+ 
+ 
 ```
 
+##Move Analysis
 
+```{r move_analysis}
+
+play_moves_v <- Vectorize(function(x) sum(play_moves(x) == 0))
+ 
+df[, n_moves := play_moves_v(move)]
+
+ggplot(df, aes(n_moves)) + geom_histogram(binwidth = 1)
+
+ggplot(df, aes(n_moves, elapsed_time)) + geom_point()
+ggplot(df, aes(nodes, elapsed_time)) + geom_point()
+ 
+```
+
+##Timing
+
+```{r timing_data}
+ df_t = fread(file.path(working_folder, 'connect_x/timing.csv'))
+
+ ggplot(df_t, aes(move, elapsed)) + geom_point(alpha = 0.1)
+ ggplot(df_t, aes(factor(move), elapsed)) + geom_boxplot()
+
+```
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

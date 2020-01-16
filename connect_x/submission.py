@@ -1,28 +1,24 @@
 def negamax_agent(obs, config):
-    from random import choice, choices
+    from random import choice
     columns = config.columns
     rows = config.rows
-    size = rows * columns        
+    size = rows * columns   
+    column_order = [ columns//2 + (1-2*(i%2)) * (i+1)//2 for i in range(columns)]            
+    made_moves = sum(1 if cell != 0 else 0 for cell in obs.board) 
     
-    max_depth = 6
+    max_depth = 7 #if made_moves < 20 else 8
     
     def board_eval(board, moves, column, mark):
         row = max([r for r in range(rows) if board[column + (r * columns)] == 0])
-        score =0 # (size + 1 - moves) / 2
+        score =0 
         if column > 0 and board[row * columns + column - 1] == mark:              #left same mark
             score += 1
         if (column < columns - 1 and board[row * columns + column + 1] == mark):  #right same mark
             score += 1        
-        if row < rows - 2 and board[(row + 1) * columns + column] == mark:            
-            score += 1
-        if row < rows - 2 and column < columns - 1 and board[(row + 1) * columns + column + 1] == mark:            
-            score += 1
-        if row < rows - 2 and column > 0           and board[(row + 1) * columns + column - 1] == mark:            
-            score += 1
         if row > 0 and column > 0 and board[(row - 1) * columns + column - 1] == mark:
             score += 1
         if row > 0 and column < columns - 1 and board[(row - 1) * columns + column + 1] == mark:
-            score += 1
+            score += 1           
         return score
 
     def play(board, column, mark, config):
@@ -67,40 +63,35 @@ def negamax_agent(obs, config):
             if board[column] == 0 and is_win(board, column, mark, config, False):
                 return ((size + 1 - moves) / 2, column)
             
-        max_score = (size + 1 - moves) / 2	# upper bound of our score as we cannot win immediately
+        max_score = (size - 1 - moves) / 2	# upper bound of our score as we cannot win immediately
         if beta > max_score:
             beta = max_score                    # there is no need to keep beta above our max possible score.
             if alpha >= beta:               
                 return (beta, None)  # prune the exploration if the [alpha;beta] window is empty.                           
 
-        #move ordering
-        #possible_moves = [(column, board_eval(board, moves, column, mark)) for column in range(columns) if board[column] == 0]  
-        #possible_moves.sort(key = lambda x: x[1])                
-        possible_moves = [(column,0) for column in range(columns) if board[column] == 0]                        
-                
         # Recursively check all columns.        
         best_score = -size               
         best_column = None
-        for column,_ in possible_moves:            
-            # Max depth reached. Score based on cell proximity for a clustering effect.
-            if depth <= 0:                                        
-                score = board_eval(board, moves, column, mark)                   
-            else:
-                next_board = board[:]
-                play(next_board, column, mark, config)
-                (score, _) = negamax(next_board, 1 if mark == 2 else 2, depth - 1, -beta, -alpha)
-                score = score * -1            
-            if score > best_score:
-                best_score = score
-                best_column = column            
-            alpha = max(alpha, score) # reduce the [alpha;beta] window for next exploration, as we only                                                                   
-            #print("mark: %s, d:%s, col:%s, score:%s (%s, %s)) alpha = %s beta = %s" % (mark, depth, column, score,best_score, best_column, alpha, beta))            
-            if alpha >= beta:                        
-                return (alpha, best_column)  # prune the exploration if we find a possible move better than what we were looking for.                    
+        for column in column_order: 
+            if board[column] == 0:
+                # Max depth reached. Score based on cell proximity for a clustering effect.
+                if depth <= 0:                                        
+                    score = board_eval(board, moves, column, mark)                   
+                else:
+                    next_board = board[:]
+                    play(next_board, column, mark, config)
+                    (score, _) = negamax(next_board, 1 if mark == 2 else 2, depth - 1, -beta, -alpha)
+                    score = score * -1            
+                if score > best_score:
+                    best_score = score
+                    best_column = column            
+                alpha = max(alpha, score) # reduce the [alpha;beta] window for next exploration, as we only                                                                   
+                #print("mark: %s, d:%s, col:%s, score:%s (%s, %s)) alpha = %s beta = %s" % (mark, depth, column, score,best_score, best_column, alpha, beta))            
+                if alpha >= beta:                        
+                    return (alpha, best_column)  # prune the exploration if we find a possible move better than what we were looking for.                    
         return (alpha, best_column)
-
-    made_moves = sum(1 if cell != 0 else 0 for cell in obs.board) 
-    if made_moves == 0:
+    
+    if made_moves <= 1:
         best_column = columns//2
     else:
         best_score, best_column = negamax(obs.board[:], obs.mark, max_depth, -size, size)        

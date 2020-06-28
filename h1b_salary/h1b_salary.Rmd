@@ -1,0 +1,198 @@
+---
+title: "H1B Salary"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE)
+
+options(datatable.integer64='character')
+
+library(data.table)
+library(readxl)
+library(ggplot2)
+library(stringi)
+library(forcats)
+library(foreach)
+
+memory.limit(36000)
+
+working_folder = 'D:/Github/KaggleSandbox/'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
+source(file.path(working_folder, 'Utils/common.R'))
+
+```
+
+## Convert Data
+```{r convert_data, eval = FALSE}
+
+files = list.files(file.path(working_folder,'h1b_salary/data'), glob2rx('H-1B_Disclosure_Data_FY*.xlsx'), full.names = TRUE)
+
+foreach(file = files) %do% {
+  df_temp = read_excel(file)
+  fwrite(df_temp, stri_join(file, '.csv') )
+  gc(reset=TRUE)
+}
+```
+
+## Load Data
+https://www.foreignlaborcert.doleta.gov/performancedata.cfm
+```{r load_data}
+
+
+
+files = list.files(file.path(working_folder,'h1b_salary/data'), glob2rx('H-1B_Disclosure_Data_FY*.xlsx.csv'), full.names = TRUE)
+
+df = foreach(file = files, .combine = function(...) rbind(..., fill = TRUE) ) %do% {
+  df_temp = fread(file, nrows = 1000)
+  return(df_temp)
+}
+
+
+
+df[,  WAGE_RATE_OF_PAY_FROM_1 := as.numeric(stri_replace(WAGE_RATE_OF_PAY_FROM_1, '', regex = '[$,]', mode = 'all'))]
+df[,  WAGE_RATE_OF_PAY_TO_1   := as.numeric(stri_replace(WAGE_RATE_OF_PAY_TO_1,   '', regex = '[$,]', mode = 'all'))]
+
+
+#Meta Data on H-1B visas ----
+files = list.files(file.path(working_folder,'h1b_salary/data/datahubexport'), glob2rx('*datahubexport*.csv'), full.names = TRUE)
+
+df_meta = foreach(file = files, .combine = rbind) %do%{  fread(file) }
+names(df_meta) <- make.names(names(df_meta))
+
+df_meta[, i_appr := as.numeric(Initial.Approvals)]
+df_meta[, i_deni := as.numeric( Initial.Denials)]
+df_meta[, c_appr := as.numeric(Continuing.Approvals)]
+df_meta[, c_deni := as.numeric( Continuing.Denials)]
+df_meta[, year := factor(Fiscal.Year, ordered  = TRUE)]
+
+gc(reset=TRUE)
+
+```
+
+## Plot statistics
+
+```{r plot_stat, echo=FALSE}
+
+df_meta_year = df_meta[, .(.N, 
+                           i_appr = sum(i_appr, na.rm = TRUE),
+                           i_deni = sum(i_deni, na.rm = TRUE),
+                           c_appr = sum(c_appr, na.rm = TRUE), 
+                           c_deni = sum(c_deni, na.rm = TRUE)), by = .(year)]
+
+df_meta_year[, t_deni := i_deni + c_deni]
+df_meta_year[, t_appr := i_appr + c_appr]
+df_meta_year[, t_aply := t_deni + t_appr]
+
+ggplot(melt(df_meta_year, id.vars = 'year')[variable!= 'N'], aes(year,   value, group =  variable, color = variable)) + geom_line()
+
+#deni ratio #307,653 - total approval
+ggplot(df_meta_year, aes(year, t_deni/(t_appr + t_deni) )) + geom_point() + geom_line()
+ggplot(df_meta_year, aes(year, i_deni/(i_appr + i_deni) )) + geom_point() + geom_line()
+ggplot(df_meta_year, aes(year, c_deni/(c_appr + c_deni) )) + geom_point() + geom_line()
+ggplot(df_meta_year, aes(year, t_deni + t_appr )) + geom_point() + geom_line()
+ggplot(df_meta_year, aes(year, t_appr )) + geom_point() + geom_line()
+
+#ggplot(df_meta_year) + geom_line(aes(year, i_appr)) + geom_line(aes(year, t_deni))
+
+df_meta[order(c_appr)]
+
+```
+## Plot Wages
+
+H-1B visas 649083 in 2019
+```{r plot_wages, echo=FALSE}
+
+table(df$WAGE_UNIT_OF_PAY_1, df$VISA_CLASS)
+
+dfs = df[VISA_CLASS== 'H-1B', .(EMPLOYER_NAME, CASE_STATUS, JOB_TITLE, SOC_TITLE, TOTAL_WORKER_POSITIONS, WORKSITE_CITY_1, WORKSITE_STATE_1 , 
+                          WAGE_RATE_OF_PAY_FROM_1, WAGE_RATE_OF_PAY_TO_1, WAGE_UNIT_OF_PAY_1, PREVAILING_WAGE_1, PW_UNIT_OF_PAY_1, PW_WAGE_LEVEL_1)]
+
+dfs[, max_wage := 1e-3*pmax(WAGE_RATE_OF_PAY_TO_1, WAGE_RATE_OF_PAY_FROM_1, na.rm = TRUE)]
+
+largest_employers = dfs[,.(.N), by =.(EMPLOYER_NAME)][N>1000, EMPLOYER_NAME]
+
+ggplot(dfs[EMPLOYER_NAME %in% largest_employers,.(.N), by =.(EMPLOYER_NAME, CASE_STATUS)], aes(EMPLOYER_NAME, N, group = CASE_STATUS, fill = CASE_STATUS)) + 
+  geom_bar(stat = 'identity') + coord_flip()
+
+ggplot(dfs[EMPLOYER_NAME %in% largest_employers & WAGE_UNIT_OF_PAY_1 == 'Year'], aes(EMPLOYER_NAME, 1e-3*WAGE_RATE_OF_PAY_FROM_1)) + 
+  geom_point(alpha = 0.2) + geom_jitter() +  coord_flip()
+
+ggplot(dfs[EMPLOYER_NAME %in% largest_employers & WAGE_UNIT_OF_PAY_1 == 'Year'], aes(EMPLOYER_NAME, 1e-3*pmax(WAGE_RATE_OF_PAY_TO_1, WAGE_RATE_OF_PAY_FROM_1, na.rm = TRUE))) + 
+  geom_boxplot() +  coord_flip()  + geom_hline(yintercept = 200, color = 'red', linetype = 'dashed')
+
+emp_set = c("JPMORGAN CHASE & CO.", "GOOGLE LLC", "FACEBOOK INC.", "GOLDMAN SACHS SERVICES LLC", "WELLS FARGO BANK, N.A.", "CITADEL AMERICAS LLC",
+            'BANK OF AMERICA N.A.', 'DEUTSCHE BANK SECURITIES INC.', 'CITIBANK, N.A.', 'U.S. BANK NATIONAL ASSOCIATION')
+
+ggplot(dfs[EMPLOYER_NAME %in% emp_set & WAGE_UNIT_OF_PAY_1 == 'Year'], aes(EMPLOYER_NAME, max_wage)) + 
+  geom_violin(adjust = 0.5) +  coord_flip()  + geom_hline(yintercept = 200, color = 'red', linetype = 'dashed')
+
+ggplot(dfs[EMPLOYER_NAME %in% emp_set & WAGE_UNIT_OF_PAY_1 == 'Year'], aes(max_wage, group = EMPLOYER_NAME, fill = EMPLOYER_NAME)) + 
+  geom_density(adjust = 1) +  geom_vline(xintercept = 200, color = 'red', linetype = 'dashed') + facet_wrap(~EMPLOYER_NAME) + theme (legend.position = 'none')
+
+ggplot(dfs[EMPLOYER_NAME %in% emp_set & WAGE_UNIT_OF_PAY_1 == 'Year'], aes(max_wage, group = EMPLOYER_NAME, fill = EMPLOYER_NAME)) + 
+  geom_histogram(binwidth = 10) +  geom_vline(xintercept = 200, color = 'red', linetype = 'dashed') + facet_wrap(~EMPLOYER_NAME, scales = 'free_y') + theme (legend.position = 'none')
+
+ggplot(dfs[EMPLOYER_NAME %in% emp_set & WAGE_UNIT_OF_PAY_1 == 'Year'], aes(max_wage, group = EMPLOYER_NAME, color = EMPLOYER_NAME)) + 
+  stat_ecdf() +  geom_vline(xintercept = 200, color = 'red', linetype = 'dashed') + facet_wrap(~EMPLOYER_NAME, scales = 'free_y') + theme (legend.position = 'none')
+
+emp_set2 = c('HARTFORD HEALTHCARE MEDICAL GROUP, INC.', 'MARSHFIELD CLINIC', 'ALLEGHENY CLINIC', 'HSHS MEDICAL GROUP, INC.', "JPMORGAN CHASE & CO.", 'UNIVERSITY OF PITTSBURGH PHYSICIANS')
+
+ggplot(dfs[EMPLOYER_NAME %in% emp_set2 & WAGE_UNIT_OF_PAY_1 == 'Year'], aes(max_wage, group = EMPLOYER_NAME, color = EMPLOYER_NAME)) + 
+  stat_ecdf() +  geom_vline(xintercept = 200, color = 'red', linetype = 'dashed')  
+
+ggplot(dfs[EMPLOYER_NAME == "JPMORGAN CHASE & CO." & WAGE_UNIT_OF_PAY_1 == 'Year' & WORKSITE_STATE_1 %in% c('NEW YORK', 'OHIO', 'TEXAS', 'NEW JERSEY')], aes(max_wage, group = WORKSITE_STATE_1, color = WORKSITE_STATE_1)) + 
+  stat_ecdf() +  geom_vline(xintercept = 200, color = 'red', linetype = 'dashed')  
+
+
+dfs[EMPLOYER_NAME ==  "CITADEL AMERICAS LLC"]
+dfs[EMPLOYER_NAME ==  "CITADEL ENTERPRISE AMERICAS LLC"]
+dfs[EMPLOYER_NAME ==  "JPMORGAN CHASE & CO." & max_wage > 250]
+a = dfs[EMPLOYER_NAME ==  "U.S. BANK NATIONAL ASSOCIATION" & WORKSITE_CITY_1 == 'Charlotte']
+
+dfs[EMPLOYER_NAME %in% emp_set & WAGE_UNIT_OF_PAY_1 == 'Year' & CASE_STATUS == 'CERTIFIED', 
+    .(.N, mean_wage = mean(max_wage, na.rm = TRUE),
+      q50_wage = quantile(max_wage, 0.50, na.rm = TRUE, names = FALSE),
+      q90_wage = quantile(max_wage, 0.90, na.rm = TRUE, names = FALSE),
+      q99_wage = quantile(max_wage, 0.99, na.rm = TRUE, names = FALSE)), by = .(EMPLOYER_NAME)]
+
+df_wage = dfs[WAGE_UNIT_OF_PAY_1 == 'Year' & CASE_STATUS == 'CERTIFIED', 
+    .(.N, mean_wage = mean(max_wage, na.rm = TRUE),
+      q50_wage = quantile(max_wage, 0.50, na.rm = TRUE, names = FALSE),
+      q90_wage = quantile(max_wage, 0.90, na.rm = TRUE, names = FALSE),
+      q99_wage = quantile(max_wage, 0.99, na.rm = TRUE, names = FALSE)), by = .(EMPLOYER_NAME)]
+
+a = dfs[WAGE_UNIT_OF_PAY_1 == 'Year' & CASE_STATUS == 'CERTIFIED', 
+    .(mean_wage = mean(max_wage, na.rm = TRUE),
+      q50_wage = quantile(max_wage, 0.50, na.rm = TRUE, names = FALSE),
+      q90_wage = quantile(max_wage, 0.90, na.rm = TRUE, names = FALSE),
+      q99_wage = quantile(max_wage, 0.99, na.rm = TRUE, names = FALSE)), by = .(WORKSITE_STATE_1)]
+
+df_title = dfs[WAGE_UNIT_OF_PAY_1 == 'Year' & CASE_STATUS == 'CERTIFIED', 
+    .(.N, mean_wage = mean(max_wage, na.rm = TRUE),
+      q50_wage = quantile(max_wage, 0.50, na.rm = TRUE, names = FALSE),
+      q90_wage = quantile(max_wage, 0.90, na.rm = TRUE, names = FALSE),
+      q99_wage = quantile(max_wage, 0.99, na.rm = TRUE, names = FALSE)), by = .(SOC_TITLE)]
+
+ggplot(df_title[q50_wage>150], aes(fct_reorder(SOC_TITLE, q90_wage), q90_wage)) + geom_bar(stat = 'identity') + geom_point(aes(fct_reorder(SOC_TITLE, q90_wage), q99_wage), color = 'blue') + coord_flip()
+
+#
+best_titles = df_title[q50_wage>150, SOC_TITLE]
+
+ggplot(dfs[WAGE_UNIT_OF_PAY_1 == 'Year' & CASE_STATUS == 'CERTIFIED' & SOC_TITLE %in% best_titles], aes(fct_reorder(SOC_TITLE, max_wage, mean), max_wage)) +  geom_boxplot() + 
+  geom_hline(yintercept = 100, color = 'grey', linetype = 'dashed') +
+  geom_hline(yintercept = 200, color = 'blue', linetype = 'dashed') + geom_hline(yintercept = 300, color = 'red', linetype = 'dashed') + coord_flip()
+
+dfs[EMPLOYER_NAME == 'CITIBANK, N.A.', ][order(max_wage)][max_wage>=250]
+
+# by state
+ggplot(dfs[WAGE_UNIT_OF_PAY_1 == 'Year' & CASE_STATUS == 'CERTIFIED' ], aes(fct_reorder(WORKSITE_STATE_1, max_wage, mean), max_wage)) +  geom_boxplot() + coord_flip() + 
+  geom_hline(yintercept = 100, color = 'grey', linetype = 'dashed') +
+  geom_hline(yintercept = 200, color = 'blue', linetype = 'dashed') + geom_hline(yintercept = 300, color = 'red', linetype = 'dashed')
+
+```
+

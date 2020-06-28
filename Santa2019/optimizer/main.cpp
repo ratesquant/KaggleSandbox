@@ -3,7 +3,7 @@
 #include <assert.h>
 #include <time.h>
 #include <omp.h>
-#include <unistd.h> 
+#include "win_unistd.h" 
 
 #include <iostream>
 #include <iomanip>

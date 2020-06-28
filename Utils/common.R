@@ -22,7 +22,7 @@ ecdf_norm<-function(x, normal = TRUE, expand_dublicates = FALSE) {
     y[order(x)] = y
   }else{
     y = ecdf(x)(x) -0.5/n
-  }
+}
   
   if(normal){
     y = qnorm(y)

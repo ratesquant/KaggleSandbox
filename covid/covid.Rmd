@@ -1,28 +1,157 @@
 ---
 title: "Covid-19"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library(ggplot2)
+library(forcats)
+library(zoo)
+library(ggdendro)
 ```
 
-## R Markdown
+## Load Data
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+```{r load Data}
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+df = fread('https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-states.csv') 
 
-```{r cars}
-summary(cars)
+df[, date := as.Date(date)]
+
+df_usa = df[, .(cases = sum(cases),deaths = sum(deaths), fips = 0, state = 'USA' ), by = .(date)]
+df = rbind(df, df_usa)
+setkeyv(df, c('date', 'state'))
+
+
+df[, new_cases  := cases  - shift(cases), by = .(state)]
+df[, new_deaths := deaths - shift(deaths), by = .(state)]
+
+df[, new_cases_avg_14d  := rollmeanr(new_cases, k = 14, na.pad = TRUE), by = .(state)]
+df[, new_cases_avg_14d_inc :=new_cases_avg_14d - shift(new_cases_avg_14d),  by = .(state)]
+
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
+## Load County Data
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r load Data}
+
+df_county = fread('https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-counties.csv')
+df_county[, date := as.Date(date)]
+setkeyv(df_county, c('date', 'county', 'state'))
+
+df_county[, new_cases  := cases  - shift(cases), by = .(county, state)]
+df_county[, new_deaths := deaths - shift(deaths), by = .(county, state)]
+
+ggplot(df_county[state ==  'North Carolina'], aes(date, new_cases)) + geom_line() + geom_smooth(span = 0.3, se = FALSE, color = 'red') + facet_wrap(~county, scales = 'free_y')
+ggplot(df_county[state ==  'North Carolina'], aes(date, new_deaths)) + geom_line() + geom_smooth(span = 0.3, se = FALSE, color = 'red') + facet_wrap(~county, scales = 'free_y')
+
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## Plots
+
+```{r plots, echo=FALSE}
+my_states = c('Connecticut', 'New Jersey', 'New York', 'North Carolina', 'Georgia', 'Texas', 'California', 'Minnesota', 'Washington',  'USA', 'Ohio', 'Pennsylvania')
+
+ggplot(df[state %in% c('New Jersey', 'North Carolina')], aes(date, cases, group = state, color = state)) + geom_line()
+ggplot(df[state %in% c('New Jersey', 'North Carolina')], aes(date, new_cases, group = state, color = state)) + geom_line()
+ggplot(df[state %in% c('New Jersey', 'North Carolina')], aes(date, deaths, group = state, color = state)) + geom_line()
+
+ggplot(df[state %in% my_states], aes(date, cases, group = state, color = state)) + geom_line() + facet_wrap(~state, scales = 'free_y')
+ggplot(df[state %in% my_states], aes(date, new_cases)) + geom_line() + geom_smooth(span = 0.3, se = FALSE, color = 'red') + facet_wrap(~state, scales = 'free_y')
+ggplot(df[state %in% my_states], aes(date, new_deaths)) + geom_line() + geom_smooth(span = 0.3, se = FALSE, color = 'red') + facet_wrap(~state, scales = 'free_y')
+
+
+#where cases are increasing
+inc_states = df[date == max(date)][order(-new_cases_avg_14d_inc), head(state,12) ]
+ggplot(df[state %in% inc_states], aes(date, new_cases)) + geom_line() + geom_line(aes(date, new_cases_avg_14d), color = 'red') + facet_wrap(~state, scales = 'free_y') #+ geom_smooth(span = 0.3, se = FALSE, color = 'red', alpha = 0.3)
+
+
+ggplot(df[state %in% my_states], aes(date, 1e-3*cases)) + geom_line() +  facet_wrap(~state)
+ggplot(df[state %in% my_states], aes(date, 1e-3*deaths)) + geom_line() +  facet_wrap(~state)
+ggplot(df[state %in% my_states], aes(date, 1e-3*deaths)) + geom_line() +  facet_wrap(~state, scales = 'free_y')
+
+ggplot(df[state %in% my_states], aes(date, 100*deaths/cases)) + geom_line() +  facet_wrap(~state)
+
+ggplot(df[date == max(date),], aes(fct_reorder(state,100*deaths/cases), 100*deaths/cases)) + geom_bar(stat = 'identity') + coord_flip()
+
+```
+
+## Cluster States
+
+```{r cluster, echo=FALSE}
+cor_mat = cor(dcast(df, date ~ state, value.var = 'new_cases')[order(date)][,-1], use = 'pairwise.complete.obs')
+
+ggplot(melt(cor_mat), aes(Var1, Var2, fill = value)) + geom_tile()
+
+hc = hclust(dist(1-cor_mat))
+
+ggdendrogram( dendro_data(hc),  rotate = TRUE, size = 1)
+
+memb <- cutree(hc, k = 6)
+
+table(memb)
+
+cl = data.table(state= names(memb), cluster = memb)
+
+df[cl, cluster := i.cluster, on =.(state)]
+
+ggplot(df[cluster == 1], aes(date, new_cases)) + geom_line() + geom_smooth(span = 0.3, se = FALSE, color = 'red') + facet_wrap(~state, scales = 'free_y')
+ggplot(df[cluster == 2], aes(date, new_cases)) + geom_line() + geom_smooth(span = 0.3, se = FALSE, color = 'red') + facet_wrap(~state, scales = 'free_y')
+ggplot(df[cluster == 3], aes(date, new_cases)) + geom_line() + geom_smooth(span = 0.3, se = FALSE, color = 'red') + facet_wrap(~state, scales = 'free_y')
+ggplot(df[cluster == 4], aes(date, new_cases)) + geom_line() + geom_smooth(span = 0.3, se = FALSE, color = 'red') + facet_wrap(~state, scales = 'free_y')
+ggplot(df[cluster == 5], aes(date, new_cases)) + geom_line() + geom_smooth(span = 0.3, se = FALSE, color = 'red') + facet_wrap(~state, scales = 'free_y')
+ggplot(df[cluster == 6], aes(date, new_cases)) + geom_line() + geom_smooth(span = 0.3, se = FALSE, color = 'red') + facet_wrap(~state, scales = 'free_y')
+
+ggplot(df[state %in% c('Alabama', 'North Carolina', 'South Carolina', 'Arkansas', 'Utah', 'Florida')], aes(date, new_cases)) + geom_line() + geom_smooth(span = 0.3, se = FALSE, color = 'red') + facet_wrap(~state, scales = 'free_y')
+
+```
+
+## TS Representation
+
+```{r ts_representation, echo=FALSE}
+library(gbm)
+
+df1 = df[state %in% c('North Carolina')][order(date), .(date, x = new_cases)]
+
+#moving average - creates bins  
+df1[, x_ma_14 := rollmeanr(x, k = 14, na.pad = TRUE)]
+df1[, x_ma_28 := rollmeanr(x, k = 28, na.pad = TRUE)]
+df1[, x_ma_56 := rollmeanr(x, k = 56, na.pad = TRUE)]
+df1[, t:=seq(nrow(df1)) ]
+
+df1_ex = data.table(expand.grid(t1 = df1$t, t2 = df1$t))[t1<=t2]
+df1_ex[df1, x:=i.x, on =.(t1 = t)]
+df1_ex[df1, x_ma_14 := i.x_ma_14, on =.(t2 = t)]
+df1_ex[df1, x_ma_28 := i.x_ma_28, on =.(t2 = t)]
+df1_ex[df1, x_ma_56 := i.x_ma_56, on =.(t2 = t)]
+df1_ex[, dt := t2 - t1]
+
+df1_ex[t2 == 15,]
+
+formula.gbm = formula('x ~ x_ma_14 +  x_ma_28  + x_ma_56 + dt')
+model.gbm = gbm(formula.gbm, 
+                data = df1_ex[!is.na(x), all.vars(formula.gbm), with = FALSE], 
+                distribution = 'gaussian',
+                n.trees = 1000,
+                shrinkage = 0.01,#0.005
+                bag.fraction = 0.5,
+                interaction.depth = 2,
+                n.cores = 4,
+                verbose =  TRUE)
+summary(model.gbm, n.trees = 1000)
+gbm.perf(model.gbm)
+
+df1_ex[, x_pred := predict(model.gbm, n.trees = 1000, newdata = df1_ex)]
+
+ggplot(df1_ex[t2 == max(t2)], aes(t1, x)) + geom_line() + geom_line(aes(t1, x_pred), color = 'red')
+
+
+
+```

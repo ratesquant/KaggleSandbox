@@ -1,0 +1,74 @@
+---
+title: "Election Analyzer"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library(plyr)
+library(lubridate)
+```
+
+## Load Data
+
+```{r load_data}
+
+df = data.table(state = c('AZ', 'WI'), A = c('1652778', '1630570'), B = c('1639268','1610030'))
+
+
+binom.test(1652778, 1652778 + 1639268)
+binom.test(1630570, 1630570 + 1610030)
+
+df_boot = ldply(seq(30), function(i){ c(i, 'count' = sum(as.numeric(runif(1652778 + 1639268)>0.5))) })
+
+sigma = sqrt(0.25 * (1652778 + 1639268))
+
+ggplot(df_boot, aes(count)) + geom_histogram() + 
+  geom_vline(xintercept = 1652778 ) + geom_vline(xintercept = 1639268 )
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+df_c = fread('https://raw.githubusercontent.com/alex/nyt-2020-election-scraper/master/all-state-changes.csv')
+
+df_c[, time := ymd_hms(timestamp) ]
+
+#get latest for each state
+df_x = df_c[, .(time = max(time)), by =.(state)]
+
+df_x[df_c, name_1  := i.leading_candidate_name, on=.(time, state)]
+df_x[df_c, name_2  := i.trailing_candidate_name, on=.(time, state)]
+df_x[df_c, count_1 := i.leading_candidate_votes, on=.(time, state)]
+df_x[df_c, count_2 := i.trailing_candidate_votes, on=.(time, state)]
+df_x[df_c, votes_remaining  := i.votes_remaining , on=.(time, state)]
+df_x[df_c, reported_pct  := (count_1 + count_2)/(count_1 + count_2 + votes_remaining) , on=.(time, state)]
+df_x[df_c, precincts_pct := 100*i.precincts_reporting/i.precincts_total, on=.(time, state)]
+df_x[, Trump:=ifelse(name_1 == 'Trump', count_1, count_2)]
+df_x[, Biden:=ifelse(name_1 == 'Biden', count_1, count_2)]
+df_x[, N := Trump + Biden]
+
+binom.test(1639268, 1639268 + 1652778, p = 0.5, alternative = 'greater')  #chance is winning
+binom.test(1639268, 1639268 + 1652778, p = 0.5, alternative = "two.sided")
+binom.test(1639268, 1639268 + 1652778, p = 0.5, alternative = "less")
+
+df_x[, Trump_lb := +(Trump - N * binom.test(Trump, N, p = 0.5, alternative = 'two.sided')$conf.int[1]), by =.(state)]
+df_x[, Trump_ub := -(Trump - N * binom.test(Trump, N, p = 0.5, alternative = 'two.sided')$conf.int[2]), by =.(state)]
+df_x[, Trump_p := binom.test(Trump, N, p = 0.5, alternative = 'less')$p.value, by =.(state)]
+df_x[, Biden_p := binom.test(Biden, N, p = 0.5, alternative = 'less')$p.value, by =.(state)]
+
+df_x[Trump_p<1 & Trump_p>0][order(-Trump_p)]
+
+ggplot(df_c[state == 'Alaska (EV: 3)'], aes(time, leading_candidate_votes, color = leading_candidate_name )) + geom_line() + geom_point()
+
+ldply(unique(df_x$state), function(state) { } )
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

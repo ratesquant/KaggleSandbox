@@ -288,6 +288,7 @@ plt.grid()
 
 #%% Write Submission File
 DATA_FOLDER = os.getenv('HOME') + '/source/github/KaggleSandbox/connect_x/' 
+DATA_FOLDER = 'D:/Github/KaggleSandbox/connect_x/submission/'
 
 import inspect
 import os

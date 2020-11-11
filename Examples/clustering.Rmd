@@ -1,14 +1,20 @@
 ---
 title: "Cluster Example"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
 library(tidyverse)  # data manipulation
 library(cluster)    # clustering algorithms
 library(factoextra) # clustering algorithms & visualization
 library(gridExtra)
+
+library(data.table)
+library(ggdendro)
 ```
 
 ## Including Plots
@@ -104,4 +110,47 @@ print(final)
 fviz_cluster(final, data = df)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## Cluster Demo
+
+
+```{r cluster_demo, echo=FALSE}
+n = 256
+
+df = rbind( 
+  data.table(x = rnorm(n), y = rnorm(n)), 
+  data.table(x = 4+rnorm(n), y = rnorm(n)),
+  data.table(x = rnorm(n), y = 4+rnorm(n)))
+
+ggplot(df, aes(x, y)) + geom_point()
+
+distance <- get_dist(df)
+#fviz_dist(distance, gradient = list(low = "#00AFBB", mid = "white", high = "#FC4E07"))
+
+k2 <- kmeans(df, centers = 3, nstart = 25)
+str(k2)
+fviz_cluster(k2, data = df)
+
+fviz_nbclust(df, kmeans, method = "wss")
+fviz_nbclust(df, kmeans, method = "silhouette")
+
+# compute gap statistic
+set.seed(123)
+gap_stat <- clusGap(df, FUN = kmeans, nstart = 25,
+                    K.max = 10, B = 50)
+# Print the result
+print(gap_stat, method = "firstmax")
+fviz_gap_stat(gap_stat)
+
+set.seed(123)
+final <- kmeans(df, 3, nstart = 25)
+print(final)
+fviz_cluster(final, data = df)
+
+#hclust
+hc = hclust(dist(df, method = 'euclidean'), method = "ward.D") #ward.D, complete
+memb <- cutree(hc, k = 3)
+#ggdendrogram(hc)
+
+ggplot(cbind(df, memb), aes(x, y, color = factor(memb) )) + geom_point()
+```
+

@@ -10,7 +10,8 @@ knitr::opts_chunk$set(echo = TRUE)
 
 library(ggplot2)
 library(data.table)
-library(stringi)
+# library(stringi)
+ library(earth)
 
 #working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 working_folder = 'D:/Github/KaggleSandbox/'
@@ -96,11 +97,25 @@ ggplot(df, aes(nodes, elapsed_time)) + geom_point()
 ##Timing
 
 ```{r timing_data}
-library(earth)
 
  df_t = fread(file.path(working_folder, 'connect_x/submission/timing.csv'))
 
+ df_t[elapsed > 8,]
+ df_t[nodes >= 100000,]
+ 
+ ggplot(df_t[min_depth == max_depth], aes(move, nodes)) + geom_point(alpha = 0.5)
  ggplot(df_t, aes(move, elapsed)) + geom_point(alpha = 0.5)
+ 
+ ggplot(df_t, aes(move, elapsed)) + geom_point(alpha = 0.5)
+ ggplot(df_t, aes(move, nodes)) + geom_point(alpha = 0.5)
+ 
+ ggplot(df_t, aes(move, min_depth )) + geom_point(alpha = 0.5)
+ ggplot(df_t, aes(move, max_depth )) + geom_point(alpha = 0.5)
+ 
+ ggplot(df_t, aes(move, depth_time )) + geom_point(alpha = 0.5) + facet_wrap(~depth_it )
+ 
+ ggplot(df_t, aes(move, depth_it)) + geom_point(alpha = 0.5)
+ 
  ggplot(df_t, aes(move, it_time/elapsed)) + geom_point(alpha = 0.5)
  ggplot(df_t[depth<40], aes(move, depth)) + geom_point(alpha = 0.5)
  

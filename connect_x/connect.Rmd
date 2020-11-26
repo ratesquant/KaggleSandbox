@@ -1,6 +1,8 @@
 ---
 title: "Connect_Position"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -10,7 +12,8 @@ library(ggplot2)
 library(data.table)
 library(stringi)
 
-working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+working_folder = 'D:/Github/KaggleSandbox/'
 source(file.path(working_folder, '/Utils/common.R'))
 
 play_moves<- function(move, rows = 6, cols = 7){
@@ -93,10 +96,34 @@ ggplot(df, aes(nodes, elapsed_time)) + geom_point()
 ##Timing
 
 ```{r timing_data}
- df_t = fread(file.path(working_folder, 'connect_x/timing.csv'))
+library(earth)
 
- ggplot(df_t, aes(move, elapsed)) + geom_point(alpha = 0.1)
+ df_t = fread(file.path(working_folder, 'connect_x/submission/timing.csv'))
+
+ ggplot(df_t, aes(move, elapsed)) + geom_point(alpha = 0.5)
+ ggplot(df_t, aes(move, it_time/elapsed)) + geom_point(alpha = 0.5)
+ ggplot(df_t[depth<40], aes(move, depth)) + geom_point(alpha = 0.5)
+ 
+ ggplot(df_t, aes(nodes, elapsed)) + geom_point(alpha = 0.5)
+ 
+ ggplot(df_t, aes(move, elapsed, group = run_id )) + geom_line(alpha = 0.5)
  ggplot(df_t, aes(factor(move), elapsed)) + geom_boxplot()
+ 
+ ggplot(df_t, aes(move, 1e-3*nodes )) + geom_point(alpha = 0.5) + 
+   geom_hline(yintercept = 70)
+ 
+ #create a model to predict nodes from moves and depth
+ df_max = df_t[,.(.N, max_nodes = 1e-3*max(nodes), max_elapsed = max(elapsed)), by =.(move)][max_nodes>0]
+ ggplot(df_max, aes(move, max_nodes )) + geom_point(alpha = 0.5) + 
+   geom_hline(yintercept = 60)
+ 
+ move_model = earth(elapsed ~ nodes , data = df_t) #60k - 3.5 sec 
+ summary(move_model, digits = 12, style = "pmax")
+ 
+ df_max[,max_nodes_pred := predict(move_model, .SD) ]
+ ggplot(df_max, aes(move, max_nodes)) + geom_point(alpha = 0.5) + geom_line(aes(move, max_nodes_pred), color = 'red') + facet_grid(~depth)
+ 
+ uniroot(function(x_depth) predict(move_model, data.frame(move = 2, depth = x_depth))[1] - 60000, c(1, 10))
 
 ```
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

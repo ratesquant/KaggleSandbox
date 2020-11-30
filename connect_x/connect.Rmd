@@ -100,17 +100,24 @@ ggplot(df, aes(nodes, elapsed_time)) + geom_point()
 
  df_t = fread(file.path(working_folder, 'connect_x/submission/timing.csv'))
 
+ df_t[, is_heuristic := abs(best_score)<1]
+
  df_t[elapsed > 8,]
  df_t[nodes >= 100000,]
  
- ggplot(df_t[min_depth == max_depth], aes(move, nodes)) + geom_point(alpha = 0.5)
- ggplot(df_t, aes(move, elapsed)) + geom_point(alpha = 0.5)
+ df_t[order(elapsed)]
+ df_t[moves == 18][order(elapsed)]
+ df_t[moves == 20]
  
- ggplot(df_t, aes(move, elapsed)) + geom_point(alpha = 0.5)
- ggplot(df_t, aes(move, nodes)) + geom_point(alpha = 0.5)
+ ggplot(df_t, aes(1e-3*evals, elapsed, color = is_heuristic)) + geom_point(alpha = 0.5)
  
- ggplot(df_t, aes(move, min_depth )) + geom_point(alpha = 0.5)
- ggplot(df_t, aes(move, max_depth )) + geom_point(alpha = 0.5)
+ ggplot(df_t, aes(moves, elapsed)) + geom_point(alpha = 0.5)
+ ggplot(df_t, aes(moves, evals)) + geom_point(alpha = 0.5)
+ ggplot(df_t, aes(moves, best_score)) + geom_point(alpha = 0.5)
+ 
+ ggplot(df_t, aes(moves, depth_it)) + geom_point(alpha = 0.5)
+ ggplot(df_t, aes(moves, max_depth)) + geom_point(alpha = 0.5)
+ ggplot(df_t, aes(moves, min_depth)) + geom_point(alpha = 0.5)
  
  ggplot(df_t, aes(move, depth_time )) + geom_point(alpha = 0.5) + facet_wrap(~depth_it )
  

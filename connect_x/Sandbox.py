@@ -10,7 +10,7 @@ import os
 import cProfile
 from kaggle_environments import evaluate, make, utils
 import numpy as np
-import time
+from time import time
 from random import choice
 
 env = make("connectx", debug=True)
@@ -31,14 +31,16 @@ def negamax_agent(obs, config, debug_out):
     
     increment_depth = True if made_moves < 22 else False #uses iterative depth solver
     
-    nodes = 0
+    total_evals = 0
     
-    max_nodes = 100000 #was 20k before
-    max_depth = 7 if made_moves < 14 else (8 if made_moves < 18 else  made_moves - 10 )    
+    max_evals = 100000 
+    max_depth = 7 if made_moves < 14 else (8 if made_moves < 18 else  (9 if  made_moves<20 else (14 if made_moves<22 else 20) ))       
     #max_depth = max_depth if depth_override is None else depth_override
-    #{made_moves : 7 if made_moves < 14 else (8 if made_moves < 18 else  made_moves - 10 )         for made_moves in range(25)}        
+    #{made_moves :7 if made_moves < 14 else (8 if made_moves < 18 else  (9 if  made_moves<20 else (14 if made_moves<22 else 20) ))        for made_moves in range(25)}        
     
-    def board_eval(board, moves, column, mark):
+    debug_out['max_depth'] = max_depth
+    
+    def board_eval(board, moves, column, mark):        
         row = max([r for r in range(rows) if board[column + (r * columns)] == 0])
         score =0 
         if column > 0 and board[row * columns + column - 1] == mark:              #left same mark
@@ -49,13 +51,17 @@ def negamax_agent(obs, config, debug_out):
             score += 1
         if row > 0 and column < columns - 1 and board[(row - 1) * columns + column + 1] == mark: #lower right - same mark
             score += 1           
-        return score
+        return 0.1*score
 
     def play(board, column, mark, config):
         columns = config.columns
         rows = config.rows
         row = max([r for r in range(rows) if board[column + (r * columns)] == 0])
         board[column + (row * columns)] = mark
+        return row
+        
+    def undo_play(board, column, row, mark, config):        
+        board[column + (row *  config.columns)] = 0
 
     def is_win(board, column, mark, config, has_played=True):
         columns = config.columns
@@ -81,48 +87,55 @@ def negamax_agent(obs, config, debug_out):
             or (count(-1, 1) + count(1, -1)) >= inarow  # top right diagonal.
         )
 
-    def negamax(board, mark, depth, alpha, beta, nodes):                 
+    def negamax(board, mark, depth, alpha, beta):                 
         moves = sum(1 if cell != 0 else 0 for cell in board) #moves already made
 
+        evals = 0
         # Tie Game
         if moves == size:
-            return (0, None, nodes)
+            return (0, None, evals)
 
         # Can win next.
-        for column in range(columns):
+        for column in column_order:
             if board[column] == 0 and is_win(board, column, mark, config, False):                
-                return ((size + 1 - moves) / 2, column, nodes)
+                return ((size + 1 - moves) / 2, column, evals)
             
         max_score = (size - 1 - moves) / 2	# upper bound of our score as we cannot win immediately
         if beta > max_score:
             beta = max_score                    # there is no need to keep beta above our max possible score.
             if alpha >= beta:               
-                return (beta, None, nodes)  # prune the exploration if the [alpha;beta] window is empty.                           
+                return (beta, None, evals)  # prune the exploration if the [alpha;beta] window is empty.                           
 
         # Recursively check all columns.        
         best_score = -size               
-        best_column = None
+        best_column = None        
         for column in column_order: 
-            if board[column] == 0:
+            if board[column] == 0:                
                 # Max depth reached. Score based on cell proximity for a clustering effect.
-                if depth <= 0:# or nodes > max_nodes:                                        
-                    nodes = nodes + 1
+                if depth <= 0:                                        
                     score = board_eval(board, moves, column, mark)                   
+                    evals = evals + 1
                 else:
-                    next_board = board[:]
-                    play(next_board, column, mark, config)
-                    (score, _, nodes) = negamax(next_board, 1 if mark == 2 else 2, depth - 1, -beta, -alpha, nodes)
+                    #next_board = board[:]
+                    #play(next_board, column, mark, config)
+                    #(score, _, temp_evals) = negamax(next_board, 1 if mark == 2 else 2, depth - 1, -beta, -alpha)
+                    
+                    play_row = play(board, column, mark, config)
+                    (score, _, temp_evals) = negamax(board, 1 if mark == 2 else 2, depth - 1, -beta, -alpha)                    
+                    undo_play(board, column, play_row, mark, config)   
+                    
+                    evals = evals + temp_evals
                     score = score * -1            
                 if score > best_score:
                     best_score = score
-                    best_column = column            
+                    best_column = column                     
                 alpha = max(alpha, score) # reduce the [alpha;beta] window for next exploration, as we only                                                                   
                 #print("mark: %s, d:%s, col:%s, score:%s (%s, %s)) alpha = %s beta = %s" % (mark, depth, column, score,best_score, best_column, alpha, beta))            
-                if alpha >= beta or nodes > max_nodes:                        
+                if alpha >= beta:                        
                 #if alpha >= beta:                        
-                    return (alpha, best_column, nodes)  # prune the exploration if we find a possible move better than what we were looking for.                    
-                    #print (alpha, best_column, nodes)  # prune the exploration if we find a possible move better than what we were looking for.                    
-        return (alpha, best_column, nodes)
+                    return (alpha, best_column, evals)  # prune the exploration if we find a possible move better than what we were looking for.                    
+                    #print (alpha, best_column)  # prune the exploration if we find a possible move better than what we were looking for.                    
+        return (alpha, best_column, evals)
     
     best_column = None
     best_score = None
@@ -136,32 +149,194 @@ def negamax_agent(obs, config, debug_out):
              
              depth_start_time = time()
              
-             time_limit = 17.0 #seconds
+             time_limit = 7.0 #seconds
              my_depth = max_depth  
              
              debug_out['start_depth'] = max_depth
              debug_out['depth_log'] = dict()
-             
+        
              while True:
-                 run_time_1 = time()      
-                 nodes = 0                 
-                 d_best_score, d_best_column, nodes = negamax(obs.board[:], obs.mark, my_depth, -size, size, nodes)
+                 run_time_1 = time() 
+                 best_score, best_column, temp_evals = negamax(obs.board[:], obs.mark, my_depth, -size, size)
+                 total_evals = total_evals  + temp_evals
                  run_time_2 = time()                   
-                 debug_out['depth_log'][my_depth] = (run_time_2 - depth_start_time, run_time_2 - run_time_1, d_best_score, d_best_column, nodes)
-                 if my_depth == max_depth or nodes < max_nodes:
-                     best_score, best_column = (d_best_score, d_best_column)                                                               
-                 if my_depth >= 42:
+                 debug_out['depth_log'][my_depth] = (run_time_2 - depth_start_time, run_time_2 - run_time_1, best_score, best_column, temp_evals)                                      
+                 if my_depth >= size - made_moves or abs(best_score)>=1:
                      break;
                  if time() - depth_start_time + 4*(run_time_2 - run_time_1) > time_limit: # check if we have enought time
                      break;
                  my_depth = my_depth + 1 # increment depth                                  
-        else:
-            best_score, best_column, nodes = negamax(obs.board[:], obs.mark, max_depth, -size, size, nodes)                    
+        else:            
+            best_score, best_column, total_evals = negamax(obs.board[:], obs.mark, max_depth, -size, size)                    
             #print('mark: %d, moves: %d, best score %d, best move %d, total moves %d' % (obs.mark, made_moves, best_score, best_column, nodes))        
     debug_out['moves_made'] = made_moves
-    debug_out['nodes'] = nodes
+    debug_out['evals'] = total_evals
     debug_out['best_score'] = best_score
-    debug_out['best_column'] = best_column
+    debug_out['best_column'] = best_column    
+     
+    if best_column == None:        
+        best_column = choice([c for c in range(columns) if obs.board[c] == 0])    
+    return best_column
+
+def negamax_agent_ex(obs, config, debug_out):
+    from random import choice  
+    from time import time   
+    columns = config.columns
+    rows = config.rows
+    size = rows * columns   
+    column_order = [ columns//2 + (1-2*(i%2)) * (i+1)//2 for i in range(columns)]            
+    made_moves = sum(1 if cell != 0 else 0 for cell in obs.board)     
+    
+    increment_depth = True if made_moves < 22 else False #uses iterative depth solver
+    
+    total_evals = 0    
+    
+    max_depth = 7 if made_moves < 14 else (8 if made_moves < 18 else  (9 if  made_moves<20 else (14 if made_moves<22 else 20) ))       
+    #max_depth = max_depth if depth_override is None else depth_override
+    #{made_moves :7 if made_moves < 14 else (8 if made_moves < 18 else  (9 if  made_moves<20 else (14 if made_moves<22 else 20) ))        for made_moves in range(25)}        
+    
+    debug_out['max_depth'] = max_depth
+    
+    def board_eval_ex(board, moves, row, column, mark, config):        
+        columns = config.columns
+        rows = config.rows
+        inarow = config.inarow - 1  
+        inv_mark = 1 if mark == 2 else 2
+    
+        def count(offset_row, offset_column):
+            for i in range(1, inarow + 1):
+                r = row + offset_row * i
+                c = column + offset_column * i
+                if (r < 0 or r >= rows or c < 0 or c >= columns or board[c + (r * columns)] == inv_mark):
+                    return i - 1
+            return inarow
+        score = 0 
+        
+        if  count(1, 0) + count(-1, 0) >= inarow:
+            score += 1            
+        if  count(0, 1) + count(0, -1) >= inarow:
+            score += 1
+        if  count(-1, -1) + count(1, 1) >= inarow:
+            score += 1
+        if  count(-1, 1) + count(1, -1) >= inarow:
+            score += 1    
+        return 0.1*score
+
+
+    def is_win(board, row, column, mark, config):
+        columns = config.columns
+        rows = config.rows
+        inarow = config.inarow - 1        
+    
+        def count(offset_row, offset_column):
+            for i in range(1, inarow + 1):
+                r = row + offset_row * i
+                c = column + offset_column * i
+                if (r < 0 or r >= rows or c < 0 or c >= columns or board[c + (r * columns)] != mark):
+                    return i - 1
+            return inarow
+    
+        return (
+            count(1, 0) >= inarow  # vertical.
+            or (count(0, 1) + count(0, -1)) >= inarow  # horizontal.
+            or (count(-1, -1) + count(1, 1)) >= inarow  # top left diagonal.
+            or (count(-1, 1) + count(1, -1)) >= inarow  # top right diagonal.
+        )
+    
+    def get_move_row(board, column, config):        
+        columns = config.columns
+        rows = config.rows
+        for r in range(rows-1, 0, -1):
+            if board[column + (r * columns)] == 0:
+                return r
+        return 0            
+
+    def negamax(board, mark, depth, alpha, beta, moves):                         
+        #if moves != sum(1 if cell != 0 else 0 for cell in board):
+        #    print('move count does not match')
+        
+        rows_cache = [0] * columns
+
+        evals = 0
+        # Tie Game
+        if moves == size:
+            return (0, None, evals)        
+
+        # Can win next.
+        for column in column_order:
+            if board[column] == 0:
+                row = get_move_row(board, column, config)  
+                evals += 1 
+                if is_win(board, row, column, mark, config):
+                    return ((size + 1 - moves) / 2, column, evals)
+                rows_cache[column] = row
+            
+        max_score = (size - 1 - moves) / 2	# upper bound of our score as we cannot win immediately
+        if beta > max_score:
+            beta = max_score                    # there is no need to keep beta above our max possible score.
+            if alpha >= beta:               
+                return (beta, None, evals)  # prune the exploration if the [alpha;beta] window is empty.                           
+
+        # Recursively check all columns.        
+        best_score = -size               
+        best_column = None        
+        for column in column_order: 
+            if board[column] == 0:
+                row  = rows_cache[column]            
+                # Max depth reached. Score based on cell proximity for a clustering effect.
+                if depth <= 0:                                        
+                    score = board_eval_ex(board, moves, row, column, mark, config)    
+                    evals += 1
+                else:                                        
+                    board[column + (row * columns)] = mark #play
+                    (score, _, temp_evals) = negamax(board, 1 if mark == 2 else 2, depth - 1, -beta, -alpha, moves + 1)                                                              
+                    board[column + (row *  columns)] = 0 #undo play                    
+                    evals += temp_evals
+                    score = score * -1            
+                if score > best_score:
+                    best_score = score
+                    best_column = column                     
+                alpha = max(alpha, score) # reduce the [alpha;beta] window for next exploration, as we only                                                                                   
+                if alpha >= beta:                                        
+                    return (alpha, best_column, evals)  # prune the exploration if we find a possible move better than what we were looking for.                                        
+        return (alpha, best_column, evals)
+    
+    best_column = None
+    best_score = None
+    if made_moves == 0: #first move
+        best_column = columns//2 #first move to the middle
+    elif made_moves == 1: #second move
+        prev_move = [c for c in range(columns) if obs.board[c + (rows - 1) * columns] != 0][0]        
+        best_column = [3,2,3,3,3,4,3][prev_move] #second move    
+    else:
+        if increment_depth == True:             
+             
+             depth_start_time = time()
+             
+             time_limit = 7.0 #seconds
+             my_depth = max_depth  
+             
+             debug_out['start_depth'] = max_depth
+             debug_out['depth_log'] = dict()
+        
+             while True:
+                 run_time_1 = time() 
+                 best_score, best_column, temp_evals = negamax(obs.board[:], obs.mark, my_depth, -size, size, made_moves)
+                 total_evals = total_evals  + temp_evals
+                 run_time_2 = time()                   
+                 debug_out['depth_log'][my_depth] = (run_time_2 - depth_start_time, run_time_2 - run_time_1, best_score, best_column, temp_evals)                                      
+                 if my_depth >= size - made_moves or abs(best_score)>=1:
+                     break;
+                 if time() - depth_start_time + 4*(run_time_2 - run_time_1) > time_limit: # check if we have enought time
+                     break;
+                 my_depth = my_depth + 1 # increment depth                                  
+        else:            
+            best_score, best_column, total_evals = negamax(obs.board[:], obs.mark, max_depth, -size, size,made_moves)                    
+            #print('mark: %d, moves: %d, best score %d, best move %d, total moves %d' % (obs.mark, made_moves, best_score, best_column, nodes))        
+    debug_out['moves_made'] = made_moves
+    debug_out['evals'] = total_evals
+    debug_out['best_score'] = best_score
+    debug_out['best_column'] = best_column    
      
     if best_column == None:        
         best_column = choice([c for c in range(columns) if obs.board[c] == 0])    
@@ -217,15 +392,25 @@ def print_board(board):
 mark = 1
 
 moves = '44444343331156666656' #445264
-#moves = '445' #445264, next move shoudl be 6
+moves = '4444434333115666665' #445264
+moves = '424442414635262661' #445264, next move shoudl be 6
         
 debug_out = dict()
 board = columns * rows * [0]
 mark = play_moves(moves, board, config)    
 negamax_agent(structify({'board':board, 'mark':mark}) , config, debug_out)
+negamax_agent_ex(structify({'board':board, 'mark':mark}) , config, debug_out)
 negamax_agent_ex(structify({'board':board, 'mark':mark}) , config)
 negamax_agent(structify({'board':board, 'mark':mark}) , config, 8)
 negamax_agent(structify({'board':board, 'mark':mark}) , config, 13)
+
+#3.79 s ± 595 ms
+%timeit negamax_agent(structify({'board':board, 'mark':mark}) , config, debug_out)
+cProfile.run("negamax_agent(structify({'board':board, 'mark':mark}) , config, debug_out) ")
+
+%timeit negamax_agent_ex(structify({'board':board, 'mark':mark}) , config, debug_out)
+cProfile.run("negamax_agent_ex(structify({'board':board, 'mark':mark}) , config, debug_out) ")
+
 
 print_board(board)
     
@@ -311,26 +496,29 @@ def get_timing(run_id, test_agent = "negamax"):
     observation = trainer.reset()    
     result = list()    
     while not env.done:        
-        start_time = time.time()
+        start_time = time()
         debug_out = dict()
-        my_action = negamax_agent(structify(observation), env.configuration, debug_out)    
+        my_action = negamax_agent_ex(structify(observation), env.configuration, debug_out)    
         observation, reward, done, info = trainer.step(my_action)    
-        if 'depth' in debug_out:
-            res = debug_out['depth']
+        if 'depth_log' in debug_out:
+            res = debug_out['depth_log']
             min_d = min(res.keys())
-            max_d = max(res.keys())        
-            result.append((run_id, test_agent, debug_out['moves'], len(env.steps),min_d, max_d,len(res), res[max_d][0], res[max_d][1], res[max_d][4], time.time() - start_time))        
+            max_d = max(res.keys())
+            prev_depth = max_d - 1 if max_d > min_d else max_d
+                                 
+            result.append((run_id, test_agent, debug_out['moves_made'],debug_out['max_depth'], min_d, max_d,len(res), res[max_d][0], res[max_d][1],res[prev_depth][1], res[max_d][4],  time() - start_time, debug_out['best_score'], debug_out['best_column'], debug_out['evals'] ))     
+        else:
+            result.append((run_id, test_agent, debug_out['moves_made'],debug_out['max_depth'], None,None, None, None,None,None,None,  time() - start_time, debug_out['best_score'],debug_out['best_column'], debug_out['evals'] ))     
     return result
     
 import pandas as pd
 timing_results = list()
-for i in range(50):       
+for i in range(20):       
     print(i)
     timing_results.extend(get_timing(i))
-    #timing_results.extend(get_timing(i, "random"))
-    
+    #timing_results.extend(get_timing(i, "random"))    
 
-res = pd.DataFrame(timing_results, columns = ['run_id', 'test_agent', 'moves', 'move','min_depth', 'max_depth', 'depth_it', 'depth_time', 'depth_time2', 'nodes','elapsed'])
+res = pd.DataFrame(timing_results, columns = ['run_id', 'test_agent', 'moves','init_depth', 'min_depth', 'max_depth', 'depth_it', 'cum_depth_time', 'depth_time_cur', 'depth_time_prev', 'depth_evals', 'elapsed', 'best_score', 'best_column', 'evals'])
 res.to_csv(os.path.join(DATA_FOLDER, 'timing.csv'))      
 
 #res.plot('move', 'elapsed')
@@ -396,15 +584,15 @@ def write_agent_to_file(function, file):
         f.write(inspect.getsource(function))
         print(function, "written to", file)
 
-write_agent_to_file(negamax_agent, DATA_FOLDER + "submission_it_v3.py")
-write_agent_to_file(negamax_agent_ex, DATA_FOLDER + "submission_it_ex.py")
+write_agent_to_file(negamax_agent, DATA_FOLDER + "submission_it_v6.py")
+write_agent_to_file(negamax_agent_ex, DATA_FOLDER + "submission_it_v1_ex.py")
 
 #%% Validate
 
 import sys
 out = sys.stdout
 #submission = utils.read_file(DATA_FOLDER + "submission_7.py")
-submission = utils.read_file(DATA_FOLDER + "submission_it_v3.py")
+submission = utils.read_file(DATA_FOLDER + "submission_it_v1_ex.py")
 #submission = utils.read_file(DATA_FOLDER + "submission_it_plus.py")
 agent = utils.get_last_callable(submission)
 sys.stdout = out

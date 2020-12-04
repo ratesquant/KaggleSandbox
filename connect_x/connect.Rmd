@@ -102,22 +102,32 @@ ggplot(df, aes(nodes, elapsed_time)) + geom_point()
 
  df_t[, is_heuristic := abs(best_score)<1]
 
- df_t[elapsed > 8,]
- df_t[nodes >= 100000,]
- 
+ df_t[elapsed > 6,][order(elapsed)]
+
  df_t[order(elapsed)]
  df_t[moves == 18][order(elapsed)]
- df_t[moves == 20]
+ df_t[moves == 20][order(evals)]
+ 
+ sum(df_t$evals)/sum(df_t$elapsed)# 70k per second
+ 
  
  ggplot(df_t, aes(1e-3*evals, elapsed, color = is_heuristic)) + geom_point(alpha = 0.5)
  
+ ggplot(df_t, aes(moves, init_depth)) + geom_point() + geom_point(aes(moves,  max_depth), color = 'red', alpha = 0.1)
+ ggplot(df_t, aes(moves,  max_depth)) + geom_point(alpha = 0.5)
+ 
  ggplot(df_t, aes(moves, elapsed)) + geom_point(alpha = 0.5)
- ggplot(df_t, aes(moves, evals)) + geom_point(alpha = 0.5)
+ ggplot(df_t, aes(factor(moves), elapsed)) + geom_boxplot()
+ ggplot(df_t, aes(moves, 1e-3*evals)) + geom_point(alpha = 0.5)
  ggplot(df_t, aes(moves, best_score)) + geom_point(alpha = 0.5)
+ 
+ ggplot(df_t[depth_it >1], aes(moves, depth_time_cur/depth_time_prev  )) + geom_point(alpha = 0.5)
+ 
+ ggplot(df_t[min_depth!=max_depth], aes(moves, depth_time_cur/depth_time_prev)) + geom_point(alpha = 0.5)
  
  ggplot(df_t, aes(moves, depth_it)) + geom_point(alpha = 0.5)
  ggplot(df_t, aes(moves, max_depth)) + geom_point(alpha = 0.5)
- ggplot(df_t, aes(moves, min_depth)) + geom_point(alpha = 0.5)
+ ggplot(df_t, aes(moves, min_depth)) + geom_point()
  
  ggplot(df_t, aes(move, depth_time )) + geom_point(alpha = 0.5) + facet_wrap(~depth_it )
  

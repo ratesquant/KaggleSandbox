@@ -20,6 +20,9 @@ DATA_FOLDER = 'D:/Github/KaggleSandbox/connect_x/submission/'
 env = make("connectx", debug=True)
 #env.render()
 
+#timing 2 sec per turn + 60 sec or exceedance total (2.5)
+# on average 4.5 /sec
+
 #%%
 #An Agent must return an action within 8 seconds (24 seconds on the first turn) of being invoked. If the Agent does not, it will lose the episode and may be invalidated 
         
@@ -183,25 +186,23 @@ def negamax_agent(obs, config, debug_out):
         best_column = choice([c for c in range(columns) if obs.board[c] == 0])    
     return best_column
 
-#def negamax_agent_ex(obs, config):    
-#    debug_out = dict()
-def negamax_agent_ex(obs, config, debug_out):    
+def negamax_agent_ex(obs, config):    
+    debug_out = dict()
+#def negamax_agent_ex(obs, config, debug_out):    
     from random import choice  
-    from time import time
-    
-    position_table = dict()
-    
+    from time import time    
+  
     columns = config.columns
     rows = config.rows
     size = rows * columns   
     column_order = [ columns//2 + (1-2*(i%2)) * (i+1)//2 for i in range(columns)]            
     made_moves = sum(1 if cell != 0 else 0 for cell in obs.board)     
     
-    increment_depth = True if made_moves < 24 else False #uses iterative depth solver
+    increment_depth = True if made_moves < 22 else False #uses iterative depth solver
     
     total_evals = 0    
     
-    max_depth = 7 if made_moves < 14 else (8 if made_moves < 18 else  (9 if made_moves < 20 else (12 if made_moves < 24 else 18) ))       
+    max_depth = 7 if made_moves < 14 else (8 if made_moves < 18 else  (9 if made_moves < 20 else (14 if made_moves < 22 else 20) ))       
     #max_depth = max_depth if depth_override is None else depth_override
     #{made_moves :7 if made_moves < 14 else (8 if made_moves < 18 else  (9 if  made_moves<20 else (14 if made_moves<22 else 20) ))       for made_moves in range(25)}        
     
@@ -284,6 +285,8 @@ def negamax_agent_ex(obs, config, debug_out):
                 return r
         return 0            
 
+    #alpha = minimum score that the maximizing player is assured of
+    #beta the maximum score that the minimizing player is assured of
     def negamax(board, mark, depth, alpha, beta, moves, is_root = False):                         
         #if moves != sum(1 if cell != 0 else 0 for cell in board):
         #    print('move count does not match')
@@ -317,7 +320,7 @@ def negamax_agent_ex(obs, config, debug_out):
             if board[column] == 0:
                 row  = rows_cache[column]                            
                 if depth <= 0:                                        
-                    score = board_eval_ex(board, moves, row, column, mark, config)    
+                    score = board_eval_ex_v1(board, moves, row, column, mark, config)    
                     evals += 1
                 else:                                        
                     board[column + (row * columns)] = mark #play
@@ -327,15 +330,15 @@ def negamax_agent_ex(obs, config, debug_out):
                     score = score * -1
                 if score > best_score:
                     best_score = score                    
-                if best_score > alpha:
-                    alpha = best_score
                     best_column = column
-                if is_root:
-                    print('depth %d, column %d score %f alpha %f, beta %f best score: %f, best col: %d' % (depth, column, score, alpha, beta, best_score,best_column))                        
+                    alpha = max(alpha, score)             
                 if alpha >= beta:                                        
                     break #return beta or best score                                                   
-        
-        return (best_score, best_column, evals)
+
+        #if is_root:
+        #    print('move: %d, depth: %d, alpha: %f, beta: %f, best score: %f, best col: %d' % (moves, depth, alpha, beta, best_score, best_column))                                                        
+        #return (best_score, best_column, evals) #Fail-Soft
+        return (alpha, best_column, evals) #Fail-Hard
     
     best_column = None
     best_score = None
@@ -353,18 +356,18 @@ def negamax_agent_ex(obs, config, debug_out):
              my_depth = max_depth  
              
              debug_out['start_depth'] = max_depth
-             debug_out['depth_log'] = dict()
-        
-             while True:
+             debug_out['depth_log'] = dict()                          
+              
+             while True:                     
                  run_time_1 = time() 
-                 best_score, best_column, temp_evals = negamax(obs.board[:], obs.mark, my_depth, -size, size, made_moves, True)
+                 best_score, best_column, temp_evals = negamax(obs.board[:], obs.mark, my_depth, -size, size, made_moves, True)                 
                  #print('depth: %d, alpha: %f, beta: %f, best score %f' % (my_depth, my_alpha, my_beta, best_score))
                  total_evals = total_evals  + temp_evals
                  run_time_2 = time()                   
                  debug_out['depth_log'][my_depth] = (run_time_2 - depth_start_time, run_time_2 - run_time_1, best_score, best_column, temp_evals)                                      
-                 if my_depth >= size - made_moves or abs(best_score)>=1:
+                 if my_depth >= size - made_moves:
                      break
-                 if time() - depth_start_time + 5*(run_time_2 - run_time_1) > time_limit: # check if we have enought time
+                 if time() - depth_start_time + 4*(run_time_2 - run_time_1) > time_limit: # check if we have enought time
                      break
                  my_depth = my_depth + 1 # increment depth                                  
         else:            
@@ -378,15 +381,409 @@ def negamax_agent_ex(obs, config, debug_out):
     if best_column == None:        
         best_column = choice([c for c in range(columns) if obs.board[c] == 0])    
     return best_column
+#negamax_agent_ex
+#get_win_percentages(negamax_agent_ex, 'negamax', 10)
+ 
 
+#with random move revaluation ----
+def negamax_agent_hybrid(obs, config):    
+    debug_out = dict()
+#def negamax_agent_hybrid(obs, config, debug_out):    
+    from random import choice
+    from random import random
+    from time import time    
+  
+    columns = config.columns
+    rows = config.rows
+    size = rows * columns   
+    column_order = [ columns//2 + (1-2*(i%2)) * (i+1)//2 for i in range(columns)]            
+    made_moves = sum(1 if cell != 0 else 0 for cell in obs.board)     
+    
+    increment_depth = True if made_moves < 22 else False #uses iterative depth solver
+    
+    total_evals = 0    
+    
+    max_depth = 7 if made_moves < 14 else (8 if made_moves < 18 else  (9 if made_moves < 20 else (14 if made_moves < 22 else 20) ))       
+    #max_depth = max_depth if depth_override is None else depth_override
+    #{made_moves :7 if made_moves < 14 else (8 if made_moves < 18 else  (9 if  made_moves<20 else (14 if made_moves<22 else 20) ))       for made_moves in range(25)}        
+    
+    debug_out['max_depth'] = max_depth
+    
+    #v1 of the evaluation function
+    def board_eval_ex_v1(board, moves, row, column, mark, config):        
+        columns = config.columns
+        rows = config.rows
+        inarow = config.inarow - 1  
+        inv_mark = 1 if mark == 2 else 2
+    
+        def count(offset_row, offset_column):
+            for i in range(1, inarow + 1):
+                r = row + offset_row * i
+                c = column + offset_column * i
+                if (r < 0 or r >= rows or c < 0 or c >= columns or board[c + (r * columns)] == inv_mark):
+                    return i - 1
+            return inarow
+        score = 0 
+        
+        if  count(1, 0) + count(-1, 0) >= inarow:
+            score += 1            
+        if  count(0, 1) + count(0, -1) >= inarow:
+            score += 1
+        if  count(-1, -1) + count(1, 1) >= inarow:
+            score += 1
+        if  count(-1, 1) + count(1, -1) >= inarow:
+            score += 1    
+        return 0.1*score
+
+
+    def is_win(board, row, column, mark, config):
+        columns = config.columns
+        rows = config.rows
+        inarow = config.inarow - 1        
+    
+        def count(offset_row, offset_column):
+            for i in range(1, inarow + 1):
+                r = row + offset_row * i
+                c = column + offset_column * i
+                if (r < 0 or r >= rows or c < 0 or c >= columns or board[c + (r * columns)] != mark):
+                    return i - 1
+            return inarow
+        
+        result = (
+            count(1, 0) >= inarow  # vertical.
+            or (count(0, 1) + count(0, -1)) >= inarow  # horizontal.
+            or (count(-1, -1) + count(1, 1)) >= inarow  # top left diagonal.
+            or (count(-1, 1) + count(1, -1)) >= inarow  # top right diagonal.
+        )
+        return result
+    
+    def get_move_row(board, column, config):        
+        columns = config.columns
+        rows = config.rows
+        for r in range(rows-1, 0, -1):
+            if board[column + (r * columns)] == 0:
+                return r
+        return 0  
+
+    def play_random_game(board, mark, config):        
+        columns = config.columns        
+        for column in range(columns):
+            if board[column] == 0:
+                row = get_move_row(board, column, config)                
+                if is_win(board, row, column, mark, config):
+                    return mark
+        #choose the random position if we can win 
+        possible_moves = [c for c in range(columns) if board[c] == 0]
+        if len(possible_moves) == 0:
+            return 0 # tie
+        column = choice(possible_moves)
+        row = get_move_row(board, column, config)                
+        board[column + (row * columns)] = mark        
+        return play_random_game(board,  1 if mark == 2 else 2 , config)    
+
+    def random_board_eval(board, mark, n_rounds = 100):        
+        columns = config.columns
+        rows = config.rows
+        size = rows * columns   
+        
+        my_board = board[:]     
+        scores = [0] * columns
+        
+        for column in range(columns):
+            if my_board[column] == 0:
+                row = get_move_row(my_board, column, config)                
+                if is_win(my_board, row, column, mark, config):
+                    scores[column]  = float('Inf')
+                    break
+                else:
+                    my_board[column + (row * columns)] = mark #play
+                    outcome = [play_random_game(my_board[:], 1 if mark == 2 else 2, config) for  i in range(n_rounds)] 
+                    outcome = [1 if m == mark else ( 0 if m == 0 else -1) for m in outcome ]
+                    my_board[column + (row *  columns)] = 0 #undo play    
+                    #print('%d %f' % (column, sum(outcome)/len(outcome)))
+                    scores[column] = sum(outcome)
+        return scores
+        
+
+    #alpha = minimum score that the maximizing player is assured of
+    #beta the maximum score that the minimizing player is assured of
+    def negamax(board, mark, depth, alpha, beta, moves, specified_column_order = None):                         
+        #if moves != sum(1 if cell != 0 else 0 for cell in board):
+        #    print('move count does not match')
+        
+        rows_cache = [0] * columns
+
+        evals = 0
+        # Tie Game
+        if moves == size:
+            return (0, None, evals)   
+        
+        my_column_order = column_order if specified_column_order is None else specified_column_order
+
+        # Can win next.
+        for column in my_column_order:
+            if board[column] == 0:
+                row = get_move_row(board, column, config)  
+                evals += 1 
+                if is_win(board, row, column, mark, config):
+                    return ((size + 1 - moves) / 2, column, evals)
+                rows_cache[column] = row
+            
+        max_score = (size - 1 - moves) / 2	# upper bound of our score as we cannot win immediately
+        if beta > max_score:
+            beta = max_score                    # there is no need to keep beta above our max possible score.
+            if alpha >= beta:                
+                return (beta, None, evals)  # prune the exploration if the [alpha;beta] window is empty.                           
+
+        # Recursively check all columns.        
+        best_score = -size               
+        best_column = None        
+        for column in my_column_order: 
+            if board[column] == 0:
+                row  = rows_cache[column]                            
+                if depth <= 0:                                        
+                    score = board_eval_ex_v1(board, moves, row, column, mark, config)    
+                    evals += 1
+                else:                                        
+                    board[column + (row * columns)] = mark #play
+                    (score, _, temp_evals) = negamax(board, 1 if mark == 2 else 2, depth - 1, -beta, -alpha, moves + 1)                                                              
+                    board[column + (row *  columns)] = 0 #undo play                    
+                    evals += temp_evals
+                    score = score * -1
+                if score > best_score:
+                    best_score = score                    
+                if best_score > alpha:
+                    alpha = best_score
+                    best_column = column                
+                if alpha >= beta:                                        
+                    break #return beta or best score                                                   
+
+        #if is_root:
+        #    print('depth %d, alpha %f, beta %f best score: %f, best col: %d' % (depth, alpha, beta, best_score,best_column))                                            
+            #return (alpha, best_column, evals) #Fail-Hard
+        #return (best_score, best_column, evals) #Fail-Soft
+        return (alpha, best_column, evals) #Fail-Hard
+    
+    main_start_time = time()
+    
+    #USE RANDOM move ordering
+    scores = random_board_eval(obs.board[:], obs.mark, 100) 
+    
+    best_column = None
+    best_score = None
+    if made_moves == 0: #first move
+        best_column = columns//2 #first move to the middle
+    else:
+        if increment_depth == True:             
+             
+             depth_start_time = time()
+             
+             time_limit = 6.0 #seconds6
+             my_depth = max_depth  
+             
+             debug_out['start_depth'] = max_depth
+             debug_out['depth_log'] = dict()                          
+              
+             while True:                     
+                 run_time_1 = time() 
+                 best_score, best_column, temp_evals = negamax(obs.board[:], obs.mark, my_depth, -size, size, made_moves, True)                 
+                 #print('depth: %d, alpha: %f, beta: %f, best score %f' % (my_depth, my_alpha, my_beta, best_score))
+                 total_evals = total_evals  + temp_evals
+                 run_time_2 = time()                   
+                 debug_out['depth_log'][my_depth] = (run_time_2 - depth_start_time, run_time_2 - run_time_1, best_score, best_column, temp_evals)                                      
+                 if my_depth >= size - made_moves:
+                     break
+                 if time() - depth_start_time + 5*(run_time_2 - run_time_1) > time_limit: # check if we have enought time
+                     break
+                 my_depth = my_depth + 1 # increment depth                                  
+        else:            
+            best_score, best_column, total_evals = negamax(obs.board[:], obs.mark, max_depth, -size, size, made_moves, True)                    
+            #print('mark: %d, moves: %d, best score %d, best move %d, total moves %d' % (obs.mark, made_moves, best_score, best_column, nodes))        
+       
+    if (time() - main_start_time) < 6  and made_moves > 0 and made_moves < 22 and abs(best_score)<1 and random() < 0.5:
+        agg_scores = [0]*columns
+        while time() - main_start_time < 7:
+            scores = random_board_eval(obs.board[:], obs.mark, 100) #about 1sec 150
+            for i in range(columns):
+                agg_scores[i] = agg_scores[i] + scores[i]                          
+        debug_out['random_eval'] = agg_scores
+        print('random it moves: %d, nega-column: %d  nega-score: %f (%f sec) best col: %d %s' % (made_moves, best_column, best_score, time() - main_start_time, agg_scores.index(max(agg_scores)) , agg_scores) )
+        best_column = agg_scores.index(max(agg_scores))      
+    
+    debug_out['moves_made'] = made_moves
+    debug_out['evals'] = total_evals
+    debug_out['best_score'] = best_score
+    debug_out['best_column'] = best_column    
+     
+    if best_column == None:        
+        best_column = choice([c for c in range(columns) if obs.board[c] == 0])    
+    return best_column
+
+#random position evaluation 
+def random_pos_eval(board, mark, config, n_rounds = 100):
+    def get_move_row(board, column, config):        
+        columns = config.columns
+        rows = config.rows
+        for r in range(rows-1, 0, -1):
+            if board[column + (r * columns)] == 0:
+                return r
+        return 0 
+    def is_win(board, row, column, mark, config):
+        columns = config.columns
+        rows = config.rows
+        inarow = config.inarow - 1        
+    
+        def count(offset_row, offset_column):
+            for i in range(1, inarow + 1):
+                r = row + offset_row * i
+                c = column + offset_column * i
+                if (r < 0 or r >= rows or c < 0 or c >= columns or board[c + (r * columns)] != mark):
+                    return i - 1
+            return inarow
+        
+        result = (
+            count(1, 0) >= inarow  # vertical.
+            or (count(0, 1) + count(0, -1)) >= inarow  # horizontal.
+            or (count(-1, -1) + count(1, 1)) >= inarow  # top left diagonal.
+            or (count(-1, 1) + count(1, -1)) >= inarow  # top right diagonal.
+        )
+        return result
+    def play_random_game(board, mark, config):        
+        columns = config.columns        
+        for column in range(columns):
+            if board[column] == 0:
+                row = get_move_row(board, column, config)                
+                if is_win(board, row, column, mark, config):
+                    return mark
+        #choose the random position if we can win 
+        possible_moves = [c for c in range(columns) if board[c] == 0]
+        if len(possible_moves) == 0:
+            return 0 # tie
+        column = choice(possible_moves)
+        row = get_move_row(board, column, config)                
+        board[column + (row * columns)] = mark        
+        return play_random_game(board,  1 if mark == 2 else 2 , config)              
+        
+   
+    columns = config.columns
+    ratings = dict()
+    for column in range(columns):
+        if board[column] == 0:
+            row = get_move_row(board, column, config)                
+            if is_win(board, row, column, mark, config):
+                ratings[column] = 1
+            else:
+                board[column + (row * columns)] = mark #play
+                outcome = [play_random_game(board[:], 1 if mark == 2 else 2, config) for  i in range(n_rounds)] 
+                outcome = [1 if o == mark else ( 0 if o == 0 else -1) for o in outcome ]
+                board[column + (row *  columns)] = 0 #undo play    
+                print('%d %f' % (column, sum(outcome)/len(outcome)))
+                ratings[column] = sum(outcome)/len(outcome)
+    return ratings 
+
+def random_agent_ex(obs, config):    
+    from random import choice  
+    from time import time      
+    
+    def get_move_row(board, column, config):        
+        columns = config.columns
+        rows = config.rows
+        for r in range(rows-1, 0, -1):
+            if board[column + (r * columns)] == 0:
+                return r
+        return 0 
+    def is_win(board, row, column, mark, config):
+        columns = config.columns
+        rows = config.rows
+        inarow = config.inarow - 1        
+    
+        def count(offset_row, offset_column):
+            for i in range(1, inarow + 1):
+                r = row + offset_row * i
+                c = column + offset_column * i
+                if (r < 0 or r >= rows or c < 0 or c >= columns or board[c + (r * columns)] != mark):
+                    return i - 1
+            return inarow
+        
+        result = (
+            count(1, 0) >= inarow  # vertical.
+            or (count(0, 1) + count(0, -1)) >= inarow  # horizontal.
+            or (count(-1, -1) + count(1, 1)) >= inarow  # top left diagonal.
+            or (count(-1, 1) + count(1, -1)) >= inarow  # top right diagonal.
+        )
+        return result
+    def play_random_game(board, mark, config):        
+        columns = config.columns        
+
+        #check if we can win
+        for column in range(columns):
+            if board[column] == 0:
+                row = get_move_row(board, column, config)                
+                if is_win(board, row, column, mark, config):
+                    return mark
+        #choose the random position if we can't win 
+        possible_moves = [c for c in range(columns) if board[c] == 0]
+        if len(possible_moves) == 0:
+            return 0 # tie
+        column = choice(possible_moves)
+        row = get_move_row(board, column, config)                
+        board[column + (row * columns)] = mark        
+        return play_random_game(board, 1 if mark == 2 else 2, config)  
+
+    def random_board_eval(board, mark, n_rounds = 100):        
+        columns = config.columns
+        rows = config.rows
+        size = rows * columns   
+        
+        my_board = board[:]     
+        scores = [0] * columns
+        
+        for column in range(columns):
+            if my_board[column] == 0:
+                row = get_move_row(my_board, column, config)                
+                if is_win(my_board, row, column, mark, config):
+                    scores[column] = float('Inf')
+                    break                    
+                else:
+                    my_board[column + (row * columns)] = mark #play
+                    outcome = [play_random_game(my_board[:], 1 if mark == 2 else 2, config) for  i in range(n_rounds)] 
+                    outcome = [1 if m == mark else ( 0 if m == 0 else -1) for m in outcome ]
+                    my_board[column + (row *  columns)] = 0 #undo play                        
+                    scores[column] = sum(outcome)
+        return scores           
+        
+    columns = config.columns
+    rows = config.rows
+    size = rows * columns  
+    
+    main_start_time = time()        
+
+    agg_scores = [0]*columns    
+    while True:       
+        scores = random_board_eval(obs.board[:], obs.mark, 64) #about 1sec 150        
+        for i in range(columns):
+            agg_scores[i] = agg_scores[i] + scores[i]     
+        if time() - main_start_time > 2.0: #0.86  
+            break    
+    best_score = float('-inf')
+    best_column = 0
+    for column in range(columns):
+        if obs.board[column] == 0 and agg_scores[column] > best_score:
+            best_column, best_score = (column, agg_scores[column])
+            
+    #print('random agent (%f sec) best col: %s %s' % (time() - main_start_time,  best_column, agg_scores) )                                    
+    return best_column
+#get_win_percentages(random_agent_ex, 'negamax', 100)
+    
 # This agent random chooses a non-empty column.
 #configuration = {'timeout': 5, 'columns': 7, 'rows': 6, 'inarow': 4, 'steps': 1000}
 #observation = {'board': [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 'mark': 1}
-def my_agent(observation, configuration):
-    #print([c for c in range(configuration.columns) if observation.board[c + configuration.columns*(configuration.rows-1)] == 0])
+def random_agent(observation, configuration):    
     from random import choice
     return choice([c for c in range(configuration.columns) if observation.board[c] == 0])
-    
+
+#get_win_percentages(random_agent, 'random', 10)
+
 #%% Test
     
 env.reset()
@@ -408,7 +805,8 @@ play_filename = '5982532.json' #slow game
 play_filename = '5984148.json' #lost game
 play_filename = '6059058.json' #
 play_filename = '6060038.json' #long game
-play_filename = '6225102.json' #lost game
+play_filename = '6366313.json' #lost game
+play_filename = '6522402.json' #lost game
 
 with open(plays_folder + play_filename, 'r') as outfile:
     game_log = json.load(outfile)
@@ -425,6 +823,10 @@ debug_out = dict()
 negamax_agent_ex(structify({'board':board, 'mark':mark}) , config, debug_out)
 print(debug_out)
 
+
+for i, s in enumerate(game_log['steps']):    
+    print('remainingOverageTime %s' % s[0]['observation']['remainingOverageTime'])
+
 #debug_out = dict()
 #negamax_agent(structify({'board':board, 'mark':mark}) , config, debug_out)
 #print(debug_out)
@@ -438,7 +840,22 @@ for i, s in enumerate(game_log['steps']):
     negamax_agent_ex(structify({'board':board, 'mark':mark}) , config, debug_out)
     print('%d column: %d, evals: %d, score: %f depth: %d time: %f sec' % (i+1, debug_out['best_column'], debug_out['evals'], 0 if debug_out['best_score'] is None else debug_out['best_score'], max(debug_out['depth_log'].keys()) if 'depth_log' in debug_out else 0, debug_out['depth_log'][max(debug_out['depth_log'].keys())][0] if 'depth_log' in debug_out else 0))
 
-    
+move_index = 18-1# can win in 13 moves?
+board = game_log['steps'][move_index][0]['observation']['board']
+debug_out = dict()
+mark = 1 + move_index % 2
+negamax_agent_ex(structify({'board':board, 'mark':mark}) , config, debug_out)
+negamax_agent(structify({'board':board, 'mark':mark}) , config, debug_out)
+random_agent_ex(structify({'board':board, 'mark':mark}) , config)
+negamax_agent_hybrid(structify({'board':board, 'mark':mark}) , config)
+
+
+print_board(board)
+random_pos_eval(board, mark, config, 400)
+
+#4.4 s ± 44.5 ms per loop, depth 14
+%timeit negamax_agent_ex(structify({'board':board, 'mark':mark}) , config, debug_out) 
+%timeit random_agent_ex(structify({'board':board, 'mark':mark}) , config)  #1000 rounds - 2.6 sec
     
     
 #%% Debug Negamax
@@ -476,6 +893,8 @@ debug_out = dict()
 board = columns * rows * [0]
 mark = play_moves(moves, board, config)    
 negamax_agent_ex(structify({'board':board, 'mark':mark}) , config, debug_out)
+random_agent(structify({'board':board, 'mark':mark}) , config)
+random_agent_ex(structify({'board':board, 'mark':mark}) , config)
 
 negamax_agent(structify({'board':board, 'mark':mark}) , config, debug_out)
 
@@ -618,9 +1037,27 @@ def get_win_percentages(agent1, agent2, n_rounds=100):
     print("Number of Invalid Plays by Agent 1:", outcomes.count([None, 0]))
     print("Number of Invalid Plays by Agent 2:", outcomes.count([0, None]))
 
-get_win_percentages(negamax_agent_ex, 'negamax', 10)
-mean_reward(evaluate("connectx", [negamax_agent_ex, "negamax"], num_episodes=10))
+#sanity check 
+get_win_percentages(random_agent, 'random', 10)
+get_win_percentages(random_agent_ex, 'random', 10)
 
+get_win_percentages(random_agent, 'negamax', 10)
+get_win_percentages(random_agent_ex, 'negamax', 10)
+
+get_win_percentages(negamax_agent_ex, 'random', 1)
+
+get_win_percentages(negamax_agent_hybrid, 'random', 10)
+get_win_percentages(negamax_agent_hybrid, 'negamax', 10)
+
+
+get_win_percentages('random', 'random', 10)
+
+get_win_percentages('random', 'random_agent_ex', 10)
+
+get_win_percentages('random_agent', 'random', 10)
+
+print("My Agent vs Random Agent:", mean_reward(evaluate("connectx", [random_agent_ex, "random"], num_episodes=10)))
+print("My Agent vs Random Agent:", mean_reward(evaluate("connectx", [random_agent_ex, "negamax"], num_episodes=10)))
 # Run multiple episodes to estimate its performance.
 #print("My Agent vs Random Agent:", mean_reward(evaluate("connectx", [my_agent, "random"], num_episodes=10)))
 #print("My Agent vs Negamax Agent:", mean_reward(evaluate("connectx", [my_agent, "negamax"], num_episodes=10)))
@@ -675,14 +1112,21 @@ def write_agent_to_file(function, file):
         print(function, "written to", file)
 
 write_agent_to_file(negamax_agent, DATA_FOLDER + "submission_it_v6.py")
-write_agent_to_file(negamax_agent_ex, DATA_FOLDER + "submission_it_v4_ex.py")
+write_agent_to_file(negamax_agent_ex, DATA_FOLDER + "submission_it_v5_ex.py")
+write_agent_to_file(random_agent, DATA_FOLDER + "submission_R_v1.py")
+write_agent_to_file(random_agent_ex, DATA_FOLDER + "submission_R_v2_ex.py")
+
+write_agent_to_file(negamax_agent_hybrid, DATA_FOLDER + "submission_H_v2_ex.py")
+
 
 #%% Validate
 
 import sys
 out = sys.stdout
 #submission = utils.read_file(DATA_FOLDER + "submission_7.py")
-submission = utils.read_file(DATA_FOLDER + "submission_it_v4_ex.py")
+#submission = utils.read_file(DATA_FOLDER + "submission_it_v5_ex.py")
+#submission = utils.read_file(DATA_FOLDER + "submission_R_v2_ex.py")
+submission = utils.read_file(DATA_FOLDER + "submission_H_v2_ex.py")
 #submission = utils.read_file(DATA_FOLDER + "submission_it_plus.py")
 agent = utils.get_last_callable(submission)
 sys.stdout = out

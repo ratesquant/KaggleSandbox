@@ -66,7 +66,7 @@ ggplot(df[state %in% c('New Jersey', 'North Carolina')], aes(date, deaths, group
 ggplot(df[state %in% my_states], aes(date, cases, group = state, color = state)) + geom_line() + facet_wrap(~state, scales = 'free_y')
 ggplot(df[state %in% my_states], aes(date, new_cases)) + geom_line() + geom_smooth(span = 0.3, se = FALSE, color = 'red') + facet_wrap(~state, scales = 'free_y')
 ggplot(df[state %in% my_states], aes(date, new_deaths)) + geom_line() + geom_smooth(span = 0.3, se = FALSE, color = 'red') + facet_wrap(~state, scales = 'free_y')
-
+ggplot(df[state %in% my_states], aes(date, 1e-3*deaths)) + geom_line() + facet_wrap(~state, scales = 'free_y')
 
 #where cases are increasing
 inc_states = df[date == max(date)][order(-new_cases_avg_14d_inc), head(state,12) ]

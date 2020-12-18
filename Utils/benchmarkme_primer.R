@@ -1,6 +1,6 @@
 library(benchmarkme)
 
-res = benchmark_std(runs = 3)
+res = benchmark_std(runs = 10)
 upload_results(res)
 plot(res)
 

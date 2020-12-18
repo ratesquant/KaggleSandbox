@@ -182,19 +182,19 @@ library(foreach)
  
  ggplot(df_t, aes(1e-3*evals, time, color = factor(error) )) + geom_point(alpha = 0.3) + facet_wrap(~name)
  
+ df_t[error!=0 & name == 'Test_L2_R1eval.log' & score * est_score <0,]
+ 
+ #fwrite(df_t[error!=0 & name == 'Test_L2_R1eval.log',.(moves, score)], file.path(working_folder,'/connect_x/positions/Test_L2_R1_HARD'), sep = ' ', col.names = FALSE)
  #fwrite(df_t[error!=0,.(moves, score)], file.path(working_folder,'/connect_x/positions/Test_HARD'), sep = ' ', col.names = FALSE)
- #fwrite(df_t[error==0,.(moves, score)], file.path(working_folder,'/connect_x/positions/Test_SOLVED'), sep = ' ', col.names = FALSE)
+ #fwrite(df_t[error==0][order(time),.(moves, score)], file.path(working_folder,'/connect_x/positions/Test_SOLVED'), sep = ' ', col.names = FALSE)
 
  #compare with
- df_t1 = fread(file.path(working_folder,'/connect_x/positions/test2eval.log'))
+ df_t1 = fread(file.path(working_folder,'/connect_x/positions/Test_SOLVED.eval.log'))
  df_t1[error!=0, cor(score, est_score, method  = 'spearman')]
  df_t1[, .(time = sum(time), evals = sum(evals), errors = sum(error), errors_pct = sum(error)/length(error), wrong_sign = sum(score * est_score <0)/sum(error) )]
+ df_t1[error > 0]
  
- a = df_t[error!=0 & name =='Test_L2_R1eval.log']
- a[df_t1, alt_score := i.est_score, on =.(moves)]
- a[alt_score * est_score < 0]
- 
- df_t[moves == '2776735234471321']
+ df_t[moves == '6625477334543176']
  df_t1[moves == '2776735234471321']
  
  ggplot(df_t1[error!=0], aes(score,est_score  )) + geom_point(alpha = 0.2) + 

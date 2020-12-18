@@ -106,12 +106,6 @@ namespace GameSolver { namespace Connect4 {
  * Get micro-second precision timestamp
  * uses unix gettimeofday function
  */
-#include <sys/time.h>
-unsigned long long getTimeMicrosec() {
-  timeval NOW;
-  gettimeofday(&NOW, NULL);
-  return NOW.tv_sec*1000000LL + NOW.tv_usec;    
-}
 
 /*
  * Main function.
@@ -141,11 +135,9 @@ int main(int argc, char** argv) {
       std::cerr << "Line " << l << ": Invalid move " << (P.nbMoves()+1) << " \"" << line << "\"" << std::endl;
     }
     else
-    {
-      unsigned long long start_time = getTimeMicrosec();
-      int score = solver.solve(P, weak);
-      unsigned long long end_time = getTimeMicrosec();
-      std::cout << line << " score: " << score << " nodes: " << solver.getNodeCount() << " time: " << 1e-6*(end_time - start_time);
+    {     
+      int score = solver.solve(P, weak);      
+      std::cout << line << " score: " << score << " nodes: " << solver.getNodeCount() ;
     }
     std::cout << std::endl;
   }

@@ -8,6 +8,8 @@ editor_options:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
+options(datatable.integer64='character')
+
 library(ggplot2)
 library(data.table)
 # library(stringi)
@@ -157,5 +159,46 @@ ggplot(df, aes(nodes, elapsed_time)) + geom_point()
  
  uniroot(function(x_depth) predict(move_model, data.frame(move = 2, depth = x_depth))[1] - 60000, c(1, 10))
 
+```
+
+##Test Runs
+
+```{r test_runs}
+library(foreach)
+
+ test_files = list.files(file.path(working_folder,'/connect_x/positions/7b'), pattern = '*.log', full.names = TRUE)
+
+ df_t = foreach(name = test_files, .combine = rbind) %do% {
+  df_t = fread(name)
+  df_t[, name := basename(name) ]
+  return(df_t)
+ }
+
+ df_t[, .(time = sum(time), evals = sum(evals), errors = sum(error), errors_pct = sum(error)/length(error), wrong_sign = sum(score * est_score <0)/sum(error)), by = .(name)]
+ 
+ ggplot(df_t[error!=0, ], aes(score, est_score)) + geom_jitter(width = 0.1, height = 1e-3) + facet_wrap(~name)
+ 
+ df_t[error!=0, cor(score, est_score, method  = 'spearman'),  by = .(name)]
+ 
+ ggplot(df_t, aes(1e-3*evals, time, color = factor(error) )) + geom_point(alpha = 0.3) + facet_wrap(~name)
+ 
+ #fwrite(df_t[error!=0,.(moves, score)], file.path(working_folder,'/connect_x/positions/Test_HARD'), sep = ' ', col.names = FALSE)
+ #fwrite(df_t[error==0,.(moves, score)], file.path(working_folder,'/connect_x/positions/Test_SOLVED'), sep = ' ', col.names = FALSE)
+
+ #compare with
+ df_t1 = fread(file.path(working_folder,'/connect_x/positions/test2eval.log'))
+ df_t1[error!=0, cor(score, est_score, method  = 'spearman')]
+ df_t1[, .(time = sum(time), evals = sum(evals), errors = sum(error), errors_pct = sum(error)/length(error), wrong_sign = sum(score * est_score <0)/sum(error) )]
+ 
+ a = df_t[error!=0 & name =='Test_L2_R1eval.log']
+ a[df_t1, alt_score := i.est_score, on =.(moves)]
+ a[alt_score * est_score < 0]
+ 
+ df_t[moves == '2776735234471321']
+ df_t1[moves == '2776735234471321']
+ 
+ ggplot(df_t1[error!=0], aes(score,est_score  )) + geom_point(alpha = 0.2) + 
+   geom_point(data = df_t[error!=0 & name =='Test_L2_R1eval.log'], aes(score,est_score), color = 'red', alpha = 0.2)
+ 
 ```
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

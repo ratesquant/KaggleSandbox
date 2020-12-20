@@ -12,8 +12,10 @@ options(datatable.integer64='character')
 
 library(ggplot2)
 library(data.table)
-# library(stringi)
- library(earth)
+library(stringi)
+library(earth)
+library(foreach)
+
 
 #working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 working_folder = 'D:/Github/KaggleSandbox/'
@@ -164,7 +166,6 @@ ggplot(df, aes(nodes, elapsed_time)) + geom_point()
 ##Test Runs
 
 ```{r test_runs}
-library(foreach)
 
  test_files = list.files(file.path(working_folder,'/connect_x/positions/7b'), pattern = '*.log', full.names = TRUE)
 
@@ -176,7 +177,7 @@ library(foreach)
 
  df_t[, .(time = sum(time), evals = sum(evals), errors = sum(error), errors_pct = sum(error)/length(error), wrong_sign = sum(score * est_score <0)/sum(error)), by = .(name)]
  
- ggplot(df_t[error!=0, ], aes(score, est_score)) + geom_jitter(width = 0.1, height = 1e-3) + facet_wrap(~name)
+ ggplot(df_t[error!=0, ], aes(score, est_score)) + geom_jitter(width = 0.1, height = 1e-3, alpha = 0.1) + facet_wrap(~name)
  
  df_t[error!=0, cor(score, est_score, method  = 'spearman'),  by = .(name)]
  
@@ -184,21 +185,29 @@ library(foreach)
  
  df_t[error!=0 & name == 'Test_L2_R1eval.log' & score * est_score <0,]
  
- #fwrite(df_t[error!=0 & name == 'Test_L2_R1eval.log',.(moves, score)], file.path(working_folder,'/connect_x/positions/Test_L2_R1_HARD'), sep = ' ', col.names = FALSE)
+ #fwrite(df_t[error!=0 & name == 'Test_L2_R1.7b.eval.log',.(moves, score)], file.path(working_folder,'/connect_x/positions/Test_L2_R1_HARD'), sep = ' ', col.names = FALSE)
  #fwrite(df_t[error!=0,.(moves, score)], file.path(working_folder,'/connect_x/positions/Test_HARD'), sep = ' ', col.names = FALSE)
  #fwrite(df_t[error==0][order(time),.(moves, score)], file.path(working_folder,'/connect_x/positions/Test_SOLVED'), sep = ' ', col.names = FALSE)
 
- #compare with
- df_t1 = fread(file.path(working_folder,'/connect_x/positions/Test_SOLVED.eval.log'))
- df_t1[error!=0, cor(score, est_score, method  = 'spearman')]
- df_t1[, .(time = sum(time), evals = sum(evals), errors = sum(error), errors_pct = sum(error)/length(error), wrong_sign = sum(score * est_score <0)/sum(error) )]
- df_t1[error > 0]
+ #compare runs
+ df_t1 = fread(file.path(working_folder,'/connect_x/positions/Test_L2_R1_HARD.v5.eval.log'))
+ df_t2 = fread(file.path(working_folder,'/connect_x/positions/Test_L2_R1_HARD.eval.vS.log'))
  
- df_t[moves == '6625477334543176']
- df_t1[moves == '2776735234471321']
+ df = rbind(cbind(df_t1, version = 'UAT'), cbind(df_t2, version = 'PROD'))
  
- ggplot(df_t1[error!=0], aes(score,est_score  )) + geom_point(alpha = 0.2) + 
-   geom_point(data = df_t[error!=0 & name =='Test_L2_R1eval.log'], aes(score,est_score), color = 'red', alpha = 0.2)
+ df[error==0 & version == 'UAT']
+ df[error!=0, cor(score, est_score, method  = 'spearman'), by =.(version)]
+ df[, .(time = sum(time), evals = sum(evals), errors = sum(error), errors_pct = sum(error)/length(error), wrong_sign = sum(score * est_score <0)/sum(error), sum(evals)/sum(time)  ), by =.(version)]
+ #df[error == 0]
+ df_diff = dcast(df, moves ~ version, value.var = 'est_column')
+ df_diff[PROD != UAT]
+ 
+ df[moves == '11722576462266212']
+ 
+ ggplot(df[error!=0], aes(score,est_score  )) + geom_point(alpha = 0.2) + facet_wrap(~version) + 
+   geom_hline(yintercept = 0, linetype = 'dashed') + geom_vline(xintercept = 0, linetype = 'dashed')
+ 
+  ggplot(df, aes(1e-3*evals ,time   )) + geom_point(alpha = 0.2) + facet_wrap(~version)
  
 ```
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

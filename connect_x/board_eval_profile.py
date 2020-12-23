@@ -280,3 +280,13 @@ print( [board_eval_ex5(board, moves, column, mark)  for column in range(columns)
 
 cProfile.run("[[board_eval_ex2(board, moves, column, mark) for column in range(columns) if board[column]==0] for a in range(10000)]")
 
+#%% 
+#100 - 113 ns
+#1k  - 120 ns
+import random 
+
+n = int(10e6)
+
+cache = {random.randint(0,2**32):i for i in range(n)}
+
+%timeit 11398132 in cache

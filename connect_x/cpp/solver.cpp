@@ -16,6 +16,7 @@
  * along with Connect4 Game Solver. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <iostream>
 #include <cassert>
 #include "position.hpp"
 
@@ -29,6 +30,7 @@ namespace GameSolver { namespace Connect4 {
   class Solver {
     private:
     unsigned long long nodeCount; // counter of explored nodes.
+    int m_column; 
 
     int columnOrder[Position::WIDTH]; // column exploration order
     
@@ -41,7 +43,7 @@ namespace GameSolver { namespace Connect4 {
      * - if actual score of position >= beta then beta <= return value <= actual score
      * - if alpha <= actual score <= beta then return value = actual score
      */
-    int negamax(const Position &P, int alpha, int beta) {
+    int negamax(const Position &P, int alpha, int beta, int &best_column, bool is_root) {
       assert(alpha < beta);
       nodeCount++; // increment counter of explored nodes
 
@@ -58,13 +60,25 @@ namespace GameSolver { namespace Connect4 {
         if(alpha >= beta) return beta;  // prune the exploration if the [alpha;beta] window is empty.
       }
 
+      int best_score = -1000;
+      int temp;
+
       for(int x = 0; x < Position::WIDTH; x++) // compute the score of all possible next move and keep the best one
         if(P.canPlay(columnOrder[x])) {
           Position P2(P);
           P2.play(columnOrder[x]);               // It's opponent turn in P2 position after current player plays x column.
-          int score = -negamax(P2, -beta, -alpha); // explore opponent's score within [-beta;-alpha] windows:
+          int score = -negamax(P2, -beta, -alpha, temp, false); // explore opponent's score within [-beta;-alpha] windows:
                                               // no need to have good precision for score better than beta (opponent's score worse than -beta)
                                               // no need to check for score worse than alpha (opponent's score worse better than -alpha)
+          if (score > best_score)
+          {
+              best_score = score;
+              best_column = columnOrder[x];
+          }
+          //if (is_root)
+          //{
+          //    std::cout << "col: " << columnOrder[x] << " score:" << score << std::endl;
+          //}
 
           if(score >= beta) return score;  // prune the exploration if we find a possible move better than what we were looking for.
           if(score > alpha) alpha = score; // reduce the [alpha;beta] window for next exploration, as we only 
@@ -78,17 +92,25 @@ namespace GameSolver { namespace Connect4 {
 
     int solve(const Position &P, bool weak = false) 
     {
+
       nodeCount = 0;
       if(weak) 
-        return negamax(P, -1, 1);
+        return negamax(P, -1, 1, m_column, true);
       else 
-        return negamax(P, -Position::WIDTH*Position::HEIGHT/2, Position::WIDTH*Position::HEIGHT/2);
+        return negamax(P, -Position::WIDTH*Position::HEIGHT/2, Position::WIDTH*Position::HEIGHT/2, m_column, true);
     }
 
     unsigned long long getNodeCount() 
     {
       return nodeCount;
     }
+
+
+    int getColumn()
+    {
+        return m_column;
+    }
+
 
     // Constructor
     Solver() : nodeCount(0) {
@@ -118,7 +140,7 @@ namespace GameSolver { namespace Connect4 {
  *  Any invalid position (invalid sequence of move, or already won game) 
  *  will generate an error message to standard error and an empty line to standard output.
  */
-#include <iostream>
+
 int main(int argc, char** argv) {
 
   Solver solver;
@@ -137,7 +159,7 @@ int main(int argc, char** argv) {
     else
     {     
       int score = solver.solve(P, weak);      
-      std::cout << line << " score: " << score << " nodes: " << solver.getNodeCount() ;
+      std::cout << line << " score: " << score <<" column: " << solver.getColumn() << " nodes: " << solver.getNodeCount() ;
     }
     std::cout << std::endl;
   }

@@ -167,7 +167,7 @@ ggplot(df, aes(nodes, elapsed_time)) + geom_point()
 
 ```{r test_runs}
 
- test_files = list.files(file.path(working_folder,'/connect_x/positions/7b'), pattern = '*.log', full.names = TRUE)
+ test_files = list.files(file.path(working_folder,'/connect_x/positions/v8'), pattern = '*.log', full.names = TRUE)
 
  df_t = foreach(name = test_files, .combine = rbind) %do% {
   df_t = fread(name)
@@ -175,7 +175,7 @@ ggplot(df, aes(nodes, elapsed_time)) + geom_point()
   return(df_t)
  }
 
- df_t[, .(time = sum(time), evals = sum(evals), errors = sum(error), errors_pct = sum(error)/length(error), wrong_sign = sum(score * est_score <0)/sum(error)), by = .(name)]
+ df_t[, .(.N, time = sum(time), evals = sum(evals), errors = sum(error), errors_pct = sum(error)/length(error), wrong_sign = sum(score * est_score <0)/sum(error), evals_rate = sum(evals)/sum(time) ), by = .(name)]
  
  ggplot(df_t[error!=0, ], aes(score, est_score)) + geom_jitter(width = 0.1, height = 1e-3, alpha = 0.1) + facet_wrap(~name)
  
@@ -190,10 +190,10 @@ ggplot(df, aes(nodes, elapsed_time)) + geom_point()
  #fwrite(df_t[error==0][order(time),.(moves, score)], file.path(working_folder,'/connect_x/positions/Test_SOLVED'), sep = ' ', col.names = FALSE)
 
  #compare runs
- df_t1 = fread(file.path(working_folder,'/connect_x/positions/Test_L2_R1_HARD.v5.eval.log'))
+ df_t1 = fread(file.path(working_folder,'/connect_x/positions/Test_L2_R1_HARD.MTD.eval.log'))
  df_t2 = fread(file.path(working_folder,'/connect_x/positions/Test_L2_R1_HARD.eval.vS.log'))
  
- df = rbind(cbind(df_t1, version = 'UAT'), cbind(df_t2, version = 'PROD'))
+ df = rbind(cbind(df_t1, version = 'UAT'), cbind(df_t2, version = 'PROD'), fill=TRUE)
  
  df[error==0 & version == 'UAT']
  df[error!=0, cor(score, est_score, method  = 'spearman'), by =.(version)]

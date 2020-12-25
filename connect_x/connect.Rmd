@@ -210,4 +210,32 @@ ggplot(df, aes(nodes, elapsed_time)) + geom_point()
   ggplot(df, aes(1e-3*evals ,time   )) + geom_point(alpha = 0.2) + facet_wrap(~version)
  
 ```
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+##Debut table
+
+```{r debut_table}
+
+ test_files = list.files(file.path(working_folder,'/connect_x/cpp/Connect4/Release'), pattern = glob2rx('Test_*out.csv'), full.names = TRUE)
+
+ df_t = foreach(name = test_files, .combine = rbind) %do% {
+  df_t = fread(name)
+  df_t[, name := basename(name) ]
+  return(df_t)
+ }
+
+ df_t[, error:=abs(computed_score)<1 & abs(score) >1]
+
+ df_t[, .(.N, time = sum(elapsed), errors = sum(error), errors_pct = sum(error)/length(error), wrong_sign = sum(score * computed_score  <0)/sum(error)), by = .(name)]
+ 
+ df_t[error == TRUE,]
+
+ ggplot(df_t, aes(elapsed)) + stat_ecdf() + facet_wrap(~error)
+ 
+ df_debut = fread(file.path(working_folder,'/connect_x/submission/debut_table.out.csv'))
+ 1e-6*sum(df_debut$nodes)/ sum(df_debut$elapsed) #about 3M per second
+ sum(df_debut$elapsed)/3600 #4.2hours
+ summary(df_debut$column)
+ df_debut[abs(computed_score)>1 | computed_score == 0  ]#18 exact
+ 
+```

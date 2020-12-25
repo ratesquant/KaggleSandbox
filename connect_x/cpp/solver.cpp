@@ -16,8 +16,15 @@
  * along with Connect4 Game Solver. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <fstream>
+#include <sstream>
 #include <iostream>
+#include <iomanip>
 #include <cassert>
+#include <ctime>
+#include <chrono>
+#include <vector>
+
 #include "position.hpp"
 
 using namespace GameSolver::Connect4;
@@ -29,8 +36,10 @@ namespace GameSolver { namespace Connect4 {
    */
   class Solver {
     private:
-    unsigned long long nodeCount; // counter of explored nodes.
-    int m_column; 
+        double m_max_time;
+        int m_depth;
+        unsigned long long nodeCount; // counter of explored nodes.
+        int m_column; 
 
     int columnOrder[Position::WIDTH]; // column exploration order
     
@@ -43,7 +52,7 @@ namespace GameSolver { namespace Connect4 {
      * - if actual score of position >= beta then beta <= return value <= actual score
      * - if alpha <= actual score <= beta then return value = actual score
      */
-    int negamax(const Position &P, int alpha, int beta, int &best_column, bool is_root) {
+    double negamax(const Position &P, double alpha, double beta, int depth, int &best_column, bool is_root) {
       assert(alpha < beta);
       nodeCount++; // increment counter of explored nodes
 
@@ -60,16 +69,24 @@ namespace GameSolver { namespace Connect4 {
         if(alpha >= beta) return beta;  // prune the exploration if the [alpha;beta] window is empty.
       }
 
-      int best_score = -1000;
+      double best_score = -1000;
       int temp;
 
       for(int x = 0; x < Position::WIDTH; x++) // compute the score of all possible next move and keep the best one
         if(P.canPlay(columnOrder[x])) {
           Position P2(P);
           P2.play(columnOrder[x]);               // It's opponent turn in P2 position after current player plays x column.
-          int score = -negamax(P2, -beta, -alpha, temp, false); // explore opponent's score within [-beta;-alpha] windows:
+
+          double score = 0;
+
+          if (depth <= 0)
+              score = P.eval(columnOrder[x]); //add position evaluation
+          else
+          {
+              score = -negamax(P2, -beta, -alpha, depth - 1, temp, false); // explore opponent's score within [-beta;-alpha] windows:
                                               // no need to have good precision for score better than beta (opponent's score worse than -beta)
                                               // no need to check for score worse than alpha (opponent's score worse better than -alpha)
+          }
           if (score > best_score)
           {
               best_score = score;
@@ -90,14 +107,37 @@ namespace GameSolver { namespace Connect4 {
 
     public:
 
-    int solve(const Position &P, bool weak = false) 
+    double solve(const Position &P, bool weak = false) 
     {
+        nodeCount = 0;
+        if(weak) 
+            return negamax(P, -1, 1, 16, m_column, true);
+        else
+        {
+            std::clock_t start_clock = std::clock();            
 
-      nodeCount = 0;
-      if(weak) 
-        return negamax(P, -1, 1, m_column, true);
-      else 
-        return negamax(P, -Position::WIDTH*Position::HEIGHT/2, Position::WIDTH*Position::HEIGHT/2, m_column, true);
+            m_depth = 16;
+            double score;
+            while (true)
+            {
+                score =  negamax(P, -Position::WIDTH * Position::HEIGHT / 2, Position::WIDTH * Position::HEIGHT / 2, m_depth, m_column, true);
+
+                double elapsed = double(clock() - start_clock) / CLOCKS_PER_SEC;
+
+                if (fabs(score) >= 1 || score == 0)
+                    break;
+
+                if (elapsed * 2.6 > m_max_time)
+                    break;
+
+                if (m_depth > Position::WIDTH * Position::HEIGHT - P.nbMoves())
+                    break;
+
+                m_depth += 1;
+            }
+            return score;
+            
+        }
     }
 
     unsigned long long getNodeCount() 
@@ -112,8 +152,19 @@ namespace GameSolver { namespace Connect4 {
     }
 
 
+    int get_depth()
+    {
+        return m_depth;
+    }
+
+    void set_time(double max_time)
+    {
+        m_max_time = max_time;
+    }
+
+
     // Constructor
-    Solver() : nodeCount(0) {
+    Solver() : nodeCount(0), m_max_time(60), m_column(-1) {
       for(int i = 0; i < Position::WIDTH; i++)
         columnOrder[i] = Position::WIDTH/2 + (1-2*(i%2))*(i+1)/2; // initialize the column exploration order, starting with center columns
     }
@@ -146,23 +197,82 @@ int main(int argc, char** argv) {
   Solver solver;
 
   bool weak = false;
-  if(argc > 1 && argv[1][0] == '-' && argv[1][1] == 'w') weak = true;
 
-  std::string line;
-  
-  for(int l = 1; std::getline(std::cin, line); l++) {
-    Position P;
-    if(P.play(line) != line.size())
-    {
-      std::cerr << "Line " << l << ": Invalid move " << (P.nbMoves()+1) << " \"" << line << "\"" << std::endl;
-    }
-    else
-    {     
-      int score = solver.solve(P, weak);      
-      std::cout << line << " score: " << score <<" column: " << solver.getColumn() << " nodes: " << solver.getNodeCount() ;
-    }
-    std::cout << std::endl;
+  std::string filename;
+
+  if (argc > 1) filename = argv[1];
+  if (argc > 2) solver.set_time( std::atoi(argv[2]) );
+
+  if (!filename.empty()) 
+  {
+      std::ifstream ifs(filename.c_str(), std::ifstream::in);
+      std::ofstream ofs((filename+".out.csv").c_str(), std::ifstream::out);
+      
+      ofs <<"moves, score, computed_score, column, nodes, depth, elapsed"<< std::endl;
+
+      while (ifs)
+      {
+          std::string line;
+
+          if (!getline(ifs, line)) break;
+
+          std::istringstream ss(line);
+          std::vector <std::string> tokens;
+          while (ss)
+          {
+              std::string s;
+              if (!getline(ss, s, ' ')) break;
+              tokens.push_back(s);
+          }
+
+
+          Position P;
+          if (P.play(tokens[0]) != tokens[0].size())
+          {
+              std::cerr << ": Invalid move " << (P.nbMoves() + 1) << " \"" << tokens[0] << "\"" << std::endl;
+          }
+          else
+          {
+              std::clock_t start_clock = std::clock();
+
+              double score = solver.solve(P, weak);
+
+              double elapsed = double(clock() - start_clock) / CLOCKS_PER_SEC;
+
+              std::cout << tokens[0] << " score: " << score << " column: " << solver.getColumn() << " nodes: " << solver.getNodeCount()<<", depth: "<< solver.get_depth() << ", elapsed: " << elapsed << " sec, rate: " << solver.getNodeCount() / elapsed << std::endl;
+
+              ofs<< tokens[0]<<", "<< tokens[1]<<", "<< score<<", "<< solver.getColumn()<<", " << solver.getNodeCount() << ", " << solver.get_depth()<<", " <<std::fixed << std::setprecision(6)<<elapsed<< std::endl;
+              ofs.flush();
+          }
+      }
+      ofs.close();
   }
+  else 
+  {
+      std::string line;
+
+      for (int l = 1; std::getline(std::cin, line); l++) {
+          Position P;
+          if (P.play(line) != line.size())
+          {
+              std::cerr << "Line " << l << ": Invalid move " << (P.nbMoves() + 1) << " \"" << line << "\"" << std::endl;
+          }
+          else
+          {
+              std::clock_t start_clock = std::clock();
+
+              double score = solver.solve(P, weak);
+
+              double elapsed = double(clock() - start_clock) / CLOCKS_PER_SEC;
+
+              std::cout << line << " score: " << score << " column: " << solver.getColumn() << " nodes: " << solver.getNodeCount()<<", depth: " << solver.get_depth() << ", elapsed: " << elapsed << " sec, rate: " << solver.getNodeCount() / elapsed << std::endl;;
+          }
+          std::cout << std::endl;
+      }
+  }
+  
+
+
 }
 
 

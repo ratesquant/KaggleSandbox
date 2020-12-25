@@ -79,13 +79,36 @@ namespace GameSolver { namespace Connect4 {
         return seq.size();
       }
 
+      bool isWinningMove(int col) const
+      {
+          int current_player = 1 + moves % 2;
+          // check for vertical alignments
+          if (height[col] >= 3
+              && board[col][height[col] - 1] == current_player
+              && board[col][height[col] - 2] == current_player
+              && board[col][height[col] - 3] == current_player)
+              return true;
+
+          for (int dy = -1; dy <= 1; dy++) {    // Iterate on horizontal (dy = 0) or two diagonal directions (dy = -1 or dy = 1).
+              int nb = 0;                       // counter of the number of stones of current player surronding the played stone in tested direction.
+              for (int dx = -1; dx <= 1; dx += 2) // count continuous stones of current player on the left, then right of the played column.
+                  for (int x = col + dx, y = height[col] + dx * dy; x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && board[x][y] == current_player; nb++) {
+                      x += dx;
+                      y += dx * dy;
+                  }
+              if (nb >= 3) return true; // there is an aligment if at least 3 other stones of the current user 
+                                       // are surronding the played stone in the tested direction.
+          }
+          return false;
+      }
+
       /**
        * Indicates whether the current player wins by playing a given column.
        * This function should never be called on a non-playable column.
        * @param col: 0-based index of a playable column.
        * @return true if current player makes an alignment by playing the corresponding column col.
        */
-      bool isWinningMove(int col) const 
+      bool isWinningMoveEx(int col) const 
       {
         int current_player = 1 + moves%2;
         // check for vertical alignments
@@ -97,15 +120,47 @@ namespace GameSolver { namespace Connect4 {
 
         for(int dy = -1; dy <=1; dy++) {    // Iterate on horizontal (dy = 0) or two diagonal directions (dy = -1 or dy = 1).
           int nb = 0;                       // counter of the number of stones of current player surronding the played stone in tested direction.
-          for(int dx = -1; dx <=1; dx += 2) // count continuous stones of current player on the left, then right of the played column.
-            for(int x = col+dx, y = height[col]+dx*dy; x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && board[x][y] == current_player; nb++) {
-              x += dx;
-              y += dx*dy;
-            }
+          for (int dx = -1; dx <= 1; dx += 2) // count continuous stones of current player on the left, then right of the played column.
+          {
+              for (int x = col + dx, y = height[col] + dx * dy; x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && board[x][y] == current_player; nb++)
+              {
+                  x += dx;
+                  y += dx * dy;
+              }
+          }
           if(nb >= 3) return true; // there is an aligment if at least 3 other stones of the current user 
                                    // are surronding the played stone in the tested direction.
         }
         return false;
+      }
+
+      int count(int px, int py, int dx, int dy, int mark)const
+      {
+          for (int i = 1; i < 4; i++) 
+          {
+              int y = py + dy * i;
+              int x = px + dx * i;
+              if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT && board[x][y] == mark)
+                  return i - 1;
+          }
+          return 3;
+      }
+
+      double eval(int px) const
+      {
+          int current_player = 1 + moves % 2;
+          int next_player = 3 - current_player;
+
+          int py = height[px];          
+
+          double score = 1.234567e-4;
+
+          if (count(px, py, 1, 0, next_player) + count(px, py, -1,  0, next_player) >= 3)  score += 1;
+          if (count(px, py, 0, 1, next_player) + count(px, py,  0, -1, next_player) >= 3)  score += 1;
+          if (count(px, py,-1,-1, next_player) + count(px, py,  1,  1, next_player) >= 3)  score += 1;
+          if (count(px, py,-1, 1, next_player) + count(px, py,  1, -1, next_player) >= 3)  score += 1;
+
+          return 0.01*score;
       }
 
       /**    

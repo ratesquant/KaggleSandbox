@@ -25,6 +25,8 @@ rows = config.rows
 size = rows * columns  
 
 
+
+
 #%% Eval functions 
 def board_eval(board, moves, column, mark):
     row = max([r for r in range(rows) if board[column + (r * columns)] == 0])

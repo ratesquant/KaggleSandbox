@@ -116,7 +116,7 @@ namespace GameSolver { namespace Connect4 {
         {
             std::clock_t start_clock = std::clock();            
 
-            m_depth = 16;
+            m_depth = 42;
             double score;
             while (true)
             {

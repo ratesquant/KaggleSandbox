@@ -40,7 +40,7 @@ namespace GameSolver { namespace Connect4 {
        * @param col: 0-based index of column to play
        * @return true if the column is playable, false if the column is already full.
        */
-      bool canPlay(int col) const 
+      inline bool canPlay(int col) const 
       {
         return height[col] < HEIGHT;
       }
@@ -51,7 +51,7 @@ namespace GameSolver { namespace Connect4 {
        *
        * @param col: 0-based index of a playable column.
        */
-      void play(int col) 
+      inline void play(int col) 
       {
         board[col][height[col]] = 1 + moves%2;
         height[col]++;

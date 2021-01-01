@@ -25,21 +25,34 @@ columns = config.columns
 rows = config.rows
 size = rows * columns   
 
-def play_moves(moves, board, config):    
+def play_moves(moves, config):        
     columns = config.columns
     rows = config.rows
+    board = [0] *columns * rows
     mark = 1
     for c in moves:  
         column = int(c)-1
         row = max([r for r in range(rows) if board[column + (r * columns)] == 0])
         board[column + (row * columns)] = mark
         mark = 3 - mark
-    return mark
+    return board, mark
 
 def print_board(board):
     for r in range(rows):
         print('-'.join([str(board[c + (r * columns)]) for c in range(columns)]) )
 
+def board_key(board):
+    key_map = {0:'00',1:'01',2:'10'}
+    return format(int(''.join([ key_map[c] for c in board]), 2), 'x')
+
+def gen_board_fromkey(hex_key):
+    key_map = {'00':0,'01':1,'10':2}
+    bin_str = format(int(hex_key, 16), 'b')
+    bin_str = '0' * (2*rows*columns - len(bin_str)) + bin_str
+    return [key_map[a+b] for a, b in zip(bin_str[0::2], bin_str[1::2])]
+        
+  
+#print_board(gen_board_fromkey('20004012008401202944'))
 
 #timing 2 sec per turn + 60 sec or exceedance total (2.5)
 # on average 4.5 /sec
@@ -228,14 +241,14 @@ def negamax_agent_ex(obs, config):
     columns = config.columns
     rows = config.rows
     size = rows * columns   
-    column_order = [ columns//2 + (1-2*(i%2)) * (i+1)//2 for i in range(columns)]            
+    column_order = [ columns//2 + (1-2*(i%2)) * (i+1)//2 for i in range(columns)]                
     made_moves = sum(1 if cell != 0 else 0 for cell in obs.board)     
     
     increment_depth = True #uses iterative depth solver
     
     total_evals = 0    
     
-    max_depth = 1
+    max_depth = 7
     #max_depth = 7 if made_moves < 14 else (8 if made_moves < 18 else  (9 if made_moves < 20 else (14 if made_moves < 22 else 20) ))       
     #max_depth = max_depth if depth_override is None else depth_override
     #{made_moves :7 if made_moves < 14 else (8 if made_moves < 18 else  (9 if  made_moves<20 else (14 if made_moves<22 else 20) ))       for made_moves in range(25)}        
@@ -364,7 +377,7 @@ def negamax_agent_ex(obs, config):
         return 0.01*score
     
     def board_eval_ex_v5(board, moves, row, column, mark, config):        
-        def board_eval_ex5_internal(board, moves, row, column, mark, config):        
+        def board_eval_ex5_internal(board, row, column, mark, config):        
             inarow = config.inarow - 1  
             inv_mark = 3 - mark             
             
@@ -383,19 +396,18 @@ def negamax_agent_ex(obs, config):
             return score 
         
         inv_mark = 3 - mark          
-        score = 0
-        board[column + (row * columns)] = mark
+        score = 0     
         for r in range(rows):      
             for c in range(columns):
                 if board[c + (r * columns)] == 0:
-                    score += board_eval_ex5_internal(board, moves, r, c, mark,     config)                        
-                    score -= board_eval_ex5_internal(board, moves, r, c, inv_mark, config)                                
+                    score += board_eval_ex5_internal(board,  r, c, mark,     config)                        
+                    score -= board_eval_ex5_internal(board,  r, c, inv_mark, config)                                
         board[column + (row * columns)]  = 0
         return 0.01*score
     
     #same as v5
     def board_eval_ex_v6(board, moves, row, column, mark, config):        
-        def board_eval_ex6_internal(board, moves, row, column, mark, config):        
+        def board_eval_ex6_internal(board, row, column, mark, config):        
             inarow = config.inarow - 1  
             inv_mark = 3 - mark             
             
@@ -419,8 +431,8 @@ def negamax_agent_ex(obs, config):
             if board[index] == 0:
                 r = index // columns
                 c = index %  columns
-                score += board_eval_ex6_internal(board, moves, r, c, mark,     config)                        
-                score -= board_eval_ex6_internal(board, moves, r, c, inv_mark, config) 
+                score += board_eval_ex6_internal(board, r, c, mark,     config)                        
+                score -= board_eval_ex6_internal(board, r, c, inv_mark, config) 
         return 0.01*score
 
 
@@ -453,9 +465,12 @@ def negamax_agent_ex(obs, config):
 
     #alpha = minimum score that the maximizing player is assured of
     #beta the maximum score that the minimizing player is assured of
-    def negamax(board, mark, depth, alpha, beta, moves, is_root = False):                         
+    def negamax(board, mark, depth, alpha, beta, moves, custom_order = None, is_root = False):                         
         board_keys =  [0] * columns
         rows_cache = [0] * columns
+        
+        my_column_order = column_order if custom_order is None else custom_order
+        
         evals = 0
         # Tie Game
         if moves == size:
@@ -470,7 +485,7 @@ def negamax_agent_ex(obs, config):
                 index = column + (row * columns)
                 
                 board[index] = mark
-                board_key = hash(tuple(board)) 
+                board_key = tuple(board) 
                 board[index] = 0         
                 
                 if board_key in win_table:
@@ -506,8 +521,10 @@ def negamax_agent_ex(obs, config):
                     if board_key in position_table:
                         score = position_table[board_key]
                     else:
-                        #score = board_eval_ex_v6(board, moves, row, column, mark, config) 
-                        score = board_eval_ex_v3(board, moves, row, column, mark) 
+                        #score = board_eval_ex_v6(board, moves, row, column, mark, config)#  + board_eval_ex_v3(board, moves, row, column, mark)
+                        #score = board_eval_ex_v3(board, moves, row, column, mark) 
+                        score = board_eval_ex_v6(board, moves, row, column, mark, config)
+                        #score = board_eval_ex_v2(board, moves, row, column, mark, config)
                         position_table[board_key] = score
                         evals += 1
                     board[index] = 0
@@ -536,8 +553,8 @@ def negamax_agent_ex(obs, config):
     elif increment_depth == True:             
         depth_start_time = time()
         
-        time_limit = 12.0 #seconds
-        my_depth = max_depth  
+        time_limit = config['max_time'] if 'max_time' in config and config['max_time'] is not None else 14 #seconds        
+        custom_order = column_order[:]
         
         if DEBUG:
             obs.debug['start_depth'] = max_depth
@@ -545,18 +562,19 @@ def negamax_agent_ex(obs, config):
          
         while True:                     
             run_time_1 = time() 
-            best_score, best_column, temp_evals = negamax(obs.board[:], obs.mark, my_depth, -size, size, made_moves, True)            
+            best_score, best_column, temp_evals = negamax(obs.board[:], obs.mark, max_depth, -size, size, made_moves, custom_order, True)            
             #best_score, best_column, temp_evals = negamax(obs.board[:], obs.mark, my_depth, -1, 1, made_moves)            
             #print('depth: %d, alpha: %f, beta: %f, best score %f' % (my_depth, my_alpha, my_beta, best_score))
             total_evals = total_evals  + temp_evals
             run_time_2 = time()       
             if DEBUG:            
-                obs.debug['depth_log'][my_depth] = (run_time_2 - depth_start_time, run_time_2 - run_time_1, best_score, best_column, temp_evals)                                                      
-            if my_depth >= size - made_moves or abs(best_score)>=1:
+                obs.debug['depth_log'][max_depth] = (run_time_2 - depth_start_time, run_time_2 - run_time_1, best_score, best_column, temp_evals)                                                      
+            if max_depth >= size - made_moves or abs(best_score)>=1:
                 break
             if (time() - depth_start_time)*2.5 > time_limit: # check if we have enought time
                 break
-            my_depth = my_depth + 1 # increment depth                                  
+            custom_order = [best_column] + [c for c in custom_order if c != best_column] 
+            max_depth = max_depth + 1 # increment depth                                  
         else:            
             best_score, best_column, total_evals = negamax(obs.board[:], obs.mark, max_depth, -size, size, made_moves, True)                    
             
@@ -1171,7 +1189,7 @@ env.run([negamax_agent, "negamax"])
 env.render()
 
 #%% Debug Game 
-plays_folder = 'D:/Github/KaggleSandbox/connect_x/games/'
+plays_folder = 'D:/Github/KaggleSandbox/connect_x/lost_games/'
 play_filename = '5982532.json' #slow game
 play_filename = '5984148.json' #lost game
 play_filename = '6059058.json' #
@@ -1181,6 +1199,7 @@ play_filename = '6522402.json' #lost game
 play_filename = '6632936.json'
 play_filename = '6676798.json'
 play_filename = '7251262.json'
+play_filename = '8876093.json'
 
 with open(plays_folder + play_filename, 'r') as outfile:
     game_log = json.load(outfile)
@@ -1210,7 +1229,10 @@ for i, s in enumerate(game_log['steps']):
         break;
     mark =  1 + i % 2
     debug_out = dict()
-    negamax_agent_ex(structify({'board':board, 'mark':mark}) , config, debug_out)
+    config['max_time'] = 1
+    obs = structify({'board':board, 'mark':mark})
+    negamax_agent_ex(obs , config)
+    debug_out = obs.debug
     #negamax_agent_ex(structify({'board':board, 'mark':mark}) , config, debug_out)
     print('%d column: %d, evals: %d, score: %f, depth: %d, time: %f sec' % (i+1, debug_out['best_column'], debug_out['evals'], 0 if debug_out['best_score'] is None else debug_out['best_score'], max(debug_out['depth_log'].keys()) if 'depth_log' in debug_out else 0, debug_out['depth_log'][max(debug_out['depth_log'].keys())][0] if 'depth_log' in debug_out else 0))
 
@@ -1241,14 +1263,17 @@ mark = 1
 moves = '44444343331156666656' #445264
 moves = '44444343331156666651' #445264
 moves = '743454445455236' #445264, next move shoudl be 6
-moves = '4444'
+moves = '4444414753555'
+moves = '4522133353344444' #next should be 6  https://connect4.gamesolver.org/solve?pos=4522133353344444
         
+config['max_time'] = 60
 debug_out = dict()
-board = columns * rows * [0]
-mark = play_moves(moves, board, config)    
+board, mark = play_moves(moves, config)    
 obs = structify({'board':board, 'mark':mark})
 negamax_agent_ex(obs , config)
 obs.debug
+
+#[{"duration": 4.076029, "stdout": "move: 13, p-table: 13384, w-table: 42963, column: 4, score: -0.04, depth: 12, elapsed: 4.1 sec [10004002400600242252]\n", "stderr": ""}],
 
 negamax_agent_mtd(structify({'board':board, 'mark':mark}) , config, debug_out)
 negamax_agent_hybrid(structify({'board':board, 'mark':mark}) , config, debug_out)
@@ -1528,7 +1553,7 @@ out = sys.stdout
 #submission = utils.read_file(DATA_FOLDER + "submission_it_plus.py")
 #submission = utils.read_file(DATA_FOLDER + "submission_MTD_v2.py")
 #submission = utils.read_file(DATA_FOLDER + "submission_NEG_v7d.py")
-submission = utils.read_file(DATA_FOLDER + "submission_NEG_v9d.py")
+submission = utils.read_file(DATA_FOLDER + "submission_NEG_v10c.py")
 #submission = utils.read_file(DATA_FOLDER + "submission_HYB_v3.py")
 agent = utils.get_last_callable(submission)
 sys.stdout = out

@@ -10,6 +10,8 @@ import json
 import random
 import time
 import requests
+import gc
+from datetime import datetime
 
 import pickle
 import zlib
@@ -145,14 +147,14 @@ with open(DATA_FOLDER + '/debut_table/move_scores.cache.json','w') as f:
     
 #position map
 position_map = {gen_board_key(play_moves(move)[0]):data  for move, data in best_scores_cache.items()}
-len(position_map)  #335895  
+len(position_map)  #436491  
 
 #position: 44444147535555 (best move is column 3)
 #15197
-for i in range(24):
+for i in range(26):
     print('%d \t %d' % (i, len([k for k, v in best_scores_cache.items() if len(k) == i])))
        
- 
+#sorted([k for k, v in best_scores_cache.items() if len(k) == 21][-10:])
 #[k for k, v in best_scores_cache.items() if len(k) == 3]
 
 max([v[0 ]for k, v in best_scores_cache.items()])
@@ -160,7 +162,6 @@ min([v[0 ]for k, v in best_scores_cache.items()])
 max([max(v[1 ]) for k, v in best_scores_cache.items()])
 min([min(v[1 ]) for k, v in best_scores_cache.items()])
 
-load_counter = 0
 #https://connect4.gamesolver.org/en/?pos=523264324           
 def load_position_scores(pos):
     global load_counter
@@ -172,13 +173,14 @@ def load_position_scores(pos):
     elif board_key in position_map:
         return (pos, position_map[board_key][0], position_map[board_key][1])
     else:
-        load_counter += 1
-        print('loading %s (%d) - (%d)' % (pos, len(pos), load_counter))
-        if load_counter % 2000 == 0:
-            with open(DATA_FOLDER + '/debut_table/move_scores.cache_%s.json' % len(best_scores_cache),'w') as f:
+        n = len(best_scores_cache)
+        if n % 200 == 0:
+            print('loading %s (%d) - (%d) [%s]' % (pos, len(pos), n, datetime.now().strftime("%H:%M:%S")))
+        if n % 5000 == 0:
+            with open(DATA_FOLDER + '/debut_table/move_scores.cache_%s.json' % n,'w') as f:
                 json.dump(best_scores_cache, f)            
         headers = {"User-Agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36"}
-        time.sleep(0.1*random.random())
+        #time.sleep(0.1*random.random())
         response = requests.get('https://connect4.gamesolver.org/solve?pos=%s' % pos, headers=headers)
         if response.reason == 'OK':
             scores = response.json()['score']
@@ -210,45 +212,94 @@ def generate_all_positions(board, mark, random_mark, depth, position):
            generate_all_positions(board[:], 3-mark, random_mark, depth-1, position + str(column+1))            
            board[column + (row * columns)] = 0
            
+def generate_complete_positions(board, mark, random_mark, depth, position):        
+       columns = config.columns
+       if depth <=0:
+           return       
+       for column in range(columns):
+           if board[column] == 0 and is_win_ex(board, column, mark, False):               
+               return                   
+       if mark == random_mark:
+           for column in range(columns):
+               if board[column] == 0:
+                   row = get_move_row(board, column)                                   
+                   board[column + (row * columns)] = mark                   
+                   generate_complete_positions(board[:], 3-mark, random_mark, depth-1, position + str(column+1))                   
+                   board[column + (row * columns)] = 0
+       else:
+           res = load_position_scores(position)
+           best_score = max([c for c in res[2] if c < 100])
+           for column in [i for i, score in enumerate(res[2]) if score == best_score]:        
+               row = get_move_row(board, column)              
+               board[column + (row * columns)] = mark           
+               generate_complete_positions(board[:], 3-mark, random_mark, depth-1, position + str(column+1))            
+               board[column + (row * columns)] = 0
+        
+           
 def generate_hard_positions(board, mark, depth, position):        
     columns = config.columns
     if depth <=0:
-        return
+        return 0
     for column in range(columns):
         if board[column] == 0 and is_win_ex(board, column, mark, False):               
-            return                   
+            return 0
+    res = load_position_scores(position)
+    best_score = max([c for c in res[2] if c < 100])   
+     
+    count = 1 
     
-    res = None
-    try:
-        res = load_position_scores(position)
-        best_score = max([c for c in res[2] if c < 100])   
-        #print(res)
-    except Exception as ex:
-        print('%s %s [%s]' % (position, res, ex) )
-        return    
-    
-    for column in [i for i, c in enumerate(res[2]) if c == best_score]:        
+    for column in [i for i, score in enumerate(res[2]) if score == best_score]:        
         row = get_move_row(board, column)              
         board[column + (row * columns)] = mark           
-        generate_hard_positions(board[:], 3-mark, depth-1, position + str(column+1))            
+        count += generate_hard_positions(board[:], 3-mark, depth-1, position + str(column+1))            
         board[column + (row * columns)] = 0
+    return count
+        
+def generate_reasonable_positions(board, mark, depth, position):                    
+    columns = config.columns
+    if depth <=0:
+        return 0
+    for column in range(columns):
+        if board[column] == 0 and is_win_ex(board, column, mark, False):               
+            return 0
+    res = load_position_scores(position)
+    valid_scores = [c for c in res[2] if c < 100]
+    
+    if len(valid_scores) == 0:
+        return 0        
+    best_score = max(valid_scores)  
+    
+    count = 1      
+       
+    for column in [i for i, score in enumerate(res[2]) if (score < 100 and (score > 0 or best_score == score) ) ]:
+        row = get_move_row(board, column)              
+        board[column + (row * columns)] = mark           
+        count += generate_reasonable_positions(board[:], 3-mark, depth-1, position + str(column+1))            
+        board[column + (row * columns)] = 0
+    return count
 
 #%% Run the load
+
+#15 - complete (goal is to reach 16)
 board = columns * rows * [0]
-generate_all_positions(board[:], 1, 1, 16, '')
+generate_all_positions(board[:], 1, 1, 17, '')
+generate_all_positions(board[:], 1, 2, 17, '')
 
+#10 - complete (goal is to reach 16)
 board = columns * rows * [0]
-generate_all_positions(board[:], 1, 2, 16, '')
+generate_complete_positions(board[:], 1, 1, 12, '')
+generate_complete_positions(board[:], 1, 2, 12, '')
 
+
+#23 [13'337'181], 22 [4'013'953] - complete (goal is to reach 24)
 board = columns * rows * [0]
-generate_hard_positions(board[:], 1, 24, '')
+count = generate_hard_positions(board[:], 1, 23, '')
 
-for depth in range(24):
-    print(depth)    
-    generate_hard_positions(board[:], 1, depth, '')
-#print_board(board)
+#23 [4'013'953] - complete (goal is to reach 24)
+board = columns * rows * [0]
+count = generate_reasonable_positions(board[:], 1, 23, '')
 
-#%% Analyze lost _games and load positions up to 24
+#%% Analyze games and load positions up to 24
 plays_folder = 'D:/Github/KaggleSandbox/connect_x/analyzed_games/'
 #play_filename = '5982532.json' #slow game
 
@@ -257,17 +308,29 @@ all_positions = []
 
 for play_filename in [f for f in listdir(plays_folder) if isfile(join(plays_folder, f))]:
     with open(plays_folder + play_filename, 'r') as pfile:
-        game_log = json.load(pfile)        
-        board_list = [s[0]['observation']['board'] for s in game_log['steps']]
-        position_list = ['']
-        for b1, b2 in zip(board_list[:-1], board_list[1:]):
-            move = [a2 == a1 for a1, a2 in zip(b1, b2)].index(False) % columns
-            position_list.append( position_list[len(position_list)-1] + str(move + 1))
-        all_positions = all_positions + [p for p in position_list if len(p)<=24]
+        try:
+            game_log = json.load(pfile)        
+            board_list = [s[0]['observation']['board'] for s in game_log['steps']]
+            position_list = ['']
+            for b1, b2 in zip(board_list[:-1], board_list[1:]):
+                move = [a2 == a1 for a1, a2 in zip(b1, b2)].index(False) % columns
+                position_list.append( position_list[len(position_list)-1] + str(move + 1))
+            all_positions = all_positions + [p for p in position_list if len(p)<=24]
+        except:
+            print(play_filename)
     
             
 [load_position_scores(pos) for pos in set(all_positions) ]
 
+#%% Analyze replays
+with open(DATA_FOLDER + '/debut_table/all_replays.json','r') as f:     
+    all_replays = set(json.load(f))
+    
+mid_game_positions = [pos for pos in all_replays if len(pos) == 20]
+ 
+[load_position_scores(pos) for pos in mid_game_positions]
+    
+        
 
 #%% Easy Positions
 import sys
@@ -277,11 +340,13 @@ my_agent = utils.get_last_callable(submission)
 for depth in range(42):
     print('%d \t %d' % (depth, len({pos:data for pos, data in best_scores_cache.items() if position_depth(pos, data[1][data[0]] ) == depth })) )
     
-d5_pos = {pos:data for pos, data in best_scores_cache.items() if position_depth(pos, data[1][data[0]] ) <= 1 } 
+d5_pos = {pos:data for pos, data in best_scores_cache.items() if position_depth(pos, data[1][data[0]] ) <= 6 } 
 
-{pos for pos, data in d5_pos if pos not in easy_positions}
+len(d5_pos)
 
-my_test_pos = '746446637'
+len([pos for pos, data in d5_pos.items() if pos not in easy_positions])
+
+my_test_pos = '44'
 board, mark = play_moves(my_test_pos)
 obs = structify({'board':board, 'mark':mark, 'remainingOverageTime':60})
 config['my_max_time'] = 10
@@ -289,7 +354,7 @@ config['debug'] = True
 my_agent(obs, config)
 obs['debug']
 best_scores_cache[my_test_pos]
-
+ 
 #easy_positions = {}
 for pos in d5_pos:    
     if pos not in easy_positions:
@@ -305,8 +370,6 @@ for pos in d5_pos:
         if is_solved:
             easy_positions[pos] = (res, position_depth(pos, data[1][data[0]]), obs['debug']['elapsed'])
     
-len(easy_positions)
-    
 #LOAD easy positions
 with open(DATA_FOLDER + '/debut_table/easy_positions.json','r') as f:     
     easy_positions = json.load(f)
@@ -314,7 +377,14 @@ with open(DATA_FOLDER + '/debut_table/easy_positions.json','r') as f:
 #SAVE easy positions
 with open(DATA_FOLDER + '/debut_table/easy_positions.json','w') as f: 
     json.dump(easy_positions, f)    
+    
+for depth in range(7):
+    print('%d %d' % (depth, len([pos for pos, data in easy_positions.items() if pos in best_scores_cache and position_depth(pos, best_scores_cache[pos][1][best_scores_cache[pos][0]] ) == depth]))) 
+#[pos for pos, data in easy_positions.items() if pos not in best_scores_cache]
+{pos:data for pos, data in easy_positions.items() if pos in best_scores_cache and position_depth(pos, best_scores_cache[pos][1][best_scores_cache[pos][0]] ) == 5}  
      
+#gc.get_count()
+#gc.collect()
   
 #%% Save debut table
 debut_hashtable = {}
@@ -322,7 +392,7 @@ invalid_moves = []
 win_moves = []
 
 for move, col in best_scores_cache.items():        
-    if move != '':
+    if move not in easy_positions:
         try:            
             board1, mark1 = play_moves(move                )            
             board2, mark2 = play_moves(move + str(col[0]+1))            
@@ -330,8 +400,6 @@ for move, col in best_scores_cache.items():
             if is_win_position(board1) or is_win_position(board2):
                 win_moves.append(move)
             else:                  
-                #move_to_board(move, config)
-                #my_board_key = hash(tuple(board1))
                 my_board_key = gen_board_key(board1)
                 debut_hashtable[my_board_key] = col[0]                
         except Exception as ex:
@@ -339,12 +407,17 @@ for move, col in best_scores_cache.items():
             print(ex)
             invalid_moves.append(move)
 
-len(debut_hashtable) #61378
+len(debut_hashtable) #896294
 len(best_scores_cache)
 len(win_moves)
 
+#SAVE, 417084
 with open(DATA_FOLDER + '/debut_table/debut_hashtable.txt','w') as f: 
     f.write(str(debut_hashtable))
+    
+#LOAD    
+with open(DATA_FOLDER + '/debut_table/debut_hashtable.txt','r') as f: 
+    debut_hashtable = eval(f.read())
     
 for move in win_moves:
     print('%s %s' % (move, best_scores_cache[move]))
@@ -352,9 +425,9 @@ for move in win_moves:
 
 for move in invalid_moves:
     del best_scores_cache[move]
+   
     
-    
-    # Compress:
+# Compress:
 debut_hashtable_compressed = zlib.compress(pickle.dumps(debut_hashtable))
 with open(DATA_FOLDER + '/debut_table/debut_hashtable_compressed.txt','w') as f: 
     f.write(str(debut_hashtable_compressed))
@@ -362,6 +435,61 @@ with open(DATA_FOLDER + '/debut_table/debut_hashtable_compressed.txt','w') as f:
 # Get it back:
 debut_hashtable_uncompressed = pickle.loads(zlib.decompress(debut_hashtable_compressed))
 
+#%% Add debut table to the file
+
+agent_file = DATA_FOLDER + '/submission/submission_NEG_v10f.py'
+with open(agent_file, 'r') as f:
+    my_code = f.read()
+ 
+with open(DATA_FOLDER + '/debut_table/debut_hashtable.txt','r') as f: 
+    debut_hashtable = eval(f.read())
+    
+with open(agent_file + 'debut.v3.py', 'w') as f:
+    f.write('debut_table = %s' % str(debut_hashtable) )
+    f.write('\n')
+    f.write(my_code)
+    
+#%% Save Debut positions
+debut_positions = {}
+invalid_moves = []
+win_moves = []
+
+for move, data in best_scores_cache.items():        
+    if move not in easy_positions:
+        try:            
+            board, mark = play_moves(move)            
+            if is_win_position(board):
+                win_moves.append(move)
+            else:                  
+                my_board_key = gen_board_key(board)
+                best_score = max([c for c in data[1] if c < 100])    
+                debut_positions[my_board_key] =  [i for i, score in enumerate(data[1]) if score == best_score]                
+        except Exception as ex:
+            print(move)
+            print(ex)
+            invalid_moves.append(move)
+
+len(debut_positions) #608137
+len(best_scores_cache)
+len(win_moves)
+
+with open(DATA_FOLDER + '/debut_table/debut_positions.txt','w') as f: 
+    f.write(str(debut_positions))
+   
+#%% Add debut positions to the file
+
+agent_file = DATA_FOLDER + '/submission/submission_NEG_v11a.py'
+with open(agent_file, 'r') as f:
+    my_code = f.read()
+ 
+with open(DATA_FOLDER + '/debut_table/debut_positions.txt','r') as f: 
+    debut_hashtable = eval(f.read())
+    
+with open(agent_file + 'debut.pos.py', 'w') as f:
+    f.write('debut_table = %s' % str(debut_hashtable) )
+    f.write('\n')
+    f.write(my_code)
+       
 
     
 #%% Sanity check
@@ -376,3 +504,4 @@ for k, d in best_scores_cache.items():
 for pos in pos_fix:        
     d = best_scores_cache[pos]
     best_scores_cache[pos] = [d[1].index(max([c for c in d[1] if c < 100])), d[1]]   
+

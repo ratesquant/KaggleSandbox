@@ -565,13 +565,16 @@ df_train <- xgb.DMatrix(data.matrix(df[t_index_v1, all_vars_final, with = F]), l
                             prediction = TRUE,
                             callbacks = list(cb.cv.predict(save_models = TRUE)))
   
+ggplot(xgb_cv$evaluation_log, aes(iter, train_rmse_mean )) + geom_line() + geom_line(aes(iter, test_rmse_mean), color = 'red')
+xgb_cv$evaluation_log[xgb_cv$best_ntreelimit] #best iteration
   
 gc(reset = TRUE)
 elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
   
+importance_matrix <- xgb.importance(model = xgb_cv$models[[1]])
+xgb.ggplot.importance(importance_matrix)
 
 #generate predictions from CV models
-
 dm_all = data.matrix(df[,all_vars_final, with = F])
 
 pred.xgb_cvi = ldply(seq(length(xgb_cv$models)), function(i)
@@ -585,11 +588,13 @@ setDT(pred.xgb_cvi)
 pred.xgb_cv_summary = pred.xgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(cv)]
 pred.xgb_cv         = pred.xgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(id)]
 
+#rmsqr(df$target[train_index],pred.xgb_cv[train_index, avg])
+
 plot_profiles(pred.xgb_cv[train_index, avg], df[train_index])
 
 ```
 
-## XGBOOST CV Grid
+## XGBOOST CV Random Search
    best_it iter train_rmse_mean train_rmse_std test_rmse_mean test_rmse_std depth         eta subsample      gamma min_child_weight rank
  1:    1660 1660       0.6793878   0.0010836401      0.6978520   0.004532087     3 0.009789329 0.6961109 0.18925951               94    1
  2:    6773 6773       0.6815468   0.0022540114      0.6978868   0.009443791     2 0.005077990 0.7742833 0.44392146               78    2
@@ -608,7 +613,7 @@ sample: 300k
 all_vars_final = c(all_vars, 'target_knn', 'target_lm', 'target_cubist', 'target_mars') 
 
 t_index_v = which(train_index)
-t_index_v1 = sample(t_index_v, 0.1*length(t_index_v))
+t_index_v1 = sample(t_index_v, 0.01*length(t_index_v))
 
 actual = df[[obj_var]][t_index_v1]
   
@@ -621,21 +626,6 @@ my_params = data.table(depth = sample(seq(from = 2, to = 6),n_runs, TRUE),
                        subsample = runif(n_runs, 0.6, 0.9), 
                        gamma = runif(n_runs, 0, 0.5), 
                        min_child_weight =sample(seq(from = 10, to = 200),n_runs, TRUE))
-
-#my_params = data.table(depth = 5, 
-#                       eta = 0.005, 
-#                       subsample = 0.7, 
-#                       gamma = 0.3, 
-#                       min_child_weight = 100)
-
-my_params = data.table(depth = 6, 
-              eta =  0.005, 
-              nthread = 4,
-              subsample = 0.7,
-              min_child_weight = 100,
-              gamma = 0.3)
-
-pred.xgb_cv_list = list()
 
 
 param_res = ldply(seq(nrow(my_params)), function(run_index){
@@ -662,14 +652,11 @@ param_res = ldply(seq(nrow(my_params)), function(run_index){
   xgb_cv <- xgboost::xgb.cv(params = my_param,
                             data = df_train, 
                             verbose = 1,
-                            nrounds = 50000, 
-                            nfold = 10,  
+                            nrounds = 10000, 
+                            nfold = 5,  
                             nthread = 4, 
                             print_every_n = 1000,
-                            early_stopping_rounds = 500, 
-                            prediction = TRUE,
-                            callbacks = list(cb.cv.predict(save_models = TRUE)))
-  #pred.xgb_cv_list[[run_index]] = xgb_cv$pred
+                            early_stopping_rounds = 100)
   
   
   gc(reset = TRUE)
@@ -687,24 +674,10 @@ ggplot(param_res, aes(gamma, test_rmse_mean)) + geom_point()
 ggplot(param_res, aes(depth, test_rmse_mean)) + geom_point()
 ggplot(param_res, aes(min_child_weight, test_rmse_mean)) + geom_point()
 ggplot(param_res, aes(subsample      , test_rmse_mean)) + geom_point()
-ggplot(param_res, aes(min_child_weight, test_rmse_mean - train_rmse_mean )) + geom_point()
+ggplot(param_res, aes(min_child_weight, test_rmse_mean - train_rmse_mean )) + geom_point() + geom_smooth()
 
 ggplot(param_res, aes(min_child_weight      , test_rmse_mean)) + geom_point() + 
   geom_errorbar(aes(min_child_weight, ymin = test_rmse_mean - 2*test_rmse_std, ymax = test_rmse_mean + 2*test_rmse_std  ))
-
-#generate predictions from CV models
-
-dm_all = data.matrix(df[,all_vars_final, with = F])
-
-pred.xgb_cvi = ldply(seq(length(xgb_cv$models)), function(i)
-{
-  pred   <- predict(xgb_cv$models[[i]], dm_all)
-  
-  data.frame(cv = i, id = df$id, pred)
-})
-setDT(pred.xgb_cvi)
-
-pred.xgb_cv = pred.xgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(cv)]
 
 ```
 
@@ -713,7 +686,8 @@ best 0.69722
 ```{r analyze_fit, echo=FALSE}
  #model_pred = rep(mean(df$target[train_index]), nrow(df))
 
- model_pred = pred.xgb
+ model_pred = pred.xgb_cv$avg
+ #model_pred = pred.xgb
 
 t_index_v = which(train_index)
 
@@ -734,8 +708,10 @@ v3 0.70391
 v4 0.70214
 v5 0.70117
 v6 0.73495 - average
+v6 0.70107 - xgboost CV
 ```{r submit, echo=FALSE}
-  model_pred = pred.xgb
+  #model_pred = pred.xgb
+  model_pred = pred.xgb_cv$avg
  
   submit <- cbind(df[test_index, .(id)], target = model_pred[test_index])  
   file = file.path(working_folder, "Playground/Jan2021/submit_v6.csv")

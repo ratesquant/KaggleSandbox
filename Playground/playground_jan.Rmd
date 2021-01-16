@@ -1,0 +1,748 @@
+---
+title: 'Kaggle Playground: Jan 2020'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library(stringi)
+library(gbm)
+library(ggplot2)
+library(gridExtra)
+#library(dplyr)
+library(plyr)
+library(corrplot)
+library(xgboost)
+#library(zip)
+library(caret)
+library(glmnet)
+library(doParallel)
+
+working_folder = 'D:/Github/KaggleSandbox'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
+source(file.path(working_folder, 'Utils/common.R'))
+
+rmsqr <-function(actual, model) {
+  sqrt( mean( (actual - model) * (actual - model) ) )
+}
+
+```
+
+## Load Data
+
+```{r load_data}
+
+load_existing = TRUE
+
+if (load_existing) {
+  df <- fread(file.path(working_folder,'Playground/Jan2021/data/df.csv'), check.names = TRUE)
+  
+} else{
+  train <- fread(file.path(working_folder,'Playground/Jan2021/data/train.csv'), check.names = TRUE)
+  test  <- fread(file.path(working_folder,'Playground/Jan2021/data/test.csv'),  check.names = TRUE) # 1459   80
+  test[, target:=NA]
+  df = rbind(train, test)
+  
+  gc(reset=TRUE)
+}
+  
+
+test_index = is.na(df$target)
+train_index = !test_index
+
+obj_var = 'target'
+all_vars = names(df) %!in_set% c('id', obj_var) #14 variables
+all_vars = all_vars[grep('cont', all_vars)]
+
+plot_profiles <-function(model, data)
+{
+    plots = llply(all_vars, function(var_name) {
+    p = plot_profile(model,  data[['target']], data[[var_name]], bucket_count = 50, error_band = 'norm') +
+      ggtitle(var_name) +  theme(title =element_text(size=6))
+    return( ggplotGrob(p) )
+  })
+  marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+}
+```
+
+
+##Plot Data
+
+```{r plot_data}
+
+cor_mat = cor(df[train_index,c('target', all_vars), with = FALSE], use = 'pairwise.complete.obs')
+corrplot(cor_mat, method="number", number.cex = 1.0, number.digits = 2,  order="hclust")
+corrplot(cor_mat, method="circle", number.cex = 0.5, order="hclust")
+
+p_index = sample(which(train_index), 10000 )
+ggplot(df[p_index], aes(cont3, cont13, color = target)) + geom_point()
+
+ggplot(df[p_index], aes(id, target)) + geom_point()
+
+ggplot(df[p_index], aes(cont13, target)) + geom_point() + geom_smooth()
+ggplot(df[p_index], aes(cont3, target)) + geom_point() + geom_smooth()
+ggplot(df[p_index], aes(cont4, target)) + geom_point() + geom_smooth()
+ggplot(df[p_index], aes(cont2, target)) + geom_point() + geom_smooth()
+
+ggplot(df[p_index], aes(target, cont12)) + geom_point() + geom_smooth()
+ggplot(df[p_index], aes(target, cont6)) + geom_point() + geom_smooth()
+ggplot(df[p_index], aes(cont12, cont6)) + geom_point() + geom_smooth()
+
+ggplot(df[p_index], aes(cont3/cont4, target)) + geom_point() + geom_smooth()
+ggplot(df[p_index], aes((cont13 - cont3)/(cont4), target)) + geom_point() + geom_smooth()
+
+#check sample
+s_index = sample.int(nrow(df), nrow(df))
+plots = llply(all_vars, function(var_name){
+  ggplot(df[s_index ], aes_string(var_name, group = 'is.na(target)', color = 'is.na(target)')) + geom_density(adjust = 0.1) + ggtitle(var_name)
+  })
+marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+
+var_pairs = data.frame(t(combn(all_vars, 2, simplify = TRUE)))
+plots = llply(seq(nrow(var_pairs)), function(i) { 
+   ggplot(df[p_index ], aes_string(var_pairs$X1[i], var_pairs$X2[i])) + geom_point(alpha = 0.5)
+  })
+marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
+#ggplot(melt(data.table(cor_mat)), aes(Var1, Var2, fill = value)) + geom_tile()
+
+#check correlations
+
+combn(as.character(all_vars), 2, simplify = TRUE)
+all_comb = data.table(expand.grid(all_vars, all_vars, all_vars, all_vars))
+#all_comb = all_comb[Var1 != Var2]
+
+res = ldply(seq(nrow(all_comb)), function(i) { 
+  a1 = df[[all_comb$Var1[i]]][p_index]
+  a2 = df[[all_comb$Var2[i]]][p_index]
+  a3 = df[[all_comb$Var3[i]]][p_index]
+  a4 = df[[all_comb$Var4[i]]][p_index]
+  
+  data.frame(i, rho = cor(df[p_index, target], (a1 - a2)/ (2 + a3 - a4) , use = 'pairwise.complete.obs' ))  } )
+setDT(res)
+res[order(abs(rho))]
+res[!is.na(rho)]
+all_comb[38415    ]
+
+ggplot(df[p_index], aes((cont13 / cont14 ), target)) + geom_point() + geom_smooth()
+
+```
+
+##Linear Regression
+
+```{r linear_model}
+
+formula.lm = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars %!in_set% c('cont14', 'cont5') ), collapse = ' + ')))
+
+model.lm = lm(formula.lm, df[train_index])
+
+summary(model.lm)
+
+pred.lm   <- predict(model.lm, df[,all_vars, with = F] )
+
+rmsqr(df$target[train_index], pred.lm[train_index] )
+
+plots = llply(as.character(importance_matrix$Feature), function(var_name) {
+  p = plot_profile(pred.lm[train_index], actual,df[[var_name]][train_index], bucket_count = 50, error_band = 'norm') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( ggplotGrob(p) )
+})
+marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+
+#df[, target_lm := pred.lm]
+#fwrite(df, file.path(working_folder,'Playground/Jan2021/data/df.csv'))
+
+```
+
+##MARS
+
+```{r mars}
+library(earth)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 0.1*length(t_index_v))
+
+
+formula.mars = formula(stri_join( obj_var, ' ~ ', stri_join(all_vars, collapse = ' + ')))
+
+model.mars <- earth(formula.mars, 
+                    data = df[t_index_v1, c(obj_var, all_vars), with = FALSE], 
+                    degree = 2, nfold = 5, trace = 2, nk = 100, pmethod="cv")
+
+
+summary(model.mars)
+plot(evimp(model.mars))
+
+pred.mars <- predict(model.mars, df[,all_vars, with = F] )
+
+rmsqr(df$target[train_index], pred.mars[train_index] )
+#rmsqr(df$target[train_index], df$target_mars[train_index] )
+
+plot_profiles(pred.mars[train_index], df[train_index,])
+
+#df[, target_mars := pred.mars]
+#fwrite(df, file.path(working_folder,'Playground/Jan2021/data/df.csv'))
+
+```
+
+##LASSO
+
+```{r lasso_model}
+get_all_coefs<-function(glmnet_obj){
+  res = ldply(glmnet_obj$lambda, function(lambda){
+    temp = data.matrix(coef(glmnet_obj,s=lambda))
+    data.frame(var_name = rownames(temp), coef = as.numeric(temp), lambda)
+  })
+  return(res)
+}
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+cvob3=cv.glmnet(data.matrix(df[t_index_v1, all_vars, with = FALSE]),df[t_index_v1, target], family="gaussian",nfolds = 10)
+plot(cvob3)
+
+ggplot(data.frame(mse = cvob3$cvm, mse_hi = cvob3$cvup, mse_lo = cvob3$cvlo, lambda = log(cvob3$lambda)) , aes(lambda, mse) ) + geom_line() + 
+  geom_ribbon(aes(ymin = mse_lo, ymax = mse_hi), fill = 'blue', alpha = 0.3) +
+  geom_vline(xintercept =  log(cvob3$lambda.min)) + 
+  geom_vline(xintercept =  log(cvob3$lambda.1se)) + 
+  ggtitle(sprintf('Best MSE %.5f', cvob3$cvm[which(cvob3$lambda == cvob3$lambda.min)]))
+
+coef_path = data.table(get_all_coefs(cvob3))
+
+imp_vars = as.character(unique( subset(coef_path,lambda > cvob3$lambda.min & abs(coef) >0)$var_name)) %!in_set% c('(Intercept)')
+ggplot(coef_path[var_name %in% imp_vars, ], aes(log(lambda), coef, group = var_name, color = var_name )) + geom_line() + 
+  geom_vline(xintercept = log(cvob3$lambda.min), linetype = 'dashed') + 
+  geom_vline(xintercept =  log(cvob3$lambda.1se), linetype = 'dashed')
+
+model.lasso = glmnet(data.matrix(df[t_index_v1, all_vars, with = FALSE]),df[t_index_v1, target], family="gaussian")
+pred.lasso =  predict(model.lasso,newx=data.matrix(df[, all_vars, with = FALSE]),s=c(cvob3$lambda.min,cvob3$lambda.1se))
+
+#rmsqr(df$target[train_index], pred.lm[train_index] )
+rmsqr(df$target[train_index], pred.lasso[train_index, 1] )
+rmsqr(df$target[train_index], pred.lasso[train_index, 2] )
+
+
+plots = llply(all_vars, function(var_name) {
+  p = plot_profile(pred.lasso[train_index, 2], df[[obj_var]][train_index],df[[var_name]][train_index], bucket_count = 50, error_band = 'norm') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( ggplotGrob(p) )
+})
+marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+```
+
+
+##KNN
+  k    RMSE       Rsquared    MAE      
+   50  0.7158029  0.04826668  0.5985180
+  100  0.7137708  0.05201312  0.5980722
+  150  0.7134368  0.05294547  0.5984268
+  200  0.7134916  0.05300506  0.5988538
+
+  
+100% 0.7134368, 58 min
+```{r KNN, eval = FALSE}
+cl <- makePSOCKcluster(4)
+registerDoParallel(cl)
+
+set.seed(132140937)
+
+formula.knn    = formula(stri_join( 'target', ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+#control = trainControl(method = "repeatedcv", number = 10,repeats = 3)
+control = trainControl("cv", number = 10)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.00*length(t_index_v))
+
+dfs = df[t_index_v1, all.vars(formula.knn), with = FALSE]
+system.time(model.knn <- train(formula.knn, data = dfs, 
+                               method = "knn", #kknn
+                               trControl = control,
+                               tuneGrid = data.frame(k = seq(50, 200,50)), #use instead of tuneLength
+                               tuneLength = 10,
+                               metric = "RMSE"))
+model.knn
+plot(model.knn)
+
+pred.knn = predict(model.knn, df, type = 'raw')
+
+stopCluster(cl)
+
+plot_profiles(pred.knn[train_index], df[train_index,])
+  
+#df[, target_knn := pred.knn]
+#fwrite(df, file.path(working_folder,'Playground/Jan2021/data/df.csv'))
+
+```
+
+##K-KNN
+ 
+```{r KKNN, eval = FALSE}
+cl <- makePSOCKcluster(4)
+registerDoParallel(cl)
+
+set.seed(132140937)
+
+formula.knn    = formula(stri_join( 'target', ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+#control = trainControl(method = "repeatedcv", number = 10,repeats = 3)
+control = trainControl("cv", number = 10)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 0.02*length(t_index_v))
+
+#kmax = 100, distance = 0.2 and kernel = optimal
+dfs = df[t_index_v1, all.vars(formula.knn), with = FALSE]
+system.time(model.kknn <- train(formula.knn, data = dfs, 
+                               method = "kknn", #kknn
+                               trControl = control,
+                               tuneGrid = expand.grid(kmax = c(140, 160, 180), distance = c(0.2, 0.4), kernel =c('optimal')), #use instead of tuneLength
+                               tuneLength = 10,
+                               metric = "RMSE"))
+model.kknn
+plot(model.kknn) 
+
+pred.kknn = predict(model.kknn, df, type = 'raw')
+
+stopCluster(cl)
+ 
+plots = llply(all_vars, function(var_name) {
+  p = plot_profile(pred.knn[train_index],  df[['target']][train_index], df[[var_name]][train_index], bucket_count = 50, error_band = 'norm') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( ggplotGrob(p) )
+})
+marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+
+df[, target_kknn := pred.kknn]
+fwrite(df, file.path(working_folder,'Playground/Jan2021/data/df.csv'))
+
+
+```
+
+##Cubist
+10%: 100 sec, 0.7164452
+100% 87 min, 0.7120969
+ https://topepo.github.io/caret/available-models.html
+```{r cubist, eval = FALSE}
+
+set.seed(132140937)
+
+formula.cubist    = formula(stri_join( 'target', ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+#control = trainControl(method = "repeatedcv", number = 10,repeats = 3)
+control = trainControl("cv", number = 10)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+dfs = df[t_index_v1, all.vars(formula.cubist), with = FALSE]
+system.time(model.cubist <- train(formula.cubist, data = dfs, 
+                               method = "cubist", 
+                               trControl = control,
+                               tuneGrid = expand.grid(neighbors = c(0, 5), committees = c(1, 2)), #use instead of tuneLength
+                               tuneLength = 10,
+                               metric = "RMSE"))
+model.cubist
+plot(model.cubist) 
+
+pred.cubist = predict(model.cubist, df, type = 'raw')
+
+#df[, target_cubist := pred.cubist]
+#fwrite(df, file.path(working_folder,'Playground/Jan2021/data/df.csv'))
+
+plot_profiles(df[train_index, target_cubist], df[train_index])
+
+```
+
+##SVM
+
+```{r svm, eval = FALSE}
+
+set.seed(132140937)
+
+formula.svm    = formula(stri_join( 'target', ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+#control = trainControl(method = "repeatedcv", number = 10,repeats = 3)
+control = trainControl("cv", number = 10)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 0.01*length(t_index_v))
+
+dfs = df[t_index_v1, all.vars(formula.svm), with = FALSE]
+system.time(model.svm <- train(formula.svm, data = dfs, 
+                               method = "svmLinear", #svmRadial #svmLinear
+                               trControl = control,
+                               tuneGrid = expand.grid(C = c(2, 3)), #use instead of tuneLength
+                              #tuneLength = 10,
+                               metric = "RMSE"))
+model.svm
+plot(model.svm) 
+
+pred.svm = predict(model.svm, dfs, type = 'raw')
+
+#df[, target_cubist := pred.cubist]
+#fwrite(df, file.path(working_folder,'Playground/Jan2021/data/df.csv'))
+
+
+```
+
+
+## GBM Model
+
+```{r GBM, echo=FALSE}
+    obj_var = 'target'
+    actual = df[[obj_var]][train_index]
+    
+    all_vars = names(df) %!in_set% c('id', 'target')
+    
+    set.seed(1012356)
+    
+    formula.gbm = formula(stri_join( obj_var, ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+    
+    model_vars = all.vars(formula.gbm) %!in_set% c(obj_var)
+    
+    var.monotone = rep(0, length(model_vars))
+    mon_inc_vars = c()
+    mon_dec_vars = c()
+    var.monotone[model_vars %in% mon_inc_vars]  =  1
+    var.monotone[model_vars %in% mon_dec_vars]  = -1
+    
+    dfs = df[train_index , all.vars(formula.gbm), with = F]
+    
+    max_it = 2000
+    
+    model.gbm  = gbm(formula.gbm,
+                     distribution = "gaussian",
+                     n.trees = max_it,
+                     cv.folds = 0,
+                     shrinkage = 0.01,
+                     interaction.depth=7,
+                     train.fraction = 0.6,
+                     bag.fraction = 0.9,# 0.5 for small samples, 0.9 for large
+                     n.cores = 4,
+                     var.monotone = var.monotone,
+                     data = dfs,
+                     keep.data = FALSE,
+                     verbose = TRUE)
+    
+    plot_gbmiterations(model.gbm)
+    
+    best_it.gbm = gbm.perf(model.gbm, plot.it = FALSE)
+    
+    pred.gbm  = predict(model.gbm, n.trees = best_it.gbm, newdata = df, type = 'response')
+    
+    #summary(lm('actual ~ model', data = data.frame(model = pred.gbm[train_index], actual) ))
+    
+    #influence
+    var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
+    var_inf = subset(var_inf, rel.inf>0.1)
+    plot_gbminfluence(var_inf)
+    
+    #partial dependency  
+    plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var[1:2]), output_type = 'response')
+    marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+  
+    # Profiles -----------
+  plots = llply(as.character(var_inf$var), function(var_name) {
+    p = plot_profile( pred.gbm[train_index], actual, df[[var_name]][train_index], bucket_count = 20, error_band = 'normal') +
+      ggtitle(var_name) +  theme(title =element_text(size=6))
+    return( p )
+  })
+  marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+```
+
+## XGBOOST Model
+   Feature       Gain      Cover  Frequency Name
+ 1:  cont13 0.09260466 0.06309393 0.07662510 <NA>
+ 2:   cont3 0.09200352 0.08824423 0.07397857 <NA>
+ 3:   cont4 0.08679696 0.09047365 0.07405774 <NA>
+ 4:   cont2 0.08381222 0.07628653 0.07240083 <NA>
+ 5:  cont10 0.07530511 0.07435344 0.07360534 <NA>
+ 6:  cont12 0.07173258 0.07419152 0.07279667 <NA>
+ 7:   cont1 0.06818289 0.05899158 0.06852150 <NA>
+ 8:   cont7 0.06589384 0.06830084 0.06689852 <NA>
+ 9:  cont11 0.06576068 0.07449917 0.06960161 <NA>
+10:   cont6 0.06466459 0.07140995 0.07084570 <NA>
+11:   cont9 0.06159809 0.05612103 0.07240083 <NA>
+12:  cont14 0.05954930 0.07782737 0.06453474 <NA>
+13:   cont8 0.05654818 0.05247335 0.07147906 <NA>
+14:   cont5 0.05554738 0.07373340 0.07225380 <NA>
+```{r xgboost}
+
+  all_vars_final = c(all_vars, 'target_knn', 'target_lm', 'target_cubist') 
+
+   obj_var = 'target'
+   actual = df[[obj_var]][train_index]
+   
+    set.seed(1012356)
+    
+    t_index_v = which(train_index)
+    t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+    t_index_v2 = setdiff(t_index_v, t_index_v1)
+    dtrain <- xgb.DMatrix(data.matrix(df[t_index_v1, all_vars_final, with = F]), label = df[[obj_var]][t_index_v1] )
+    deval  <- xgb.DMatrix(data.matrix(df[t_index_v2, all_vars_final, with = F]), label = df[[obj_var]][t_index_v2] )
+    deval = dtrain
+
+my_params <- list(max_depth = 6, 
+              eta =  0.005, 
+              nthread = 4,
+              subsample = 0.7,
+              min_child_weight = 100,
+              gamma = 0.3,
+              objective = "reg:squarederror",
+              eval_metric = "rmse",
+              base_score = mean(actual))
+
+model.xgb <- xgb.train(my_params, data = dtrain, 
+                       watchlist = list(train = dtrain, eval = deval),
+                       nrounds = 10000, 
+                       verbose = 1, 
+                       print_every_n = 500,
+                       early_stopping_rounds = 500)
+
+#depth = 1, 0.712992	eval-rmse:0.713970
+#0.654337, 0.698833
+ggplot(model.xgb$evaluation_log, aes(iter, train_rmse)) + geom_line() + geom_line(aes(iter, eval_rmse), color = 'red')
+
+pred.xgb   <- predict(model.xgb, data.matrix(df[,all_vars_final, with = F]) )
+pred.xgb_t = pred.xgb[train_index]
+
+rmsqr(df$target[train_index],pred.xgb_t )
+
+importance_matrix <- xgb.importance(model = model.xgb)
+print(importance_matrix)
+xgb.ggplot.importance(importance_matrix)
+#xgb.ggplot.importance(importance_matrix = importance_matrix)
+#xgb.ggplot.deepness(model.xgb)
+
+plot_profiles(pred.xgb_t[train_index], df[train_index])
+
+
+```
+
+## XGBOOST CV
+10% 4 min per run
+sample: 300k
+```{r xgboost_CV}
+
+all_vars_final = c(all_vars, 'target_knn', 'target_lm', 'target_cubist', 'target_mars') 
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+actual = df[[obj_var]][t_index_v1]
+  
+df_train <- xgb.DMatrix(data.matrix(df[t_index_v1, all_vars_final, with = F]), label = df[[obj_var]][t_index_v1] )
+
+  start_time <- Sys.time()
+  
+  #set.seed(132140937)
+  
+  my_param <- list(
+    max_depth = 7, 
+    eta = 0.01, 
+    subsample =0.8,
+    min_child_weight = 100,
+    gamma = 0.3,
+    objective = "reg:squarederror",
+    eval_metric = "rmse",
+    base_score = mean(actual))
+  
+  
+  xgb_cv <- xgboost::xgb.cv(params = my_param,
+                            data = df_train, 
+                            verbose = 1,
+                            nrounds = 10000, 
+                            nfold = 10,  
+                            nthread = 4, 
+                            print_every_n = 500,
+                            early_stopping_rounds = 500, 
+                            prediction = TRUE,
+                            callbacks = list(cb.cv.predict(save_models = TRUE)))
+  
+  
+gc(reset = TRUE)
+elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
+  
+
+#generate predictions from CV models
+
+dm_all = data.matrix(df[,all_vars_final, with = F])
+
+pred.xgb_cvi = ldply(seq(length(xgb_cv$models)), function(i)
+{
+  pred   <- predict(xgb_cv$models[[i]], dm_all)
+  
+  data.frame(cv = i, id = df$id, pred)
+})
+setDT(pred.xgb_cvi)
+
+pred.xgb_cv_summary = pred.xgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(cv)]
+pred.xgb_cv         = pred.xgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(id)]
+
+plot_profiles(pred.xgb_cv[train_index, avg], df[train_index])
+
+```
+
+## XGBOOST CV Grid
+   best_it iter train_rmse_mean train_rmse_std test_rmse_mean test_rmse_std depth         eta subsample      gamma min_child_weight rank
+ 1:    1660 1660       0.6793878   0.0010836401      0.6978520   0.004532087     3 0.009789329 0.6961109 0.18925951               94    1
+ 2:    6773 6773       0.6815468   0.0022540114      0.6978868   0.009443791     2 0.005077990 0.7742833 0.44392146               78    2
+ 3:    5695 5695       0.6801608   0.0013465176      0.6984990   0.003999549     3 0.002701419 0.8944203 0.41261836               71    3
+ 4:    1036 1036       0.6759232   0.0010887517      0.6985492   0.005247937     3 0.018499964 0.9674344 0.12821682               38    4
+ 5:    1627 1627       0.6839674   0.0009923426      0.6987030   0.003940505     2 0.017465269 0.8116990 0.33107426               73    5
+ 6:    3795 3795       0.6926660   0.0013398280      0.6987090   0.005420640     1 0.011374012 0.6219330 0.41697899               53    6
+ 7:    6999 6999       0.6777564   0.0007601173      0.6987398   0.002406532     4 0.001112119 0.9342054 0.05378944               16    7
+ 8:    2771 2771       0.6790500   0.0008159836      0.6990384   0.002694993     3 0.006007010 0.9162055 0.39101177               75    8
+ 9:     883  883       0.6783488   0.0007604663      0.6994740   0.002980618     4 0.010508981 0.9992870 0.35298241               62    9
+10:    7000 7000       0.6979178   0.0015480906      0.6999660   0.005761006     1 0.001251649 0.6925176 0.49055756               36   10
+10% 4 min per run
+sample: 300k
+```{r xgboost_CV_grid}
+
+all_vars_final = c(all_vars, 'target_knn', 'target_lm', 'target_cubist', 'target_mars') 
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 0.1*length(t_index_v))
+
+actual = df[[obj_var]][t_index_v1]
+  
+df_train <- xgb.DMatrix(data.matrix(df[t_index_v1, all_vars_final, with = F]), label = df[[obj_var]][t_index_v1] )
+
+### Hyper Tuning: Random Search -------------
+n_runs = 20
+my_params = data.table(depth = sample(seq(from = 2, to = 6),n_runs, TRUE), 
+                       eta = runif(n_runs, 0.001, 0.02), 
+                       subsample = runif(n_runs, 0.6, 0.9), 
+                       gamma = runif(n_runs, 0, 0.5), 
+                       min_child_weight =sample(seq(from = 10, to = 200),n_runs, TRUE))
+
+#my_params = data.table(depth = 5, 
+#                       eta = 0.005, 
+#                       subsample = 0.7, 
+#                       gamma = 0.3, 
+#                       min_child_weight = 100)
+
+my_params = data.table(depth = 6, 
+              eta =  0.005, 
+              nthread = 4,
+              subsample = 0.7,
+              min_child_weight = 100,
+              gamma = 0.3)
+
+pred.xgb_cv_list = list()
+
+
+param_res = ldply(seq(nrow(my_params)), function(run_index){
+  #run_index = 1
+  print(run_index)
+  print(my_params[run_index,])
+  
+  start_time <- Sys.time()
+  
+  #set.seed(132140937)
+  
+  my_param <- list(
+    max_depth = my_params$depth[run_index], 
+    eta = my_params$eta[run_index], 
+    subsample = my_params$subsample[run_index],
+    min_child_weight = my_params$min_child_weight[run_index],
+    gamma = my_params$gamma[run_index],
+    objective = "reg:squarederror",
+    eval_metric = "rmse",
+    base_score = mean(actual))
+  
+  #cb.cv.predict(save_models = TRUE)
+  
+  xgb_cv <- xgboost::xgb.cv(params = my_param,
+                            data = df_train, 
+                            verbose = 1,
+                            nrounds = 50000, 
+                            nfold = 10,  
+                            nthread = 4, 
+                            print_every_n = 1000,
+                            early_stopping_rounds = 500, 
+                            prediction = TRUE,
+                            callbacks = list(cb.cv.predict(save_models = TRUE)))
+  #pred.xgb_cv_list[[run_index]] = xgb_cv$pred
+  
+  
+  gc(reset = TRUE)
+  elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
+  return ( data.frame(best_it = xgb_cv$best_iteration, xgb_cv$evaluation_log[xgb_cv$best_iteration,], elapsed = elapsed ) ) 
+})
+
+param_res = cbind(param_res, my_params)
+setDT(param_res)
+setorder(param_res, test_rmse_mean)
+param_res[, rank:=seq(nrow(param_res))]
+
+ggplot(param_res, aes(eta, test_rmse_mean)) + geom_point() 
+ggplot(param_res, aes(gamma, test_rmse_mean)) + geom_point()
+ggplot(param_res, aes(depth, test_rmse_mean)) + geom_point()
+ggplot(param_res, aes(min_child_weight, test_rmse_mean)) + geom_point()
+ggplot(param_res, aes(subsample      , test_rmse_mean)) + geom_point()
+ggplot(param_res, aes(min_child_weight, test_rmse_mean - train_rmse_mean )) + geom_point()
+
+ggplot(param_res, aes(min_child_weight      , test_rmse_mean)) + geom_point() + 
+  geom_errorbar(aes(min_child_weight, ymin = test_rmse_mean - 2*test_rmse_std, ymax = test_rmse_mean + 2*test_rmse_std  ))
+
+#generate predictions from CV models
+
+dm_all = data.matrix(df[,all_vars_final, with = F])
+
+pred.xgb_cvi = ldply(seq(length(xgb_cv$models)), function(i)
+{
+  pred   <- predict(xgb_cv$models[[i]], dm_all)
+  
+  data.frame(cv = i, id = df$id, pred)
+})
+setDT(pred.xgb_cvi)
+
+pred.xgb_cv = pred.xgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(cv)]
+
+```
+
+## Analyze
+best 0.69722
+```{r analyze_fit, echo=FALSE}
+ #model_pred = rep(mean(df$target[train_index]), nrow(df))
+
+ model_pred = pred.xgb
+
+t_index_v = which(train_index)
+
+boot_res = ldply(seq(1000), function(i) {
+    
+  t_index_v1 = sample(t_index_v, 0.2*length(t_index_v), replace = TRUE)
+
+  c(i, error = rmsqr(df[[obj_var]][t_index_v1], model_pred[t_index_v1]) )
+ })
+
+ggplot(boot_res, aes(error)) + geom_histogram()
+
+```
+
+## Submit
+v1 0.70226 (xgboost baseline, in-0.654337, out-0.698833)
+v3 0.70391
+v4 0.70214
+v5 0.70117
+v6 0.73495 - average
+```{r submit, echo=FALSE}
+  model_pred = pred.xgb
+ 
+  submit <- cbind(df[test_index, .(id)], target = model_pred[test_index])  
+  file = file.path(working_folder, "Playground/Jan2021/submit_v6.csv")
+  fwrite(submit, file = file, row.names = FALSE)
+  zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
+  print(file)
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

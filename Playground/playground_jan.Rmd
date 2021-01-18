@@ -164,7 +164,7 @@ marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 library(earth)
 
 t_index_v = which(train_index)
-t_index_v1 = sample(t_index_v, 0.1*length(t_index_v))
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
 
 
 formula.mars = formula(stri_join( obj_var, ' ~ ', stri_join(all_vars, collapse = ' + ')))
@@ -391,6 +391,36 @@ pred.svm = predict(model.svm, dfs, type = 'raw')
 
 ```
 
+##Random Forest
+
+```{r random_forest, eval = FALSE}
+
+set.seed(132140937)
+
+formula.rf    = formula(stri_join( 'target', ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+control = trainControl("cv", number = 5)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 0.01*length(t_index_v))
+
+dfs = df[t_index_v1, all.vars(formula.rf), with = FALSE]
+system.time(model.rf <- train(formula.rf, data = dfs, 
+                               method = "rf", #svmRadial #svmLinear
+                                 trControl = control,
+                               tuneGrid = expand.grid(mtry = seq(10)), #use instead of tuneLength
+                              #tuneLength = 10,
+                               metric = "RMSE"))
+model.rf
+plot(model.rf) 
+
+pred.rf = predict(model.rf, dfs, type = 'raw')
+
+#df[, target_cubist := pred.cubist]
+#fwrite(df, file.path(working_folder,'Playground/Jan2021/data/df.csv'))
+
+
+```
 
 ## GBM Model
 
@@ -544,8 +574,8 @@ df_train <- xgb.DMatrix(data.matrix(df[t_index_v1, all_vars_final, with = F]), l
   #set.seed(132140937)
   
   my_param <- list(
-    max_depth = 7, 
-    eta = 0.01, 
+    max_depth = 3, 
+    eta = 0.005, 
     subsample =0.8,
     min_child_weight = 100,
     gamma = 0.3,
@@ -557,7 +587,7 @@ df_train <- xgb.DMatrix(data.matrix(df[t_index_v1, all_vars_final, with = F]), l
   xgb_cv <- xgboost::xgb.cv(params = my_param,
                             data = df_train, 
                             verbose = 1,
-                            nrounds = 10000, 
+                            nrounds = 20000, 
                             nfold = 10,  
                             nthread = 4, 
                             print_every_n = 500,
@@ -595,40 +625,33 @@ plot_profiles(pred.xgb_cv[train_index, avg], df[train_index])
 ```
 
 ## XGBOOST CV Random Search
-   best_it iter train_rmse_mean train_rmse_std test_rmse_mean test_rmse_std depth         eta subsample      gamma min_child_weight rank
- 1:    1660 1660       0.6793878   0.0010836401      0.6978520   0.004532087     3 0.009789329 0.6961109 0.18925951               94    1
- 2:    6773 6773       0.6815468   0.0022540114      0.6978868   0.009443791     2 0.005077990 0.7742833 0.44392146               78    2
- 3:    5695 5695       0.6801608   0.0013465176      0.6984990   0.003999549     3 0.002701419 0.8944203 0.41261836               71    3
- 4:    1036 1036       0.6759232   0.0010887517      0.6985492   0.005247937     3 0.018499964 0.9674344 0.12821682               38    4
- 5:    1627 1627       0.6839674   0.0009923426      0.6987030   0.003940505     2 0.017465269 0.8116990 0.33107426               73    5
- 6:    3795 3795       0.6926660   0.0013398280      0.6987090   0.005420640     1 0.011374012 0.6219330 0.41697899               53    6
- 7:    6999 6999       0.6777564   0.0007601173      0.6987398   0.002406532     4 0.001112119 0.9342054 0.05378944               16    7
- 8:    2771 2771       0.6790500   0.0008159836      0.6990384   0.002694993     3 0.006007010 0.9162055 0.39101177               75    8
- 9:     883  883       0.6783488   0.0007604663      0.6994740   0.002980618     4 0.010508981 0.9992870 0.35298241               62    9
-10:    7000 7000       0.6979178   0.0015480906      0.6999660   0.005761006     1 0.001251649 0.6925176 0.49055756               36   10
+1% 1min per 1000k   
 10% 4 min per run
 sample: 300k
+
+   best_it iter train_rmse_mean train_rmse_std test_rmse_mean test_rmse_std    elapsed depth         eta subsample       gamma min_child_weight rank
+   530  530       0.6795998    0.002117346      0.7093916   0.007685272 0.14456665     3 0.005098257 0.6111198 0.091134147               35    1
 ```{r xgboost_CV_grid}
 
 all_vars_final = c(all_vars, 'target_knn', 'target_lm', 'target_cubist', 'target_mars') 
 
 t_index_v = which(train_index)
-t_index_v1 = sample(t_index_v, 0.01*length(t_index_v))
+t_index_v1 = sample(t_index_v, 0.1*length(t_index_v))
 
 actual = df[[obj_var]][t_index_v1]
   
 df_train <- xgb.DMatrix(data.matrix(df[t_index_v1, all_vars_final, with = F]), label = df[[obj_var]][t_index_v1] )
 
 ### Hyper Tuning: Random Search -------------
-n_runs = 20
-my_params = data.table(depth = sample(seq(from = 2, to = 6),n_runs, TRUE), 
-                       eta = runif(n_runs, 0.001, 0.02), 
+n_runs = 10
+my_params = data.table(depth = sample(seq(from = 2, to = 4),n_runs, TRUE), 
+                       eta = runif(n_runs, 0.001, 0.01), 
                        subsample = runif(n_runs, 0.6, 0.9), 
                        gamma = runif(n_runs, 0, 0.5), 
                        min_child_weight =sample(seq(from = 10, to = 200),n_runs, TRUE))
 
 
-param_res = ldply(seq(nrow(my_params)), function(run_index){
+param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   #run_index = 1
   print(run_index)
   print(my_params[run_index,])
@@ -647,8 +670,6 @@ param_res = ldply(seq(nrow(my_params)), function(run_index){
     eval_metric = "rmse",
     base_score = mean(actual))
   
-  #cb.cv.predict(save_models = TRUE)
-  
   xgb_cv <- xgboost::xgb.cv(params = my_param,
                             data = df_train, 
                             verbose = 1,
@@ -664,16 +685,20 @@ param_res = ldply(seq(nrow(my_params)), function(run_index){
   return ( data.frame(best_it = xgb_cv$best_iteration, xgb_cv$evaluation_log[xgb_cv$best_iteration,], elapsed = elapsed ) ) 
 })
 
-param_res = cbind(param_res, my_params)
+param_res = cbind(param_res_raw, my_params)
 setDT(param_res)
 setorder(param_res, test_rmse_mean)
 param_res[, rank:=seq(nrow(param_res))]
 
-ggplot(param_res, aes(eta, test_rmse_mean)) + geom_point() 
-ggplot(param_res, aes(gamma, test_rmse_mean)) + geom_point()
-ggplot(param_res, aes(depth, test_rmse_mean)) + geom_point()
-ggplot(param_res, aes(min_child_weight, test_rmse_mean)) + geom_point()
-ggplot(param_res, aes(subsample      , test_rmse_mean)) + geom_point()
+sum(param_res$elapsed)
+
+ggplot(param_res, aes(iter, elapsed)) + geom_point() + geom_smooth()
+ggplot(param_res, aes(eta, test_rmse_mean)) + geom_point() + geom_smooth()
+ggplot(param_res, aes(gamma, test_rmse_mean)) + geom_point()+ geom_smooth()
+ggplot(param_res, aes(factor(depth), test_rmse_mean)) + geom_boxplot()
+ggplot(param_res, aes(min_child_weight, test_rmse_mean)) + geom_point()+ geom_smooth()
+ggplot(param_res, aes(subsample      , test_rmse_mean)) + geom_point()+ geom_smooth()
+
 ggplot(param_res, aes(min_child_weight, test_rmse_mean - train_rmse_mean )) + geom_point() + geom_smooth()
 
 ggplot(param_res, aes(min_child_weight      , test_rmse_mean)) + geom_point() + 
@@ -709,12 +734,15 @@ v4 0.70214
 v5 0.70117
 v6 0.73495 - average
 v6 0.70107 - xgboost CV
+0.70241
 ```{r submit, echo=FALSE}
   #model_pred = pred.xgb
+ df[pred.xgb_cv, target_xgb :=  i.avg, on=.(id)]
+
   model_pred = pred.xgb_cv$avg
  
   submit <- cbind(df[test_index, .(id)], target = model_pred[test_index])  
-  file = file.path(working_folder, "Playground/Jan2021/submit_v6.csv")
+  file = file.path(working_folder, "Playground/Jan2021/submit_v6.xgb.csv")
   fwrite(submit, file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)

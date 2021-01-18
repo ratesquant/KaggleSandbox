@@ -147,7 +147,7 @@ with open(DATA_FOLDER + '/debut_table/move_scores.cache.json','w') as f:
     
 #position map
 position_map = {gen_board_key(play_moves(move)[0]):data  for move, data in best_scores_cache.items()}
-len(position_map)  #436491  
+len(position_map)  #1203058  
 
 #position: 44444147535555 (best move is column 3)
 #15197
@@ -287,8 +287,8 @@ generate_all_positions(board[:], 1, 2, 17, '')
 
 #10 - complete (goal is to reach 16)
 board = columns * rows * [0]
-generate_complete_positions(board[:], 1, 1, 12, '')
-generate_complete_positions(board[:], 1, 2, 12, '')
+generate_complete_positions(board[:], 1, 1, 11, '')
+generate_complete_positions(board[:], 1, 2, 11, '')
 
 
 #23 [13'337'181], 22 [4'013'953] - complete (goal is to reach 24)
@@ -333,6 +333,7 @@ mid_game_positions = [pos for pos in all_replays if len(pos) == 20]
         
 
 #%% Easy Positions
+import gc
 import sys
 submission = utils.read_file(DATA_FOLDER + "/submission/submission_NEG_v10c_debug.py")
 my_agent = utils.get_last_callable(submission)
@@ -361,7 +362,7 @@ for pos in d5_pos:
         data = best_scores_cache[pos]
         board, mark = play_moves(pos)
         obs = structify({'board':board, 'mark':mark, 'remainingOverageTime':60})
-        config['my_max_time'] = 5
+        config['my_max_time'] = 8
         config['debug'] = True
         res = my_agent(obs, config)
         best_columns = set([i for i, c in enumerate(data[1]) if c == data[1][data[0]]])
@@ -369,6 +370,10 @@ for pos in d5_pos:
         print('%s [%s] %s' % (pos, is_solved, obs['debug']))    
         if is_solved:
             easy_positions[pos] = (res, position_depth(pos, data[1][data[0]]), obs['debug']['elapsed'])
+        if len(easy_positions) % 100 == 0:
+            gc.collect()
+
+len(easy_positions) #220013
     
 #LOAD easy positions
 with open(DATA_FOLDER + '/debut_table/easy_positions.json','r') as f:     
@@ -407,11 +412,11 @@ for move, col in best_scores_cache.items():
             print(ex)
             invalid_moves.append(move)
 
-len(debut_hashtable) #896294
+len(debut_hashtable) #1006236
 len(best_scores_cache)
 len(win_moves)
 
-#SAVE, 417084
+#SAVE, 1006236
 with open(DATA_FOLDER + '/debut_table/debut_hashtable.txt','w') as f: 
     f.write(str(debut_hashtable))
     
@@ -444,7 +449,7 @@ with open(agent_file, 'r') as f:
 with open(DATA_FOLDER + '/debut_table/debut_hashtable.txt','r') as f: 
     debut_hashtable = eval(f.read())
     
-with open(agent_file + 'debut.v3.py', 'w') as f:
+with open(agent_file + 'debut.v4.py', 'w') as f:
     f.write('debut_table = %s' % str(debut_hashtable) )
     f.write('\n')
     f.write(my_code)
@@ -469,12 +474,19 @@ for move, data in best_scores_cache.items():
             print(ex)
             invalid_moves.append(move)
 
-len(debut_positions) #608137
+len(debut_positions) #1006070
 len(best_scores_cache)
 len(win_moves)
 
 with open(DATA_FOLDER + '/debut_table/debut_positions.txt','w') as f: 
     f.write(str(debut_positions))
+
+#compression    
+#debut_positions_compressed = zlib.compress(pickle.dumps(debut_positions))
+debut_positions_compressed = zlib.compress(str(debut_positions).encode())
+with open(DATA_FOLDER + '/debut_table/debut_positions_compressed.txt','w') as f: 
+    f.write(str(debut_positions_compressed))    
+debut_positions_ex = eval(zlib.decompress(debut_positions_compressed))
    
 #%% Add debut positions to the file
 
@@ -483,10 +495,10 @@ with open(agent_file, 'r') as f:
     my_code = f.read()
  
 with open(DATA_FOLDER + '/debut_table/debut_positions.txt','r') as f: 
-    debut_hashtable = eval(f.read())
+    debut_positions = eval(f.read())
     
-with open(agent_file + 'debut.pos.py', 'w') as f:
-    f.write('debut_table = %s' % str(debut_hashtable) )
+with open(agent_file + '.v4.debut.pos.py', 'w') as f:
+    f.write('debut_table = %s' % str(debut_positions) )
     f.write('\n')
     f.write(my_code)
        

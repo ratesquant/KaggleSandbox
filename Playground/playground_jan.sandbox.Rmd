@@ -19,6 +19,7 @@ library(corrplot)
 library(xgboost)
 #library(zip)
 library(caret)
+library(lightgbm)
 
 working_folder = 'D:/Github/KaggleSandbox'
 #working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
@@ -68,6 +69,111 @@ plot_profiles <-function(model, data)
   marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 }
 
+
+plot_profile_2d <- function(mod, act, profile_x, profile_y, bucket_count = 10, min_obs = 30, error_band = c('normal', 'binom')[1], average_value = c('mean', 'median')[1], conf_level = 0.95){
+  get_breaks <- function(profile, bucket_count)
+  {
+     factor_plot = FALSE
+     breaks = NULL
+     
+    if( !is.numeric(profile)){
+      buckets = factor(profile)
+      factor_plot = TRUE
+      }else{
+        breaks = quantile(profile, seq(0, bucket_count, 1)/bucket_count, na.rm = TRUE)
+        breaks = unique(breaks)
+        if(length(breaks)<=2) {
+          breaks = unique(seq(min(profile, na.rm = T), max(profile_y, na.rm = T), length.out = bucket_count))
+        }
+        if(length(breaks)<=2) {
+          factor_plot = TRUE
+          buckets = factor(profile)
+          }else{
+            buckets = cut(profile, breaks, ordered_result = TRUE, include.lowest = TRUE)
+            }
+      }
+    return (list('factor_plot' = factor_plot, 'buckets' = buckets, 'breaks' = breaks) )
+  }
+    
+  plot_result = ggplot() + geom_blank()
+  
+  bx = get_breaks(profile_x, bucket_count)
+  by = get_breaks(profile_y, bucket_count)
+  
+  factor_x = bx$factor_plot
+  factor_y = by$factor_plot
+  
+  bucket_x =  bx$buckets
+  bucket_y =  by$buckets
+  
+  agg_buckets<-function(x) {
+    ns = length(x$actual)
+    
+    if(average_value == 'mean'){
+      model_mean = mean(x$model)
+      actual_mean = mean(x$actual)
+    }else{
+      model_mean = median(x$model)
+      actual_mean = median(x$actual)
+    }
+    actual_std = sd(x$actual)
+    
+    if(error_band == 'binom' & ns >= 2 )
+    {
+      conf_int = binom.test(sum(x$actual!=0), ns, p = model_mean, alternative = 'two.sided', conf.level = conf_level)$conf.int
+    }else if(error_band == 'normal' & ns >= 2 & actual_std > 1e-12 ){
+      conf_int = t.test(x$actual, y = NULL, alternative = c('two.sided'), conf.level = conf_level)$conf.int
+    }else{
+      conf_int = c(actual_mean, actual_mean)
+    }
+    
+    conf_break = model_mean < conf_int[1] | model_mean > conf_int[2]
+    
+    res = list(actual = actual_mean,
+      model = model_mean,
+      actual_std = actual_std,
+      count = ns,
+      profile_x = ifelse(factor_x, NA, mean(x$profile_x, na.rm = TRUE)),
+      profile_y = ifelse(factor_y, NA, mean(x$profile_y, na.rm = TRUE)),
+      actual_min = conf_int[1],
+      actual_max = conf_int[2],
+      confidence_break = conf_break,
+      actual_min_break = ifelse(conf_break, conf_int[1], actual_mean),
+      actual_max_break = ifelse(conf_break, conf_int[2], actual_mean))
+    return ( res )
+  }
+  
+  df_temp = data.table(actual = act, model = mod, bucket_x, bucket_y, profile_x, profile_y)
+  res = df_temp[complete.cases(act, mod),agg_buckets(.SD), by = .(bucket_x, bucket_y)]
+  
+  res = res[count >= min_obs,]
+  
+  y_min = min(res$actual, res$model)
+  y_max = max(res$actual, res$model)
+  
+  if(nrow(res) > 0 )
+  {
+    if(factor_x & factor_y ){
+      
+      plot_result = ggplot(res, aes(bucket_x, bucket_y, fill = actual - model)) + 
+        geom_tile() + scale_fill_gradient2() + 
+        geom_point(aes(bucket_x, bucket_y, size = count), alpha = 0.5) + 
+        theme(legend.position = 'none', axis.title.x = element_blank(), axis.title.y = element_blank())
+      
+    }else{
+      df_temp_plot = df_temp[sample.int(nrow(df_temp), min(1000, nrow(df_temp))) ]
+      
+       plot_result = ggplot(res, aes(profile_x, profile_y, color = actual - model, size = count)) + 
+        scale_color_gradient2() + 
+        geom_point(shape = 15) + 
+        geom_point(data = df_temp_plot, aes(profile_x, profile_y), inherit.aes = FALSE, alpha = 0.2) + 
+        theme(legend.position = 'none', axis.title.x = element_blank(), axis.title.y = element_blank())
+    }
+    
+    
+  }
+  return (plot_result)
+}
 ```
 
 
@@ -141,7 +247,41 @@ plot_profiles(pred.krls[train_index], df[train_index,])
 ```
 
 ##SVM
+1% - 143.26 
+2% - 750.58
+```{r SVM, eval = FALSE}
 
+set.seed(132140937)
+
+formula.svm    = formula(stri_join( 'target', ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+control = trainControl("cv", number = 5)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 0.1*length(t_index_v))
+
+dfs = df[t_index_v1, all.vars(formula.svm), with = FALSE]
+system.time(model.svm <- train(formula.svm, data = dfs, 
+                               method = "svmRadial",
+                               trControl = control,
+                               tuneGrid = expand.grid(C = c(2, 3, 4), sigma = seq(2, 4)),
+                               print.level = 0,
+                               #tuneLength = 10,
+                               metric = "RMSE"))
+model.svm
+plot(model.svm)
+
+pred.svm = predict(model.svm, df)
+
+rmsqr(df$target[train_index], pred.svm[train_index] )
+
+plot_profiles(pred.svm[train_index], df[train_index,])
+
+```
+
+##SVM
+1% - 143.26 
+2% - 750.58
 ```{r SVM, eval = FALSE}
 
 set.seed(132140937)
@@ -157,9 +297,9 @@ dfs = df[t_index_v1, all.vars(formula.svm), with = FALSE]
 system.time(model.svm <- train(formula.svm, data = dfs, 
                                method = "svmRadial",
                                trControl = control,
-                               tuneGrid = expand.grid(C = c(2, 3, 4), sigma = seq(1, 6)),
+                               tuneGrid = expand.grid(C = c(2, 3, 4), sigma = seq(2, 4)),
                                print.level = 0,
-                               tuneLength = 10,
+                               #tuneLength = 10,
                                metric = "RMSE"))
 model.svm
 plot(model.svm)
@@ -171,3 +311,172 @@ rmsqr(df$target[train_index], pred.svm[train_index] )
 plot_profiles(pred.svm[train_index], df[train_index,])
 
 ```
+
+##SVM Lib
+```{r SVM_lib, eval = FALSE}
+library(e1071)
+
+set.seed(132140937)
+
+formula.svm    = formula(stri_join( 'target', ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 0.04*length(t_index_v))
+
+dfs = df[t_index_v1, all.vars(formula.svm), with = FALSE]
+
+system.time(model.svm <- svm(formula.svm, data = dfs, cost = 1000, gamma = 0.0001))
+
+model.svm
+plot(model.svm)
+
+pred.svm = predict(model.svm, df)
+
+rmsqr(df$target[train_index], pred.svm[train_index] )
+
+plot_profiles(pred.svm[train_index], df[train_index,])
+
+```
+
+#LightGBM
+```{r light_gbm, eval = FALSE}
+library(lightgbm)
+
+set.seed(132140937)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 0.1*length(t_index_v))
+
+lgb_vars = all_vars
+
+dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
+
+dtrain <- lgb.Dataset(as.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target)
+params <- list(objective = "regression", metric = "rmse")
+model.lgb <- lgb.cv(
+  params = params,
+  data = dtrain,
+  nrounds = 10000,
+  nfold = 5,
+  min_data = 100,
+  num_threads = 4, 
+  learning_rate = 0.01,
+  boost_from_average = TRUE,
+  bagging_fraction = 0.8,
+  eval_freq = 100,
+  early_stopping_rounds = 100
+)
+
+#best.iter = model.lgb$best_iter #
+#model.lgb$best_score #0.6983437
+
+cv_error = as.numeric(model.lgb$record_evals$valid$rmse$eval)
+ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line()
+
+dm_all = data.matrix(df[,all_vars, with = F])
+pred.lgb_cvi = ldply(seq(length(model.lgb$boosters)), function(i){ data.frame(cv = i, id = df$id, pred=  predict(model.lgb$boosters[[i]], dm_all)$booster) } )
+setDT(pred.lgb_cvi)
+
+pred.lgb_cv_summary = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(cv)]
+pred.lgb_cv         = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(id)]
+
+#var_imp   = lgb.importance(model.lgb$boosters[[1]][[1]], percentage = TRUE)
+#lgb.plot.importance(var_imp, top_n = 20, measure = "Gain")
+
+rmsqr(df$target[train_index], pred.lgb_cv$avg[train_index] )
+
+plot_profiles(pred.lgb_cv$avg[train_index], df[train_index,])
+
+df[pred.lgb_cv, target_lgb :=  i.avg, on=.(id)]
+
+ggplot(df[t_index_v1, ], aes(cont1, cont2, z = target - target_lgb)) + stat_summary_hex(fun = function(x) sqrt(mean(x^2)), bins = 20) + scale_fill_gradient2()
+ggplot(df[t_index_v1, ], aes(cont1, cont2, z = target - target_lgb)) + stat_summary_hex(fun = function(x) mean(x), bins = 10) + scale_fill_gradient2()
+
+```
+
+
+#LightGBM Tuning
+```{r light_gbm_tune, eval = FALSE}
+
+library(lightgbm)
+
+set.seed(132140937)
+
+lgb_vars = all_vars
+lgb_vars = all_vars
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 0.1*length(t_index_v))
+
+dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
+
+params <- list(objective = "regression", metric = "rmse")
+
+n_runs = 10
+my_params = data.table(
+                       learning_rate = runif(n_runs, 0.001, 0.01), 
+                       bagging_fraction = runif(n_runs, 0.6, 0.9), 
+                       min_data = sample(seq(from = 20, to = 200),n_runs, TRUE),
+                       min_data_in_bin = sample(c(3, 5, 7),n_runs, TRUE))
+
+
+param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
+  #run_index = 1
+  print(run_index)
+  print(my_params[run_index,])
+  
+  start_time <- Sys.time()
+  
+  #we need to do this every time because data is prefiltered
+  dtrain <- lgb.Dataset(as.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target)
+  
+  #set.seed(132140937)
+  model.lgb <- lgb.cv(
+  params = params,
+  data = dtrain,
+  nfold = 5,
+  num_threads = 4, 
+  force_col_wise=TRUE,
+  verbose = -1,
+  
+  learning_rate = my_params$learning_rate[run_index],
+  bagging_fraction = my_params$bagging_fraction[run_index],
+  min_data = my_params$min_data[run_index],
+  
+  nrounds = 10000,
+  boost_from_average = TRUE,
+  eval_freq = 100,
+  early_stopping_rounds = 100)
+  
+  print(model.lgb$best_score)
+  
+  gc(reset = TRUE)
+  elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
+  return ( data.frame(best_it = model.lgb$best_iter, best_score = model.lgb$best_score, elapsed = elapsed ) ) 
+})
+
+param_res = cbind(param_res_raw, my_params)
+setDT(param_res)
+setorder(param_res, best_score)
+param_res[, rank:=seq(nrow(param_res))]
+
+ggplot(param_res, aes(best_it, elapsed)) + geom_point() + geom_smooth()
+ggplot(param_res, aes(learning_rate, best_score)) + geom_point() + geom_smooth()
+ggplot(param_res, aes(bagging_fraction, best_score)) + geom_point() + geom_smooth()
+ggplot(param_res, aes(min_data, best_score)) + geom_point() + geom_smooth()
+
+```
+
+BEST: 0.69655
+0.69940
+```{r submit, echo=FALSE}
+  #model_pred = pred.xgb
+  df[pred.lgb_cv, target_lgb :=  i.avg, on=.(id)]
+ 
+  file = file.path(working_folder, "Playground/Jan2021/submit_v6.csv")
+  fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
+  zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
+  print(file)
+
+```
+

@@ -1,0 +1,580 @@
+---
+title: 'Kaggle Playground: Jan 2020'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library(stringi)
+library(gbm)
+library(ggplot2)
+library(gridExtra)
+#library(dplyr)
+library(plyr)
+library(corrplot)
+library(xgboost)
+#library(zip)
+library(caret)
+library(lightgbm)
+library(rBayesianOptimization)
+
+
+working_folder = 'D:/Github/KaggleSandbox'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
+source(file.path(working_folder, 'Utils/common.R'))
+
+rmsqr <-function(actual, model) {
+  sqrt( mean( (actual - model) * (actual - model) ) )
+}
+
+```
+
+## Load Data
+
+```{r load_data}
+
+load_existing = TRUE
+
+if (load_existing) {
+  df <- fread(file.path(working_folder,'Playground/Jan2021/data/df.csv'), check.names = TRUE)
+  
+} else{
+  train <- fread(file.path(working_folder,'Playground/Jan2021/data/train.csv'), check.names = TRUE)
+  test  <- fread(file.path(working_folder,'Playground/Jan2021/data/test.csv'),  check.names = TRUE) # 1459   80
+  test[, target:=NA]
+  df = rbind(train, test)
+  
+  gc(reset=TRUE)
+}
+  
+
+test_index = is.na(df$target)
+train_index = !test_index
+
+obj_var = 'target'
+all_vars = names(df) %!in_set% c('id', obj_var) #14 variables
+all_vars = all_vars[grep('cont', all_vars)]
+
+plot_profiles <-function(model, data)
+{
+    plots = llply(all_vars, function(var_name) {
+    p = plot_profile(model,  data[['target']], data[[var_name]], bucket_count = 50, error_band = 'norm') +
+      ggtitle(var_name) +  theme(title =element_text(size=6))
+    return( ggplotGrob(p) )
+  })
+  marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+}
+
+```
+
+#LightGBM
+   Feature       Gain      Cover  Frequency
+ 1:   cont3 0.09712094 0.07823708 0.07554691
+ 2:  cont13 0.09641961 0.06987851 0.07900549
+ 3:   cont4 0.09375282 0.07814848 0.07679005
+ 4:   cont2 0.08340499 0.05873701 0.07130356
+ 5:  cont10 0.07638084 0.08528233 0.07492187
+ 6:   cont1 0.07207380 0.07131207 0.07324120
+ 7:  cont12 0.06731364 0.06980109 0.07196333
+ 8:   cont7 0.06527812 0.06334649 0.06471283
+ 9:   cont6 0.06516024 0.08227449 0.07157441
+10:  cont11 0.06247990 0.07039130 0.06686575
+11:   cont9 0.05901553 0.07818567 0.07226196
+12:  cont14 0.05864061 0.07135115 0.06496284
+13:   cont5 0.05156798 0.06925634 0.06770609
+14:   cont8 0.05139097 0.05379800 0.06914369
+```{r light_gbm, eval = FALSE}
+
+set.seed(132140937)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+lgb_vars = all_vars
+
+dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
+dfs = dfs[target >= 5] #exclude target < 5.0, try huber instead 
+
+dtrain <- lgb.Dataset(as.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target)
+params <- list(objective = "regression", metric = "rmse")
+#params <- list(objective = "huber")
+model.lgb <- lgb.cv(
+  params = params,
+  data = dtrain,
+  nrounds = 10000,
+  nfold = 5,
+  num_threads = 4, 
+  
+  min_data = 655,
+  learning_rate = 0.0132,
+  num_leaves = 87,
+  bagging_fraction = 0.9912,
+  min_data_in_bin = 11,
+  
+  boost_from_average = TRUE,
+  eval_freq = 200,
+  early_stopping_rounds = 200,
+  force_col_wise=TRUE
+)
+
+#best.iter = model.lgb$best_iter #
+#model.lgb$best_score #0.6983437
+
+cv_error = as.numeric(model.lgb$record_evals$valid$rmse$eval)
+ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line()
+
+dm_all = data.matrix(df[,lgb_vars, with = F])
+pred.lgb_cvi = ldply(seq(length(model.lgb$boosters)), function(i){ data.frame(cv = i, id = df$id, pred=  predict(model.lgb$boosters[[i]], dm_all)$booster) } )
+setDT(pred.lgb_cvi)
+
+pred.lgb_cv_summary = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(cv)]
+pred.lgb_cv         = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(id)]
+
+#var_imp   = lgb.importance(model.lgb$boosters[[1]][[1]], percentage = TRUE)
+#lgb.plot.importance(var_imp, top_n = 20, measure = "Gain")
+
+rmsqr(df$target[train_index], pred.lgb_cv$avg[train_index] )
+
+#%% Plot -----
+plot_profiles(pred.lgb_cv$avg[train_index], df[train_index,])
+
+df[pred.lgb_cv, target_lgb :=  i.avg, on=.(id)]
+
+ggplot(df[t_index_v1, ], aes(cont3, cont13, z = target - target_lgb)) + stat_summary_hex(fun = function(x) sqrt(mean(x^2)), bins = 20) + scale_fill_gradient2()
+ggplot(df[t_index_v1, ], aes(cont3, cont13, z = target - target_lgb)) + stat_summary_2d(fun = function(x) mean(x), bins = 10) + scale_fill_gradient2()
+ggplot(df[t_index_v1, ], aes(cont3, cont13, z = target - target_lgb)) + stat_summary_hex(fun = function(x) mean(x), bins = 10) + scale_fill_gradient2()
+
+#
+p_index = which(train_index)
+p_index = sample(p_index, 5000)
+ggplot(df[p_index, ], aes(target_lgb, target)) + geom_point(alpha = 0.2) + geom_abline(slope = 1)
+ggplot(df[p_index, ], aes(target_lgb, target - target_lgb)) + geom_point(alpha = 0.2)
+
+ggplot(df[abs(target_knn - target)>3.0, ], aes(target_knn, target)) + geom_point() + geom_abline(slope = 1)
+
+ggplot(df[train_index, ], aes(target)) + stat_ecdf()
+ggplot(df[train_index, ], aes(target_knn - target)) + stat_ecdf()
+ggplot(df[train_index, ], aes(sample = target_knn - target)) + stat_qq()
+
+```
+
+#Init mixture
+    prior   size post>0 ratio
+Comp.1 0.499  78677  3e+05 0.262
+Comp.2 0.501 221323  3e+05 0.738
+```{r init_mixture, eval = FALSE}
+library(flexmix)
+
+formula.lm_mix    = formula(stri_join( 'target', ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+model.lm = lm(formula.lm_mix, df[train_index,])
+summary(model.lm)
+pred.lm = predict(model.lm, df)
+df[,target_lm := pred.lm]
+
+
+model.lm_mix = flexmix(formula.lm_mix, df[train_index,], k = 3)
+summary(model.lm_mix)
+parameters(model.lm_mix, component = 2, model = 1)
+
+my_splits = clusters(model.lm_mix)
+pred.lm_mix = predict(model.lm_mix, df)
+#parameters(model.lm_mix)
+
+df[train_index, split := my_splits]
+df[,target_lm_mix1 := pred.lm_mix$Comp.1]
+df[,target_lm_mix2 := pred.lm_mix$Comp.2]
+df[,target_lm_mix3 := pred.lm_mix$Comp.3]
+df[,target_lm_mix := ifelse(split == 1,target_lm_mix1, target_lm_mix2 ) ]
+
+
+p_index = which(train_index)
+p_index = sample(p_index, 10000)
+ggplot(df[p_index, ], aes(target_lm, target - target_lm)) + geom_point(alpha = 0.2) + geom_abline(slope = 1)
+
+ggplot(df[p_index, ], aes(target_lm_mix1, target - target_lm_mix1)) + geom_point(alpha = 0.2) + geom_abline(slope = 1) + facet_wrap(~split)
+ggplot(df[p_index, ], aes(target_lm_mix2, target - target_lm_mix2)) + geom_point(alpha = 0.2) + geom_abline(slope = 1) + facet_wrap(~split)
+
+ggplot(df[p_index, ], aes(target_lm_mix, target - target_lm_mix)) + geom_point(alpha = 0.2) 
+
+
+#fwrite(df, file.path(working_folder,'Playground/Jan2021/data/df.csv'))
+#df[, split := sample(c(1, 2),nrow(df), replace = TRUE)] # init splits, unless it is loaded from file
+
+```
+
+#LightGBM: mixture
+```{r light_gbm_mixture, eval = FALSE}
+
+set.seed(132140937)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+lgb_vars = all_vars
+
+dfs = df[t_index_v1, c('target',lgb_vars, 'split', 'id'), with = FALSE]
+dfs = dfs[target >= 5] #exclude target < 5.0, try huber instead 
+ 
+model.lgb1 = NULL
+model.lgb2 = NULL
+#EM algorithm
+for (it in 1:5){
+
+  params <- list(objective = "regression", metric = "rmse")
+  
+  dtrain1 <- lgb.Dataset(as.matrix(dfs[split == 1, lgb_vars , with = FALSE]), label = dfs[split == 1, target])
+  model.lgb1 <- lgb.cv(
+    params = params,
+    data = dtrain1,
+    nrounds = 10000,
+    nfold = 5,
+    num_threads = 4, 
+    verbose = -1,
+    
+    #min_data = 300,
+    learning_rate = 0.0132,
+    num_leaves = 87,
+    bagging_fraction = 0.9912,
+    min_data_in_bin = 11,
+    
+    boost_from_average = TRUE,
+    eval_freq = 200,
+    early_stopping_rounds = 200,
+    force_col_wise=TRUE
+  )
+  
+  dtrain2 <- lgb.Dataset(as.matrix(dfs[split == 2, lgb_vars , with = FALSE]), label = dfs[split == 2, target])
+  model.lgb2 <- lgb.cv(
+    params = params,
+    data = dtrain2,
+    nrounds = 10000,
+    nfold = 5,
+    num_threads = 4, 
+    verbose = -1,
+    
+    #min_data = 300,
+    learning_rate = 0.0132,
+    num_leaves = 87,
+    bagging_fraction = 0.9912,
+    min_data_in_bin = 11,
+    
+    boost_from_average = TRUE,
+    eval_freq = 200,
+    early_stopping_rounds = 200,
+    force_col_wise=TRUE
+  )
+  
+dm_all = data.matrix(dfs[, lgb_vars , with = FALSE])
+pred.lgb_cvi = ldply(seq(length(model.lgb1$boosters)), function(i){ data.frame(cv = i, id = dfs$id, pred = predict(model.lgb1$boosters[[i]], dm_all)$booster) } )
+setDT(pred.lgb_cvi)
+pred.lgb_cv1       = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(id)]
+
+
+pred.lgb_cvi = ldply(seq(length(model.lgb1$boosters)), function(i){ data.frame(cv = i, id = dfs$id, pred =  predict(model.lgb2$boosters[[i]], dm_all)$booster) } )
+setDT(pred.lgb_cvi)
+pred.lgb_cv2       = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(id)]
+
+dfs[pred.lgb_cv1, target_lgb1 :=  i.avg, on=.(id)]
+dfs[pred.lgb_cv2, target_lgb2 :=  i.avg, on=.(id)]
+
+res1 = dfs[, target_lgb1 - target]
+res2 = dfs[, target_lgb2 - target]
+
+likelihood <-cbind(dnorm(res1, mean = 0, sd = sd(res1)), dnorm(res2, mean = 0, sd = sd(res2)))
+
+next_split = apply(likelihood, 1, which.max)
+
+dfs[, split:=next_split] 
+
+print(table(next_split))
+}
+
+df[dfs, split := i.split, on =.(id)]
+
+#M1
+dm_all = data.matrix(df[,lgb_vars, with = F])
+pred.lgb_cvi = ldply(seq(length(model.lgb1$boosters)), function(i){ data.frame(cv = i, id = df$id, pred=  predict(model.lgb1$boosters[[i]], dm_all)$booster) } )
+setDT(pred.lgb_cvi)
+pred.lgb_cv1         = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(id)]
+
+#M1
+pred.lgb_cvi = ldply(seq(length(model.lgb2$boosters)), function(i){ data.frame(cv = i, id = df$id, pred=  predict(model.lgb2$boosters[[i]], dm_all)$booster) } )
+setDT(pred.lgb_cvi)
+pred.lgb_cv2         = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(id)]
+
+#weighted average prediction
+alpha = dfs[split == 1, .N] /nrow(dfs) 
+
+
+rmsqr(df$target[train_index], pred.lgb_cv1$avg[train_index] )
+rmsqr(df$target[train_index], pred.lgb_cv2$avg[train_index] )
+
+df[pred.lgb_cv1, target_lgb1 :=  i.avg, on=.(id)]
+df[pred.lgb_cv2, target_lgb2 :=  i.avg, on=.(id)]
+df[, target_lgb := alpha* target_lgb1 + (1- alpha) * target_lgb2 ]
+df[, target_lgb_cluster := ifelse(split ==1, target_lgb1, target_lgb2 ) ]
+
+#%% Plot -----
+plot_profiles(df[train_index,target_lgb], df[train_index,])
+
+#ggplot(df[t_index_v1, ], aes(cont3, cont13, z = target - target_lgb)) + stat_summary_hex(fun = function(x) sqrt(mean(x^2)), bins = 20) + scale_fill_gradient2()
+#ggplot(df[t_index_v1, ], aes(cont3, cont13, z = target - target_lgb)) + stat_summary_2d(fun = function(x) mean(x), bins = 10) + scale_fill_gradient2()
+#ggplot(df[t_index_v1, ], aes(cont3, cont13, z = target - target_lgb)) + stat_summary_hex(fun = function(x) mean(x), bins = 10) + scale_fill_gradient2()
+
+#
+p_index = which(train_index)
+p_index = sample(p_index, 10000)
+ggplot(df[p_index, ], aes(target_lgb, target - target_lgb)) + geom_point(alpha = 0.2) + geom_abline(slope = 1) + facet_wrap(~split)
+ggplot(df[p_index, ], aes(target_lgb, target - target_lgb, color = factor(split) )) + geom_point(alpha = 0.2) + geom_abline(slope = 1) 
+ggplot(df[p_index, ], aes(target_lgb_cluster, target - target_lgb_cluster)) + geom_point(alpha = 0.2) + geom_abline(slope = 1) + facet_wrap(~split)
+
+ggplot(df[abs(target_knn - target)>3.0, ], aes(target_knn, target)) + geom_point() + geom_abline(slope = 1)
+
+ggplot(df[train_index, ], aes(target)) + stat_ecdf()
+ggplot(df[train_index, ], aes(target_knn - target)) + stat_ecdf()
+ggplot(df[train_index, ], aes(sample = target_knn - target)) + stat_qq()
+
+```
+
+#LightGBM: Non-CV
+```{r light_gbm_noncv, eval = FALSE}
+library(lightgbm)
+
+set.seed(132140937)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+lgb_vars = all_vars
+
+dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
+
+dtrain <- lgb.Dataset(as.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target)
+params <- list(objective = "regression", metric = "rmse")
+model.lgb <- lgb.train(
+  params = params,
+  data = dtrain,
+  nrounds = 5677,
+  min_data = 150,
+  num_threads = 4, 
+  learning_rate = 0.01,
+  boost_from_average = TRUE,
+  bagging_fraction = 0.7,
+  eval_freq = 100,
+)
+
+#best.iter = model.lgb$best_iter #
+#model.lgb$best_score #0.6983437
+
+#ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line()
+
+pred.lgb = predict(model.lgb, dm_all)
+
+df[,target_lgb :=  pred.lgb]
+
+rmsqr(df$target[train_index], pred.lgb_cv$avg[train_index] )
+
+plot_profiles(pred.lgb_cv$avg[train_index], df[train_index,])
+
+
+ggplot(df[t_index_v1, ], aes(cont1, cont2, z = target - target_lgb)) + stat_summary_hex(fun = function(x) sqrt(mean(x^2)), bins = 20) + scale_fill_gradient2()
+ggplot(df[t_index_v1, ], aes(cont1, cont2, z = target - target_lgb)) + stat_summary_hex(fun = function(x) mean(x), bins = 10) + scale_fill_gradient2()
+
+```
+
+#LightGBM Tuning
+learning_rate = 0.01 (0.009 - best)
+
+earning_rate = 0.01, 
+bagging_fraction = 0.9, 
+min_data = 450, #default 20
+min_data_in_bin = 5, #default: 3
+num_leaves = 31
+                       
+bets cv: 0.6989379 
+```{r light_gbm_tune, eval = FALSE}
+
+library(lightgbm)
+
+set.seed(132140937)
+
+lgb_vars = all_vars
+#lgb_vars = c(all_vars, 'target_knn')
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
+
+params <- list(objective = "regression", metric = "rmse")
+
+n_runs = 20
+my_params = data.table(
+                       learning_rate = runif(n_runs, 0.001, 0.01), 
+                       bagging_fraction = runif(n_runs, 0.6, 0.9), 
+                       min_data = sample(seq(from = 20, to = 200),n_runs, TRUE),
+                       min_data_in_bin = sample(c(3, 5, 7),n_runs, TRUE))
+
+my_params = data.table(
+                       learning_rate = 0.01, 
+                       bagging_fraction = 0.9, 
+                       min_data = 450, #default 20
+                       min_data_in_bin = 5, #default: 3
+                       num_leaves = 31)  #default: 31
+
+dtrain <- lgb.Dataset(as.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target)
+  
+param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
+  #run_index = 1
+  print(run_index)
+  print(my_params[run_index,])
+  
+  start_time <- Sys.time()
+  
+  #set.seed(132140937)
+  model.lgb <- lgb.cv(
+  params = params,
+  data = dtrain,
+  nfold = 5,
+  num_threads = 4, 
+  force_col_wise=TRUE,
+  verbose = -1,
+  
+  learning_rate = my_params$learning_rate[run_index],
+  bagging_fraction = my_params$bagging_fraction[run_index],
+  min_data = my_params$min_data[run_index],
+  
+  nrounds = 10000,
+  boost_from_average = TRUE,
+  eval_freq = 100,
+  early_stopping_rounds = 100,
+  feature_pre_filter=FALSE)
+  
+  print(model.lgb$best_score)
+  
+  gc(reset = TRUE)
+  elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
+  return ( data.frame(best_it = model.lgb$best_iter, best_score = model.lgb$best_score, elapsed = elapsed ) ) 
+})
+
+param_res = cbind(param_res_raw, my_params)
+setDT(param_res)
+setorder(param_res, best_score)
+param_res[, rank:=seq(nrow(param_res))]
+
+ggplot(param_res, aes(best_it, elapsed)) + geom_point()
+ggplot(param_res, aes(learning_rate, best_score)) + geom_point() + geom_smooth()
+ggplot(param_res, aes(bagging_fraction, best_score)) + geom_point() + geom_smooth()
+ggplot(param_res, aes(min_data, best_score)) + geom_point() + geom_smooth()
+ggplot(param_res, aes(min_data_in_bin, best_score)) + geom_point()
+ggplot(param_res, aes(num_leaves, best_score)) + geom_point()
+
+
+```
+
+#LightGBM Bayes Tuning
+learning_rate = 0.0099	bagging_fraction = 0.8562	min_data = 93.0000	Value = 0.7839 
+
+Round = 25	learning_rate = 0.0162	bagging_fraction = 0.9582	min_data = 439.0000	num_leaves = 53.0000	min_data_in_bin = 9.0000	Value = -0.6972 
+Round = 8	  learning_rate = 0.0114	bagging_fraction = 0.9467	min_data = 584.0000	num_leaves = 71.0000	min_data_in_bin = 11.0000	Value = -0.6972 
+Round = 9	  learning_rate = 0.0160	bagging_fraction = 0.9928	min_data = 661.0000	num_leaves = 78.0000	min_data_in_bin = 10.0000	Value = -0.6971
+Round = 11	learning_rate = 0.0132	bagging_fraction = 0.9912	min_data = 655.0000	num_leaves = 87.0000	min_data_in_bin = 11.0000	Value = -0.6966 
+```{r light_gbm_bayes_tune, eval = FALSE}
+
+set.seed(132140937)
+
+lgb_vars = all_vars
+#lgb_vars = all_vars
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
+dfs = dfs[target >= 5] #exclude target < 5.0
+
+
+params <- list(objective = "regression", metric = "rmse")
+
+lgb_cv_bayes <- function(learning_rate, bagging_fraction, min_data, num_leaves, min_data_in_bin) {
+    #set.seed(132140937) # to remove random noise from the parameters
+
+    dtrain <- lgb.Dataset(as.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target)
+    
+    model.lgb <- lgb.cv(
+    params = params,
+    data = dtrain,
+    nfold = 5,
+    num_threads = 4, 
+    force_col_wise=TRUE,
+    verbose = -1,
+    
+    learning_rate = learning_rate,
+    bagging_fraction = bagging_fraction,
+    min_data =min_data,
+    num_leaves = num_leaves,
+    min_data_in_bin = min_data_in_bin,
+    
+    nrounds = 10000,
+    boost_from_average = TRUE,
+    eval_freq = 100,
+    early_stopping_rounds = 100)
+   
+  gc(reset = TRUE)
+  
+  list(Score = -model.lgb$best_score, Pred =  model.lgb$best_iter)
+}
+
+OPT_Res <- BayesianOptimization(lgb_cv_bayes,
+                                bounds = list(
+                                learning_rate = c(0.01, 0.02),
+                                bagging_fraction = c(0.9, 1.0), #default: 1.0
+                                min_data = c(500L, 800L), #default: 20
+                                num_leaves =c(60L, 90L), #default: 31
+                                min_data_in_bin =c(9L, 11L)), #default: 3
+                                init_grid_dt = NULL, 
+                                init_points = 10, #10
+                                n_iter = 50,     #50
+                                acq = "ucb", kappa = 2.576, eps = 0.0,
+                                verbose = TRUE)
+opt_res = data.table(OPT_Res$History, it_count=as.numeric(OPT_Res$Pred))
+setorder(opt_res, Value)
+
+ggplot(opt_res, aes(learning_rate, -Value)) + geom_point()
+ggplot(opt_res, aes(bagging_fraction, -Value)) + geom_point()
+ggplot(opt_res, aes(min_data, -Value)) + geom_point()
+ggplot(opt_res, aes(num_leaves, -Value)) + geom_point()
+ggplot(opt_res, aes(min_data_in_bin, -Value)) + geom_point()
+ggplot(opt_res, aes(Round, -Value)) + geom_point()
+#ggplot(opt_res, aes(Round, it_count)) + geom_line(alpha = 0.6)
+
+
+
+```
+
+#Submit
+BEST: 0.69655
+v6  0.69940
+v7  0.69849
+v8  0.69850
+v9  0.69847
+v10 0.69842
+v11 0.69876
+```{r submit, echo=FALSE}
+  #model_pred = pred.xgb
+  #df[pred.lgb_cv, target_lgb :=  i.avg, on=.(id)]
+  #fwrite(df, file.path(working_folder,'Playground/Jan2021/data/df.csv'))
+ 
+  file = file.path(working_folder, "Playground/Jan2021/submit_v11.lgb.csv")
+  fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
+  zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
+  print(file)
+
+```
+
+

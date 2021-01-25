@@ -15,7 +15,7 @@ from datetime import datetime
 
 import pickle
 import zlib
-
+import numba #@numba.njit
 
 from kaggle_environments import evaluate, make, utils
 from os import listdir
@@ -113,6 +113,7 @@ def is_win_position(board):
     return False 
 
 
+
 def gen_board_key(board):
     key_map = {0:'00',1:'01',2:'10'}
     #return hex(int(''.join([ key_map[c] for c in board]), 2))
@@ -136,7 +137,7 @@ def position_depth(pos, best_score):
 
 #%% generate
 
-#LOAD
+#LOAD, 1'650'000
 with open(DATA_FOLDER + '/debut_table/move_scores.cache.json','r') as f: 
     #best_scores_cache = eval(f.read())
     best_scores_cache = json.load(f)
@@ -147,7 +148,7 @@ with open(DATA_FOLDER + '/debut_table/move_scores.cache.json','w') as f:
     
 #position map
 position_map = {gen_board_key(play_moves(move)[0]):data  for move, data in best_scores_cache.items()}
-len(position_map)  #1203058  
+len(position_map)  #1'373'205  
 
 #position: 44444147535555 (best move is column 3)
 #15197
@@ -280,12 +281,12 @@ def generate_reasonable_positions(board, mark, depth, position):
 
 #%% Run the load
 
-#15 - complete (goal is to reach 16)
+#17 - complete (goal is to reach 18)
 board = columns * rows * [0]
-generate_all_positions(board[:], 1, 1, 17, '')
-generate_all_positions(board[:], 1, 2, 17, '')
+generate_all_positions(board[:], 1, 1, 18, '')
+generate_all_positions(board[:], 1, 2, 18, '')
 
-#10 - complete (goal is to reach 16)
+#10 - complete (goal is to reach 16) - THIS IS NEEDED ONLY FOR SOLVER WITH OPTIONS
 board = columns * rows * [0]
 generate_complete_positions(board[:], 1, 1, 11, '')
 generate_complete_positions(board[:], 1, 2, 11, '')

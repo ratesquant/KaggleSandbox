@@ -27,7 +27,6 @@ df_usa = df[, .(cases = sum(cases),deaths = sum(deaths), fips = 0, state = 'USA'
 df = rbind(df, df_usa)
 setkeyv(df, c('date', 'state'))
 
-
 df[, new_cases  := cases  - shift(cases), by = .(state)]
 df[, new_deaths := deaths - shift(deaths), by = .(state)]
 
@@ -66,6 +65,13 @@ ggplot(df[state %in% c('New Jersey', 'North Carolina')], aes(date, deaths, group
 ggplot(df[state %in% my_states], aes(date, cases, group = state, color = state)) + geom_line() + facet_wrap(~state, scales = 'free_y')
 ggplot(df[state %in% my_states], aes(date, new_cases)) + geom_line() + geom_smooth(span = 0.3, se = FALSE, color = 'red') + facet_wrap(~state, scales = 'free_y')
 ggplot(df[state %in% my_states], aes(date, new_deaths)) + geom_line() + geom_smooth(span = 0.3, se = FALSE, color = 'red') + facet_wrap(~state, scales = 'free_y')
+
+ggplot(df[state %in% my_states], aes(log10(cases), log10(new_cases_avg_14d+1) )) + geom_line() + facet_wrap(~state, scales = 'free')
+ggplot(df[state %in% my_states], aes(log10(cases), log10(new_cases_avg_14d) )) + geom_line() + facet_wrap(~state)
+ggplot(df[state %in% my_states], aes(log10(cases), log10(new_cases_avg_14d), group = state, color = state )) + geom_line()
+
+ggplot(df[state %in% my_states], aes(log10(deaths), log10(new_deaths+1) )) + geom_line() + facet_wrap(~state, scales = 'free')
+
 ggplot(df[state %in% my_states], aes(date, 1e-3*deaths)) + geom_line() + facet_wrap(~state, scales = 'free_y')
 
 #where cases are increasing

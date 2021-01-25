@@ -16,7 +16,7 @@ library(Rtsne)
 #SNE (nonlinear)
 #MVU (nonlinear)
 #Laplacian Eigenmaps (nonlinear)
-
+#working_folder = 'D:/Github/KaggleSandbox'
 working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 
 df = fread(file.path(working_folder,'Titanic/input/train.csv'))

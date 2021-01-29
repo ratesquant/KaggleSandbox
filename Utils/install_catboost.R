@@ -5,7 +5,7 @@ devtools::install_url('https://github.com/catboost/catboost/releases/download/v0
 
 library(catboost)
 
-features <- data.frame(feature1 = c(1, 2, 3), feature2 = as.factor( c('A', 'B', 'C')) )
+features <- data.frame(feature1 = c(1, 2, 3), feature2 = c('A', 'B', 'C') )
 labels <- c(0, 0, 1)
 train_pool <- catboost.load_pool(data = features, label = labels)
 

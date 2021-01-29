@@ -283,8 +283,8 @@ def generate_reasonable_positions(board, mark, depth, position):
 
 #17 - complete (goal is to reach 18)
 board = columns * rows * [0]
-generate_all_positions(board[:], 1, 1, 18, '')
-generate_all_positions(board[:], 1, 2, 18, '')
+generate_all_positions(board[:], 1, 1, 19, '')
+generate_all_positions(board[:], 1, 2, 19, '')
 
 #10 - complete (goal is to reach 16) - THIS IS NEEDED ONLY FOR SOLVER WITH OPTIONS
 board = columns * rows * [0]
@@ -342,7 +342,7 @@ my_agent = utils.get_last_callable(submission)
 for depth in range(42):
     print('%d \t %d' % (depth, len({pos:data for pos, data in best_scores_cache.items() if position_depth(pos, data[1][data[0]] ) == depth })) )
     
-d5_pos = {pos:data for pos, data in best_scores_cache.items() if position_depth(pos, data[1][data[0]] ) <= 6 } 
+d5_pos = {pos:data for pos, data in best_scores_cache.items() if position_depth(pos, data[1][data[0]] ) <= 7 } 
 
 len(d5_pos)
 
@@ -363,7 +363,7 @@ for pos in d5_pos:
         data = best_scores_cache[pos]
         board, mark = play_moves(pos)
         obs = structify({'board':board, 'mark':mark, 'remainingOverageTime':60})
-        config['my_max_time'] = 8
+        config['my_max_time'] = 3
         config['debug'] = True
         res = my_agent(obs, config)
         best_columns = set([i for i, c in enumerate(data[1]) if c == data[1][data[0]]])
@@ -374,7 +374,7 @@ for pos in d5_pos:
         if len(easy_positions) % 100 == 0:
             gc.collect()
 
-len(easy_positions) #220013
+len(easy_positions) #397084
     
 #LOAD easy positions
 with open(DATA_FOLDER + '/debut_table/easy_positions.json','r') as f:     
@@ -413,8 +413,8 @@ for move, col in best_scores_cache.items():
             print(ex)
             invalid_moves.append(move)
 
-len(debut_hashtable) #1006236
-len(best_scores_cache)
+len(debut_hashtable) #1599013
+len(best_scores_cache) #2306475
 len(win_moves)
 
 #SAVE, 1006236
@@ -444,13 +444,14 @@ debut_hashtable_uncompressed = pickle.loads(zlib.decompress(debut_hashtable_comp
 #%% Add debut table to the file
 
 agent_file = DATA_FOLDER + '/submission/submission_NEG_v10f.py'
+agent_file = DATA_FOLDER + '/submission/submission_NEG_v10g.py'
 with open(agent_file, 'r') as f:
     my_code = f.read()
  
 with open(DATA_FOLDER + '/debut_table/debut_hashtable.txt','r') as f: 
     debut_hashtable = eval(f.read())
     
-with open(agent_file + 'debut.v4.py', 'w') as f:
+with open(agent_file + 'debut.v8.py', 'w') as f:
     f.write('debut_table = %s' % str(debut_hashtable) )
     f.write('\n')
     f.write(my_code)
@@ -498,7 +499,7 @@ with open(agent_file, 'r') as f:
 with open(DATA_FOLDER + '/debut_table/debut_positions.txt','r') as f: 
     debut_positions = eval(f.read())
     
-with open(agent_file + '.v4.debut.pos.py', 'w') as f:
+with open(agent_file + '.v5.debut.pos.py', 'w') as f:
     f.write('debut_table = %s' % str(debut_positions) )
     f.write('\n')
     f.write(my_code)

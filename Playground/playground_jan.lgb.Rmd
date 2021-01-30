@@ -128,6 +128,30 @@ df[, (w_vars):=lapply(.SD, function(x) winsoraze(x, x[train_index], 0.009) ), .S
 
 ```
 
+## Count vars
+
+```{r count_vars}
+
+count_rows<-function(x, alpha = 0.5) {
+  print(x)
+  return ( sum(as.numeric(x > alpha)) )
+}
+
+df[, v_max := apply(.SD, 1, max ), .SDcols = all_vars]
+df[, v_min := apply(.SD, 1, min ), .SDcols = all_vars]
+df[, v7 := apply(.SD, 1, function(x) sum(as.numeric(x>0.7)) ), .SDcols = all_vars]
+df[, v9 := apply(.SD, 1, function(x) sum(as.numeric(x>0.9)) ), .SDcols = all_vars]
+
+ggplot(df[p_index, ], aes(temp, target )) + geom_point(alpha = 0.2) + geom_smooth()
+
+#d_vars = stri_join('d6_', all_vars)
+#df[, (d_vars):=lapply(.SD, function(x) (100*x) %% 6 ), .SDcols = all_vars]
+
+#d_vars = stri_join('d7_', all_vars)
+#df[, (d_vars):=lapply(.SD, function(x) (100*x) %% 7 ), .SDcols = all_vars]
+
+```
+
 ##MARS
 
 ```{r mars}
@@ -193,7 +217,9 @@ t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
 
 #lgb_vars = all_vars %!in_set% c('cont8')
 #lgb_vars = stri_join('p_', all_vars)
-lgb_vars = stri_join('w_', all_vars)
+lgb_vars = stri_join('w_', all_vars) #0.6564345
+lgb_vars = c(stri_join('w_', all_vars), 'v_max', 'v_min', 'v7', 'v9')
+
 #lgb_vars = c(stri_join('w_', all_vars), stri_join('d6_', all_vars), stri_join('d7_', all_vars))
 
 dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
@@ -266,7 +292,7 @@ marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 
 ggplot(df[train_index & target > 5, ], aes(cont13, cont3)) + stat_bin_2d(bins = 100)
 ggplot(df[train_index & target > 5, ], aes(cont13, cont3, z = target)) + stat_summary_2d(bins = 100)
-ggplot(df[train_index & target > 5, ], aes(cont13, cont3, z = target - target_lgb)) + stat_summary_2d(bins = 100)
+ggplot(df[train_index & target > 5, ], aes(cont13, cont3, z =target_lgb)) + stat_summary_2d(bins = 100)
 
 ggplot(df[train_index & target > 5, ], aes(cont10, target)) + stat_bin_2d(bins = 200)
 ggplot(df[train_index & target > 5, ], aes(w_cont10, target)) + stat_bin_2d(bins = 200)
@@ -275,7 +301,7 @@ ggplot(df[train_index & target > 5, ], aes(w_cont10, target)) + stat_bin_2d(bins
 ggplot(df[p_index, ], aes(sample = target_lgb - target)) + stat_qq() + stat_qq_line()
 ggplot(df[p_index, ], aes((1/cont2) %% 10, target )) + geom_point(alpha = 0.2)
 
-ggplot(df[p_index, ], aes((100*cont2) %% 6, target )) + geom_point(alpha = 0.2)
+ggplot(df[p_index, ], aes(temp, target )) + geom_point(alpha = 0.2)
 
 
 cor(df[train_index, .((100*cont2) %% 6 , target) ])
@@ -290,7 +316,7 @@ ggplot(df[train_index, ], aes(target)) + stat_ecdf()
 ggplot(df[train_index, ], aes(target_lgb - target)) + stat_ecdf()
 
 plot_profile(df[train_index, target],  df[train_index, target_lgb], 
-             df[train_index,  cont4  ], bucket_count = 50, error_band = 'norm') 
+             df[train_index,  v_max   ], bucket_count = 50, error_band = 'norm') 
 
 #cor(df[train_index, .(target, shift(cont13, 100) )], use = 'pairwise.complete.obs')
 

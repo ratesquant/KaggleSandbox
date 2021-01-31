@@ -39,7 +39,7 @@ rmsqr <-function(actual, model) {
 
 ```{r load_data}
 
-load_existing = TRUE
+load_existing = FALSE
 
 if (load_existing) {
   df <- fread(file.path(working_folder,'Playground/Jan2021/data/df.csv'), check.names = TRUE)
@@ -762,6 +762,75 @@ ggplot(param_res, aes(min_data, best_score)) + geom_point()
 ggplot(param_res, aes(min_data_in_bin, best_score)) + geom_point()
 ggplot(param_res, aes(num_leaves, best_score)) + geom_point()  + geom_hline(yintercept = 0.6966417)
 ggplot(param_res, aes(win_fraction , best_score)) + geom_point()
+
+```
+
+#LightGBM Benchmark
+```{r light_gbm_bench, eval = FALSE}
+
+set.seed(132140937)
+
+lgb_vars = all_vars
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
+
+params <- list(objective = "regression", metric = "rmse")
+
+my_params = data.table(
+                       learning_rate = 0.01112782,#0.0110, 
+                       bagging_fraction = 0.9571205, 
+                       min_data = 505, #default 20
+                       min_data_in_bin = 10, #default: 3
+                       num_leaves = 97,
+                       num_threads = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12))
+
+param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
+
+  #run_index = 1
+  print(run_index)
+  print(my_params[run_index,])
+  
+  dtrain <- lgb.Dataset(as.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target)
+  
+  start_time <- Sys.time()
+  
+  set.seed(140937345)
+  model.lgb <- lgb.cv(
+  params = params,
+  data = dtrain,
+  nfold = 10,
+  num_threads = my_params$num_threads[run_index], 
+  verbose = 0,
+  
+  learning_rate = my_params$learning_rate[run_index],
+  bagging_fraction = my_params$bagging_fraction[run_index],
+  min_data = my_params$min_data[run_index],
+  num_leaves = my_params$num_leaves[run_index],
+  min_data_in_bin = my_params$min_data_in_bin[run_index],
+  
+  force_col_wise=TRUE,
+  nrounds = 10000,
+  boost_from_average = TRUE,
+  eval_freq = 10000,
+  early_stopping_rounds = 100)
+  
+  print(model.lgb$best_score)
+  
+  gc(reset = TRUE)
+  elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
+  return ( data.frame(best_it = model.lgb$best_iter, best_score = model.lgb$best_score, elapsed = elapsed ) ) 
+})
+
+param_res = cbind(param_res_raw, my_params)
+setDT(param_res)
+setorder(param_res, best_score)
+param_res[, rank:=seq(nrow(param_res))]
+
+ggplot(param_res, aes(factor(num_threads), elapsed, label = sprintf('%.2f', elapsed) )) + 
+  geom_point() + geom_text(nudge_x  = 0.5)
 
 ```
 

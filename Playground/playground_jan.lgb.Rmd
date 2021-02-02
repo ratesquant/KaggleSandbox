@@ -38,7 +38,6 @@ rmsqr <-function(actual, model) {
 ## Load Data
 
 ```{r load_data}
-
 load_existing = FALSE
 
 if (load_existing) {
@@ -118,7 +117,7 @@ winsoraze<-function(x, xt, alpha = 0.05) {
 }
 
 w_vars = stri_join('w_', all_vars)
-df[, (w_vars):=lapply(.SD, function(x) winsoraze(x, x[train_index], 0.009) ), .SDcols = all_vars]
+df[, (w_vars):=lapply(.SD, function(x) winsoraze(x, x[train_index], 0.009123116) ), .SDcols = all_vars]
 
 #d_vars = stri_join('d6_', all_vars)
 #df[, (d_vars):=lapply(.SD, function(x) (100*x) %% 6 ), .SDcols = all_vars]
@@ -218,7 +217,6 @@ t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
 #lgb_vars = all_vars %!in_set% c('cont8')
 #lgb_vars = stri_join('p_', all_vars)
 lgb_vars = stri_join('w_', all_vars) #0.6564345
-lgb_vars = c(stri_join('w_', all_vars), 'v_max', 'v_min', 'v7', 'v9')
 
 #lgb_vars = c(stri_join('w_', all_vars), stri_join('d6_', all_vars), stri_join('d7_', all_vars))
 
@@ -236,17 +234,17 @@ model.lgb <- lgb.cv(
   data = dtrain,
   nrounds = 10000,
   nfold = 10,
-  num_threads = 4, 
+  num_threads = 5, 
   
-  min_data = 505,
-  learning_rate = 0.01112782,
-  num_leaves = 97,
-  bagging_fraction = 0.9571205,
-  min_data_in_bin = 10,
+  min_data = 477,
+  learning_rate = 0.006124766,
+  num_leaves = 104,
+  bagging_fraction = 0.9984580,
+  min_data_in_bin = 7,
   
   boost_from_average = TRUE,
-  eval_freq = 200,
-  early_stopping_rounds = 200,
+  eval_freq = 100,
+  early_stopping_rounds = 100,
   force_col_wise=TRUE
 )
 
@@ -676,29 +674,24 @@ min_data_in_bin = 5, #default: 3
 num_leaves = 31
                        
 bets cv: 0.6966417 
+
+    best_it best_score   elapsed learning_rate bagging_fraction min_data min_data_in_bin num_leaves win_fraction rank
+  1:    3895  0.6958884 10.373034   0.006124766        0.9984580      477               7        104  0.009123116    1
 ```{r light_gbm_tune, eval = FALSE}
 
 set.seed(132140937)
 
 lgb_vars = all_vars
-lgb_vars = stri_join('w_', all_vars)
+#lgb_vars = stri_join('w_', all_vars)
 #lgb_vars = c(all_vars, 'target_knn')
 
 t_index_v = which(train_index)
 t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
 
 dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
+dfs = dfs[target >= 5]
 
 params <- list(objective = "regression", metric = "rmse")
-
-
-n_runs = 36
-my_params = data.table(
-                       learning_rate = runif(n_runs, 0.005, 0.01), 
-                       bagging_fraction = runif(n_runs, 0.9, 1.0), 
-                       min_data = sample(seq(from = 500, to = 700),n_runs, TRUE),
-                       min_data_in_bin = sample(seq(3, 13),n_runs, TRUE),
-                       num_leaves = sample(seq(70, 90),n_runs, TRUE) )
 
 my_params = data.table(
                        learning_rate = 0.01112782,#0.0110, 
@@ -708,12 +701,22 @@ my_params = data.table(
                        num_leaves = 97,
                        win_fraction = c(0.008, 0.009, 0.01, 0.011, 0.012))  #default: 31
 
+n_runs = 100 # 10 runs per hous
+my_params = data.table(
+                       learning_rate = runif(n_runs, 0.005, 0.01), 
+                       bagging_fraction = runif(n_runs, 0.9, 1.0), 
+                       min_data = sample(seq(from = 400, to = 700),n_runs, TRUE),
+                       min_data_in_bin = sample(seq(3, 13),n_runs, TRUE),
+                       num_leaves = sample(seq(70, 120),n_runs, TRUE),
+                       win_fraction = runif(n_runs, 0.008, 0.012))
+
+
 param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   
   w_vars = stri_join('w_', all_vars)
   df[, (w_vars):=lapply(.SD, function(x) winsoraze(x, x[train_index], my_params$win_fraction[run_index] ) ), .SDcols = all_vars]
   dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
-
+  dfs = dfs[target >= 5]
 
   #run_index = 1
   print(run_index)
@@ -728,7 +731,7 @@ param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   params = params,
   data = dtrain,
   nfold = 10,
-  num_threads = 4, 
+  num_threads = 5, 
   verbose = 0,
   force_col_wise=TRUE,
   
@@ -760,7 +763,7 @@ ggplot(param_res, aes(learning_rate, best_score)) + geom_point() + geom_smooth()
 ggplot(param_res, aes(bagging_fraction, best_score)) + geom_point() + geom_smooth()
 ggplot(param_res, aes(min_data, best_score)) + geom_point()
 ggplot(param_res, aes(min_data_in_bin, best_score)) + geom_point()
-ggplot(param_res, aes(num_leaves, best_score)) + geom_point()  + geom_hline(yintercept = 0.6966417)
+ggplot(param_res, aes(num_leaves, best_score)) + geom_point()  
 ggplot(param_res, aes(win_fraction , best_score)) + geom_point()
 
 ```
@@ -817,10 +820,10 @@ param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   eval_freq = 10000,
   early_stopping_rounds = 100)
   
-  print(model.lgb$best_score)
-  
-  gc(reset = TRUE)
   elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
+  
+  print(model.lgb$best_score)
+  gc(reset = TRUE)
   return ( data.frame(best_it = model.lgb$best_iter, best_score = model.lgb$best_score, elapsed = elapsed ) ) 
 })
 
@@ -829,8 +832,14 @@ setDT(param_res)
 setorder(param_res, best_score)
 param_res[, rank:=seq(nrow(param_res))]
 
+single_core = param_res[num_threads == 1, elapsed]
+param_res[, speed_up := single_core / elapsed]
+
 ggplot(param_res, aes(factor(num_threads), elapsed, label = sprintf('%.2f', elapsed) )) + 
-  geom_point() + geom_text(nudge_x  = 0.5)
+  geom_point(size = 2) + geom_text(nudge_x  = 0.0, nudge_y = 0.1)
+
+ggplot(param_res, aes(factor(num_threads), speed_up, label = sprintf('%.2f', speed_up) )) + 
+  geom_point() + geom_text(nudge_x  = 0.0, nudge_y = 0.03)
 
 ```
 
@@ -929,7 +938,7 @@ MY BEST: 0.69834
   #df[pred.lgb_cv, target_lgb :=  i.avg, on=.(id)]
   #fwrite(df, file.path(working_folder,'Playground/Jan2021/data/df.csv'))
  
-  file = file.path(working_folder, "Playground/Jan2021/submit_v22.lgb.csv")
+  file = file.path(working_folder, "Playground/Jan2021/submit_v25.lgb.csv")
   fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)

@@ -37,7 +37,7 @@ rmsqr <-function(actual, model) {
 
 ```{r load_data}
 
-load_existing = TRUE
+load_existing = FALSE
 
 if (load_existing) {
   df <- fread(file.path(working_folder,'Playground/Jan2021/data/df.csv'), check.names = TRUE)
@@ -703,6 +703,67 @@ ggplot(param_res, aes(min_child_weight, test_rmse_mean - train_rmse_mean )) + ge
 
 ggplot(param_res, aes(min_child_weight      , test_rmse_mean)) + geom_point() + 
   geom_errorbar(aes(min_child_weight, ymin = test_rmse_mean - 2*test_rmse_std, ymax = test_rmse_mean + 2*test_rmse_std  ))
+
+```
+
+## XGBOOST Benchmark
+```{r xgboost_bench}
+
+all_vars_final = c(all_vars) 
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+actual = df[[obj_var]][t_index_v1]
+  
+df_train <- xgb.DMatrix(data.matrix(df[t_index_v1, all_vars_final, with = F]), label = df[[obj_var]][t_index_v1] )
+
+### Benchmark -------------
+
+param_res  = ldply(seq(12), function(num_threads){
+  print(num_threads)
+  
+  set.seed(132140937)
+  
+    my_param <- list(
+    max_depth = 7, 
+    eta = 0.005, 
+    subsample =0.9,
+    min_child_weight = 100,
+    gamma = 0.1,
+    objective = "reg:squarederror",
+    eval_metric = "rmse",
+    base_score = mean(actual))
+  
+  start_time <- Sys.time()
+  
+  xgb_cv <- xgboost::xgb.cv(params = my_param,
+                            data = df_train, 
+                            verbose = 1,
+                            nrounds = 100, 
+                            nfold = 10,  
+                            nthread = num_threads, 
+                            print_every_n = 1000,
+                            early_stopping_rounds = 100)
+  
+  elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
+  
+  gc(reset = TRUE)
+  
+  return ( data.frame(num_threads, best_it = xgb_cv$best_iteration, xgb_cv$evaluation_log[xgb_cv$best_iteration,], elapsed = elapsed ) ) 
+})
+
+setDT(param_res)
+
+single_core = param_res[num_threads  == 1, elapsed]
+param_res[, speed_up := single_core / elapsed]
+
+ggplot(param_res, aes(factor(num_threads), elapsed, label = sprintf('%.2f', elapsed) )) + 
+  geom_point(size = 2) + geom_text(nudge_x  = 0.0, nudge_y = 0.3)
+
+ggplot(param_res, aes(factor(num_threads), speed_up, label = sprintf('%.2f', speed_up) )) + 
+  geom_point() + geom_text(nudge_x  = 0.0, nudge_y = 0.1)
+
 
 ```
 

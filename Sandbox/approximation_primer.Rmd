@@ -1,0 +1,189 @@
+---
+title: "Approximation Examples"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(earth)
+library(ggplot2)
+library(data.table)
+library(caret)
+
+x = seq(0, 1, by =0.01)
+y = 02 + 0.4 * x * x + 0.3 * x * sin(15*x) + 0.05 * cos(50 * x)
+df = data.table(x, y)
+
+my_formula = formula('y ~ x')
+```
+
+## Mars
+```{r mars}
+
+model.mars = mars.mod = earth(my_formula, df, nk = 100, thresh = 0.0001)
+pred.mars = as.numeric(predict(model.mars))
+
+ggplot(cbind(df, pred = pred.mars), aes(x, y)) + geom_line() + geom_line(aes(x, pred), color = 'red') + ggtitle('MARS')
+```
+
+## KNN
+```{r KNN, echo=FALSE}
+control = trainControl("cv", number = 10)
+
+system.time(model.knn <- train(my_formula, data = df, 
+                               method = "knn", #kknn
+                               trControl = control,
+                               tuneGrid = data.frame(k = seq(1, 10)), #use instead of tuneLength
+                               #tuneLength = 10,
+                               metric = "RMSE"))
+model.knn
+plot(model.knn)
+
+pred.knn = predict(model.knn, df, type = 'raw')
+
+ggplot(cbind(df, pred = pred.knn), aes(x, y)) + geom_line() + geom_line(aes(x, pred), color = 'red') + ggtitle('KNN')
+```
+
+## KNN
+```{r KNN, echo=FALSE}
+control = trainControl("cv", number = 10)
+
+system.time(model.kknn <- train(my_formula, data = df, 
+                               method = "kknn", #kknn
+                               trControl = control,
+                               tuneGrid = expand.grid(kmax = seq(2, 5), kernel = c('optimal', 'epanechnikov', 'gaussian'), distance = c(1, 2)), #use instead of tuneLength
+                               #tuneLength = 10,
+                               metric = "RMSE"))
+model.kknn
+plot(model.kknn)
+
+pred.kknn = predict(model.kknn, df, type = 'raw')
+
+ggplot(cbind(df, pred = pred.kknn), aes(x, y)) + geom_line() + geom_line(aes(x, pred), color = 'red') + ggtitle('K-KNN')
+```
+
+## SVM: svmRadial
+2.28 sec  (cv=10, grid = 15)
+0.89 sec 1-case
+```{r SVM, echo=FALSE}
+control = trainControl("cv", number = 10)
+
+system.time(model.svm <- train(my_formula, data = df, 
+                               method = "svmRadial", #kknn
+                               trControl = control,
+                               tuneGrid = data.frame(C = 3, sigma = 14),
+                               #tuneGrid = expand.grid(C = seq(1, 20, by =1), sigma = seq(20)), # sigma = 14 and C = 3
+                               #tuneLength = 10,
+                               metric = "RMSE"))
+model.svm
+#plot(model.svm) 
+#ggplot(model.svm$results, aes(C, sigma, fill = RMSE)) + geom_tile()
+
+pred.svm = predict(model.svm, df, type = 'raw') #0.01501062  
+
+ggplot(cbind(df, pred = pred.svm), aes(x, y)) + geom_line() + geom_line(aes(x, pred), color = 'red') + ggtitle('SVM')
+```
+
+## SVM2: svmRadialCost
+3.17 sec (cv=10, grid = 21)
+0.89 sec 1 case
+```{r SVM2, echo=FALSE}
+control = trainControl("cv", number = 10)
+
+system.time(model.svm <- train(my_formula, data = df, 
+                               method = "svmRadialCost",
+                               trControl = control,
+                               tuneGrid = data.frame(C = 46),
+                               #tuneGrid = expand.grid(C = seq(10, 50, by =2)), 
+                               #tuneLength = 10,
+                               metric = "RMSE"))
+model.svm
+#plot(model.svm)
+
+pred.svm = predict(model.svm, df, type = 'raw') #0.02224883  
+
+ggplot(cbind(df, pred = pred.svm), aes(x, y)) + geom_line() + geom_line(aes(x, pred), color = 'red') + ggtitle('SVM')
+```
+
+
+## SVM3
+0.80 sec -  1 case
+```{r SVM2, echo=FALSE}
+control = trainControl("cv", number = 10)
+
+system.time(model.svm <- train(my_formula, data = df, 
+                               method = "svmRadialSigma",
+                               trControl = control,
+                               tuneGrid =  expand.grid(C = 3, sigma = 14),
+                               #tuneGrid = expand.grid(C = seq(1, 20, by =1), sigma = seq(20)), # sigma = 14 and C = 3
+                               #tuneLength = 10,
+                               metric = "RMSE"))
+model.svm
+#plot(model.svm)
+
+pred.svm = predict(model.svm, df, type = 'raw') #0.01551286  
+
+ggplot(cbind(df, pred = pred.svm), aes(x, y)) + geom_line() + geom_line(aes(x, pred), color = 'red') + ggtitle('SVM')
+```
+
+## RBF
+0.85 sec
+rvmRadial - does not work 
+```{r RBF, echo=FALSE}
+control = trainControl("cv", number = 10)
+
+system.time(model.rbf <- train(my_formula, data = df, 
+                               method = "krlsRadial",
+                               trControl = control,
+                               tuneGrid = data.frame(lambda = NA, sigma = 0.1), #lambda = 0.01, sigma = 0.1
+                               #tuneGrid = expand.grid(lambda = c(0.01, 0.1, 0.2), sigma = c(0.001, 0.1, 0.2)), 
+                               #tuneLength = 10,
+                               metric = "RMSE"))
+model.rbf
+#plot(model.rbf)
+
+pred.rbf = predict(model.rbf, df, type = 'raw') #0.007026325  
+
+ggplot(cbind(df, pred = pred.rbf), aes(x, y)) + geom_line() + geom_line(aes(x, pred), color = 'red') + ggtitle('RBF')
+```
+
+## RBF
+0.78 sec
+```{r RBF, echo=FALSE}
+control = trainControl("cv", number = 10)
+
+system.time(model.rbf <- train(my_formula, data = df, 
+                               method = "gaussprRadial",
+                               trControl = control,
+                               tuneGrid = data.frame(sigma = 25),
+                               #tuneGrid = expand.grid(sigma = seq(30)), 
+                               #tuneLength = 10,
+                               metric = "RMSE")) #0.03662235  
+model.rbf
+#plot(model.rbf)
+
+pred.rbf = predict(model.rbf, df, type = 'raw')
+
+ggplot(cbind(df, pred = pred.rbf), aes(x, y)) + geom_line() + geom_line(aes(x, pred), color = 'red') + ggtitle('RBF')
+```
+
+## KRLS
+0.78 sec
+```{r KRLS, echo=FALSE}
+library(KRLS)
+system.time(model.krls <- krls(X=as.matrix(df$x),y=df$y, print.level = 0, sigma = 0.1, lambda = NULL))
+summary(model.krls)
+plot(model.krls)
+
+pred.krls = as.numeric(predict(model.krls, df$x, se.fit = FALSE)$fit)
+
+ggplot(cbind(df, pred = pred.krls), aes(x, y)) + geom_line() + geom_line(aes(x, pred), color = 'red') + ggtitle('KRLS')
+
+
+
+```
+
+

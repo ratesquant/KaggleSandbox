@@ -1,0 +1,88 @@
+---
+title: "RBF Forest"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library(proxy)
+library(MASS)
+library(ggplot2)
+library(plyr)
+```
+
+## RBF function
+
+```{r rbf_functions}
+
+rbf.create <- function(X, Y, nodes, kernel_params = 1.0, kernel_fun = function(d, c) exp(-c * d * d), dist_fun = 'L1' ){
+  M = cbind(1, kernel_fun(dist(X, nodes, method = dist_fun), kernel_params) ) 
+  w = ginv(t(M) %*% M) %*% t(M) %*% Y 
+  
+  return ( list(weights = w, nodes = nodes, kernel_params = kernel_params, kernel_fun = kernel_fun, dist_fun = dist_fun) )
+}
+
+rbf.predict <- function(model, X){
+  
+  nodes          = model$nodes
+  weights        = model$weights
+  dist_fun       = model$dist_fun
+  kernel_params  = model$kernel_params
+  kernel_fun     = model$kernel_fun
+  
+  M = kernel_fun(dist(X, nodes, method = dist_fun), kernel_params)
+  pred = weights[1] + M %*% weights[-1]
+  return ( as.numeric(pred) )
+}
+
+```
+
+## Test
+
+```{r test}
+x = seq(0, 1, by = 0.01)
+y = 0.2 + 0.4 * x * x + 0.3 *x * sin(15 * x) + 0.05 * cos(50 * x)
+
+df = data.table(x, y)
+
+model.rbf = rbf.create(df[,.(x)], df$y, as.matrix(c(0.5, 0.1, 0.7)), kernel_fun = function(x, c) x)
+
+y_pred = rbf.predict(model.rbf, df[,.(x)])
+
+ggplot(cbind(df, y_pred), aes(x, y)) + geom_point() + geom_line(aes(x, y_pred), color = 'red')
+
+```
+
+
+## RBF Forest
+
+```{r rbf_forest}
+x = seq(0, 1, by = 0.01)
+y = 0.2 + 0.4 * x * x + 0.3 *x * sin(15 * x) + 0.05 * cos(50 * x)
+df = data.table(x, y)
+df[, id:=seq(nrow(df))]
+
+max_nodes = 20
+
+rbf_res = ldply(seq(100), function(run_id) {
+  model.rbf = rbf.create(df[,.(x)], df$y, as.matrix(df[sample.int(nrow(df), max_nodes),.(x)]), kernel_fun = function(x, c) x)
+  y_pred = as.numeric(rbf.predict(model.rbf, df[,.(x)]))
+  
+  data.frame(run_id, y_pred, id = df$id)
+  
+})
+setDT(rbf_res)
+
+rbf_res_sum = rbf_res[, .(y_pred = mean(y_pred), sigma = sd(y_pred) ), by =.(id)]
+rbf_res_sum[df, y := i.y, on=.(id) ]
+rbf_res_sum[df, x := i.x, on=.(id) ]
+
+ggplot(rbf_res_sum, aes(x, y)) + geom_point() + geom_line(aes(x, y_pred), color = 'red', size = 1) + 
+  geom_ribbon(aes(x, ymin = y_pred - 2*sigma, ymax = y_pred + 2*sigma), alpha = 0.2, fill = 'blue')
+
+```
+

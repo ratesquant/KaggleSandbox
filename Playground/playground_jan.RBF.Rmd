@@ -1,0 +1,192 @@
+---
+title: 'Kaggle Playground: Feb 2020'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library(stringi)
+#library(gbm)
+library(ggplot2)
+library(gridExtra)
+#library(dplyr)
+library(plyr)
+library(corrplot)
+#library(xgboost)
+#library(zip)
+#library(caret)
+#library(lightgbm)
+library(forcats)
+#library(rBayesianOptimization)
+#library(tune) #https://datascienceplus.com/grid-search-and-bayesian-hyperparameter-optimization-using-tune-and-caret-packages/
+
+
+working_folder = 'D:/Github/KaggleSandbox'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
+source(file.path(working_folder, 'Utils/common.R'))
+
+rmsqr <-function(actual, model) {
+  sqrt( mean( (actual - model) * (actual - model) ) )
+}
+
+```
+
+## Load Data
+
+```{r load_data}
+load_existing = FALSE
+
+if (load_existing) {
+  df <- fread(file.path(working_folder,'Playground/Jan2021/data/df.csv'), check.names = TRUE)
+  
+} else{
+  train <- fread(file.path(working_folder,'Playground/Jan2021/data/train.csv'), check.names = TRUE)
+  test  <- fread(file.path(working_folder,'Playground/Jan2021/data/test.csv'),  check.names = TRUE) # 1459   80
+  test[, target:=NA]
+  df = rbind(train, test)
+  
+  gc(reset=TRUE)
+}
+  
+
+test_index = is.na(df$target)
+train_index = !test_index
+
+obj_var = 'target'
+all_vars = names(df) %!in_set% c('id', obj_var) #14 variables
+all_vars = all_vars[grep('^(cont|cat)', all_vars)]
+cat_vars = all_vars[grep('^(cat)', all_vars)]
+
+df[, (cat_vars):=lapply(.SD, function(x) fct_infreq(fct_lump_min(x, 0.01*nrow(df), other_level = "OT"))), .SDcols = cat_vars]
+
+plot_profiles <-function(model, data)
+{
+    plots = llply(all_vars, function(var_name) {
+    p = plot_profile(model,  data[['target']], data[[var_name]], bucket_count = 20, error_band = 'norm') +
+      ggtitle(var_name) +  theme(title =element_text(size=6))
+    return( ggplotGrob(p) )
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
+}
+
+```
+##Plot Data
+
+```{r plot_data}
+
+cor_mat = cor(data.matrix(df[train_index,c('target', all_vars), with = FALSE]), use = 'pairwise.complete.obs')
+corrplot(cor_mat, method="number", number.cex = 0.8, number.digits = 2,  order="hclust")
+corrplot(cor_mat, method="circle", number.cex = 0.5, order="hclust")
+
+p_index = sample(which(train_index), 10000 )
+ggplot(df[p_index], aes(id, target)) + geom_point()
+
+ggplot(df[p_index], aes(cont8, target)) + geom_point() + geom_smooth()
+ggplot(df[p_index], aes(cont3, target)) + geom_point() + geom_smooth()
+
+#check sample
+s_index = sample.int(nrow(df), nrow(df))
+plots = llply(all_vars, function(var_name){
+  ggplot(df[s_index ], aes_string(var_name, group = 'is.na(target)', color = 'is.na(target)')) + geom_density(adjust = 0.1) + ggtitle(var_name)
+  })
+marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
+
+var_pairs = data.frame(t(combn(all_vars, 2, simplify = TRUE)))
+plots = llply(seq(nrow(var_pairs)), function(i) { 
+   ggplot(df[p_index ], aes_string(var_pairs$X1[i], var_pairs$X2[i])) + geom_point(alpha = 0.5)
+  })
+marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
+#ggplot(melt(data.table(cor_mat)), aes(Var1, Var2, fill = value)) + geom_tile()
+
+#check correlations
+
+combn(as.character(all_vars), 2, simplify = TRUE)
+all_comb = data.table(expand.grid(all_vars, all_vars, all_vars, all_vars))
+#all_comb = all_comb[Var1 != Var2]
+
+res = ldply(seq(nrow(all_comb)), function(i) { 
+  a1 = df[[all_comb$Var1[i]]][p_index]
+  a2 = df[[all_comb$Var2[i]]][p_index]
+  a3 = df[[all_comb$Var3[i]]][p_index]
+  a4 = df[[all_comb$Var4[i]]][p_index]
+  
+  data.frame(i, rho = cor(df[p_index, target], (a1 - a2)/ (2 + a3 - a4) , use = 'pairwise.complete.obs' ))  } )
+setDT(res)
+res[order(abs(rho))]
+res[!is.na(rho)]
+all_comb[38415    ]
+
+ggplot(df[p_index], aes((cont13 / cont14 ), target)) + geom_point() + geom_smooth()
+
+```
+
+
+## Winsorization
+
+```{r Winsorization,  eval = FALSE}
+
+winsoraze<-function(x, xt, alpha = 0.05) {
+  q_bounds = quantile(xt, c(alpha/2, 1- alpha/2))
+  x = pmax(pmin(x, q_bounds[2]), q_bounds[1])
+  return (x)
+}
+
+w_vars = stri_join('w_', all_vars)
+df[, (w_vars):=lapply(.SD, function(x) winsoraze(x, x[train_index], 0.009123116) ), .SDcols = all_vars]
+
+#d_vars = stri_join('d6_', all_vars)
+#df[, (d_vars):=lapply(.SD, function(x) (100*x) %% 6 ), .SDcols = all_vars]
+
+#d_vars = stri_join('d7_', all_vars)
+#df[, (d_vars):=lapply(.SD, function(x) (100*x) %% 7 ), .SDcols = all_vars]
+
+```
+
+## Count vars
+
+```{r count_vars, eval = FALSE}
+
+count_rows<-function(x, alpha = 0.5) {
+  print(x)
+  return ( sum(as.numeric(x > alpha)) )
+}
+
+df[, v_max := apply(.SD, 1, max ), .SDcols = all_vars]
+df[, v_min := apply(.SD, 1, min ), .SDcols = all_vars]
+df[, v7 := apply(.SD, 1, function(x) sum(as.numeric(x>0.7)) ), .SDcols = all_vars]
+df[, v9 := apply(.SD, 1, function(x) sum(as.numeric(x>0.9)) ), .SDcols = all_vars]
+
+ggplot(df[p_index, ], aes(temp, target )) + geom_point(alpha = 0.2) + geom_smooth()
+
+#d_vars = stri_join('d6_', all_vars)
+#df[, (d_vars):=lapply(.SD, function(x) (100*x) %% 6 ), .SDcols = all_vars]
+
+#d_vars = stri_join('d7_', all_vars)
+#df[, (d_vars):=lapply(.SD, function(x) (100*x) %% 7 ), .SDcols = all_vars]
+
+```
+
+
+
+
+#Submit
+MY BEST: 0.84357
+v1: 0.84357 min(0.8431303)
+```{r submit, echo=FALSE}
+  #model_pred = pred.xgb
+  #df[pred.lgb_cv, target_lgb :=  i.avg, on=.(id)]
+  #fwrite(df, file.path(working_folder,'Playground/Feb2021/data/df.csv'))
+ 
+  file = file.path(working_folder, "Playground/Feb2021/submit_v1.lgb.csv")
+  fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
+  zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
+  print(file)
+
+```
+
+

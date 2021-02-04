@@ -21,6 +21,8 @@ library(corrplot)
 #library(caret)
 #library(lightgbm)
 library(forcats)
+library(proxy)
+library(MASS)
 #library(rBayesianOptimization)
 #library(tune) #https://datascienceplus.com/grid-search-and-bayesian-hyperparameter-optimization-using-tune-and-caret-packages/
 
@@ -52,7 +54,6 @@ if (load_existing) {
   
   gc(reset=TRUE)
 }
-  
 
 test_index = is.na(df$target)
 train_index = !test_index
@@ -60,9 +61,6 @@ train_index = !test_index
 obj_var = 'target'
 all_vars = names(df) %!in_set% c('id', obj_var) #14 variables
 all_vars = all_vars[grep('^(cont|cat)', all_vars)]
-cat_vars = all_vars[grep('^(cat)', all_vars)]
-
-df[, (cat_vars):=lapply(.SD, function(x) fct_infreq(fct_lump_min(x, 0.01*nrow(df), other_level = "OT"))), .SDcols = cat_vars]
 
 plot_profiles <-function(model, data)
 {
@@ -126,52 +124,76 @@ ggplot(df[p_index], aes((cont13 / cont14 ), target)) + geom_point() + geom_smoot
 ```
 
 
-## Winsorization
+## Percentile Transform
 
-```{r Winsorization,  eval = FALSE}
+```{r p_transform}
 
-winsoraze<-function(x, xt, alpha = 0.05) {
-  q_bounds = quantile(xt, c(alpha/2, 1- alpha/2))
-  x = pmax(pmin(x, q_bounds[2]), q_bounds[1])
-  return (x)
+p_vars = stri_join('p_', all_vars)
+df[, (p_vars):=lapply(.SD, function(x) ecdf(x[train_index])(x) ), .SDcols = all_vars]
+
+ggplot(df[p_index, ], aes(p_cont2, target)) + geom_point(alpha = 0.2)
+
+```
+## RBF function
+
+```{r rbf_functions}
+
+rbf.create <- function(X, Y, nodes, kernel_params = 1.0, kernel_fun = function(d, c) exp(-c * d * d), dist_fun = 'L1' ){
+  M = cbind(1, kernel_fun(dist(X, nodes, method = dist_fun), kernel_params) ) 
+  w = ginv(t(M) %*% M) %*% t(M) %*% Y 
+  
+  return ( list(weights = w, nodes = nodes, kernel_params = kernel_params, kernel_fun = kernel_fun, dist_fun = dist_fun) )
 }
 
-w_vars = stri_join('w_', all_vars)
-df[, (w_vars):=lapply(.SD, function(x) winsoraze(x, x[train_index], 0.009123116) ), .SDcols = all_vars]
-
-#d_vars = stri_join('d6_', all_vars)
-#df[, (d_vars):=lapply(.SD, function(x) (100*x) %% 6 ), .SDcols = all_vars]
-
-#d_vars = stri_join('d7_', all_vars)
-#df[, (d_vars):=lapply(.SD, function(x) (100*x) %% 7 ), .SDcols = all_vars]
+rbf.predict <- function(model, X){
+  
+  nodes          = model$nodes
+  weights        = model$weights
+  dist_fun       = model$dist_fun
+  kernel_params  = model$kernel_params
+  kernel_fun     = model$kernel_fun
+  
+  M = kernel_fun(dist(X, nodes, method = dist_fun), kernel_params)
+  pred = weights[1] + M %*% weights[-1]
+  return ( as.numeric(pred) )
+}
 
 ```
 
-## Count vars
+## RBF
 
-```{r count_vars, eval = FALSE}
+```{r rbf}
+gauss_kernel = function(x, c) { exp(- (x/c) * (x/c)) }
+linear_kernel = function(x, c) { x }
 
-count_rows<-function(x, alpha = 0.5) {
-  print(x)
-  return ( sum(as.numeric(x > alpha)) )
-}
+p_vars = stri_join('p_', all_vars)
 
-df[, v_max := apply(.SD, 1, max ), .SDcols = all_vars]
-df[, v_min := apply(.SD, 1, min ), .SDcols = all_vars]
-df[, v7 := apply(.SD, 1, function(x) sum(as.numeric(x>0.7)) ), .SDcols = all_vars]
-df[, v9 := apply(.SD, 1, function(x) sum(as.numeric(x>0.9)) ), .SDcols = all_vars]
+max_nodes = 5000
 
-ggplot(df[p_index, ], aes(temp, target )) + geom_point(alpha = 0.2) + geom_smooth()
+dfs = df[train_index, ]
 
-#d_vars = stri_join('d6_', all_vars)
-#df[, (d_vars):=lapply(.SD, function(x) (100*x) %% 6 ), .SDcols = all_vars]
+rbf_res = ldply(seq(10), function(run_id) {
+  X = dfs[,p_vars, with = FALSE]
+  model.rbf = rbf.create(X, dfs$target, as.matrix(X[sample.int(nrow(X), max_nodes),]),  kernel_params = 0.5, kernel_fun = linear_kernel)
+  y_pred = as.numeric(rbf.predict(model.rbf,X))
+  
+  data.frame(run_id, y_pred, id = dfs$id)
+})
+setDT(rbf_res)
 
-#d_vars = stri_join('d7_', all_vars)
-#df[, (d_vars):=lapply(.SD, function(x) (100*x) %% 7 ), .SDcols = all_vars]
+rbf_res[df, target := i.target, on=.(id) ]
+
+rbf_res[, rmsqr(target, y_pred), by =.(run_id)]
+
+rbf_res_sum = rbf_res[, .(y_pred = mean(y_pred), sigma = sd(y_pred) ), by =.(id)]
+rbf_res_sum[df, target := i.target, on=.(id) ]
+
+plot_profiles(rbf_res_sum$y_pred, dfs)
+
+rmsqr(rbf_res_sum$target, rbf_res_sum$y_pred)
+
 
 ```
-
-
 
 
 #Submit
@@ -182,7 +204,7 @@ v1: 0.84357 min(0.8431303)
   #df[pred.lgb_cv, target_lgb :=  i.avg, on=.(id)]
   #fwrite(df, file.path(working_folder,'Playground/Feb2021/data/df.csv'))
  
-  file = file.path(working_folder, "Playground/Feb2021/submit_v1.lgb.csv")
+  file = file.path(working_folder, "Playground/Jan2021/submit_v1.rbf.csv")
   fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)

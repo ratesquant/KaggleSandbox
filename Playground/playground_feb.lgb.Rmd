@@ -23,7 +23,7 @@ library(caret)
 library(lightgbm)
 library(forcats)
 library(rBayesianOptimization)
-#library(tune) #https://datascienceplus.com/grid-search-and-bayesian-hyperparameter-optimization-using-tune-and-caret-packages/
+library(tune) #https://datascienceplus.com/grid-search-and-bayesian-hyperparameter-optimization-using-tune-and-caret-packages/
 
 
 working_folder = 'D:/Github/KaggleSandbox'
@@ -96,6 +96,61 @@ plot_profiles_2d <-function(model, data)
 }
 
 #plot_profiles_2d(df$target_lgb[train_index], df[train_index,])
+partialPlot <- function(obj, pred.data, xname, n.pt = 19, discrete.x = FALSE, 
+                        subsample = pmin(1, n.pt * 100 / nrow(pred.data)), which.class = NULL,
+                        xlab = deparse(substitute(xname)), ylab = "", type = if (discrete.x) "p" else "b",
+                        main = "", rug = TRUE, seed = NULL, ...) {
+  stopifnot(dim(pred.data) >= 1)
+  
+  if (subsample < 1) {
+    if (!is.null(seed)) {
+      set.seed(seed)
+    } 
+    n <- nrow(pred.data)
+    picked <- sample(n, trunc(subsample * n))
+    pred.data <- pred.data[picked, , drop = FALSE]
+  }
+  xv <- pred.data[, xname]
+  
+  if (discrete.x) {
+    x <- unique(xv)
+  } else {
+    x <- quantile(xv, seq(0.03, 0.97, length.out = n.pt), names = FALSE)
+  }
+  y <- numeric(length(x))
+  
+  isRanger <- inherits(obj, "ranger")
+  isLm <- inherits(obj, "lm") | inherits(obj, "lmrob") | inherits(obj, "lmerMod")
+
+  for (i in seq_along(x)) {
+   pred.data[, xname] <- x[i]
+
+    if (isRanger) {
+      if (!is.null(which.class)) {
+        if (obj$treetype != "Probability estimation") {
+          stop("Choose probability = TRUE when fitting ranger multiclass model") 
+        }
+        preds <- predict(obj, pred.data)$predictions[, which.class]
+      }
+      else {
+        preds <- predict(obj, pred.data)$predictions
+      }
+    } else if (isLm) {
+      preds <- predict(obj, pred.data) 
+    } else {
+      if (!is.null(which.class)) {
+        preds <- predict(obj, pred.data, reshape = TRUE)[, which.class + 1] 
+      } else {
+        preds <- predict(obj, pred.data)
+      }
+    }
+    
+    y[i] <- mean(preds)
+  }
+  
+  #plot(x, y, xlab = xlab, ylab = ylab, main = main, type = type, ...)
+  data.frame(x = x, y = y)
+}
 
 ```
 ##Plot Data
@@ -316,7 +371,6 @@ plots = llply(lgb_vars, function(vname){
 marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
 
 
-
 ggplot(df[train_index & target > 5, ], aes(cont13, cont3)) + stat_bin_2d(bins = 100)
 ggplot(df[train_index & target > 5, ], aes(cont13, cont3, z = target)) + stat_summary_2d(bins = 100)
 ggplot(df[train_index & target > 5, ], aes(cont13, cont3, z =target_lgb)) + stat_summary_2d(bins = 100)
@@ -341,6 +395,20 @@ plot_profile(df[train_index, target],  df[train_index, target_lgb],
              df[train_index,  cont8], bucket_count = 50, error_band = 'norm') 
 
 #cor(df[train_index, .(target, shift(cont13, 100) )], use = 'pairwise.complete.obs')
+
+pdp_index = sample(which(train_index), 100)
+
+my_model = model.lgb$boosters[[1]][[1]]
+df_plot = partialPlot(my_model, data.matrix(df[pdp_index,lgb_vars, with = FALSE]), xname = "cont1")
+ggplot(df_plot, aes(x, y)) + geom_line()
+
+plots = llply(lgb_vars, function(vname){
+  df_plot = partialPlot(my_model, data.matrix(df[pdp_index,lgb_vars, with = FALSE]), xname = vname, n.pt = 100)
+  df_plot[vname] = df_plot$x
+  p = ggplot(df_plot, aes_string(vname, 'y')) + geom_line() + geom_point() + 
+    geom_rug(data = df[pdp_index,c(vname, 'target'), with = FALSE], aes_string(vname, 'target'))
+})
+marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
 
 
 ```
@@ -441,6 +509,7 @@ ggplot(param_res, aes(num_leaves, best_score)) + geom_point()  + geom_smooth(spa
 
 
 #LightGBM Bayes Tuning
+Round = 14	learning_rate = 0.0092	bagging_fraction = 0.9005	min_data = 818.0000	num_leaves = 14.0000	min_data_in_bin = 6.0000	Value = -0.8501 
 ```{r light_gbm_bayes_tune, eval = FALSE}
 
 set.seed(132140937)
@@ -458,14 +527,14 @@ dfs = dfs[target >= 5] #exclude target < 5.0
 params <- list(objective = "regression", metric = "rmse")
 
 lgb_cv_bayes <- function(learning_rate, bagging_fraction, min_data, num_leaves, min_data_in_bin) {
-    set.seed(140937345)
+    #set.seed(140937345)
   
     dtrain <- lgb.Dataset(as.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target, categorical_feature = cat_vars)
     
     model.lgb <- lgb.cv(
     params = params,
     data = dtrain,
-    nfold = 5,
+    nfold = 10,
     num_threads = 5, 
     verbose = 0,
     
@@ -490,12 +559,12 @@ OPT_Res <- BayesianOptimization(lgb_cv_bayes,
                                 bounds = list(
                                 learning_rate = c(0.007, 0.01),
                                 bagging_fraction = c(0.8, 1.0), #default: 1.0
-                                min_data = c(500L, 1000L), #default: 20
-                                num_leaves =c(30L, 80L), #default: 31
+                                min_data = c(600L, 1200L), #default: 20
+                                num_leaves =c(8L, 30L), #default: 31
                                 min_data_in_bin =c(3L, 9L)), #default: 3
                                 init_grid_dt = NULL, 
-                                init_points = 10, #10
-                                n_iter = 50,     #50
+                                init_points = 5, #10
+                                n_iter = 60,     #50
                                 acq = "ucb", kappa = 2.576, eps = 0.0,
                                 verbose = TRUE)
 opt_res = data.table(OPT_Res$History, it_count=as.numeric(OPT_Res$Pred))
@@ -503,6 +572,7 @@ setorder(opt_res, Value)
 
 opt_res[Value == max(Value)]
 
+ggplot(opt_res, aes(Round , -Value)) + geom_line()
 ggplot(opt_res, aes(learning_rate, -Value)) + geom_point()
 ggplot(opt_res, aes(bagging_fraction, -Value)) + geom_point()
 ggplot(opt_res, aes(min_data, -Value)) + geom_point()
@@ -511,19 +581,49 @@ ggplot(opt_res, aes(min_data_in_bin, -Value)) + geom_point()
 ggplot(opt_res, aes(Round, -Value)) + geom_point()
 #ggplot(opt_res, aes(Round, it_count)) + geom_line(alpha = 0.6)
 
+```
 
+#Bayes test
+```{r bayes_tune, eval = FALSE}
+
+test_bayes <- function(x, y) {
+  
+  a = 1
+  b = 100
+  
+  list(Score = - ((a - x)^2 + b*(y - x*x)^2), Pred =  model.lgb$best_iter)
+}
+
+OPT_Res <- BayesianOptimization(test_bayes,
+                                bounds = list(
+                                x = c(-10, 10),
+                                y = c(-10, 10)),
+                                init_points = 10, 
+                                n_iter = 50,
+                                acq = "ucb", kappa = 2.576, eps = 0.0,
+                                verbose = TRUE)
+opt_res = data.table(OPT_Res$History, it_count=as.numeric(OPT_Res$Pred))
+setorder(opt_res, Value)
+
+opt_res[Value == max(Value)]
+
+ggplot(opt_res, aes(x, y)) + geom_path() + geom_point()
+
+ggplot(opt_res, aes(x, log(-Value) )) + geom_point() + geom_vline(xintercept = 1)
+ggplot(opt_res, aes(y, log(-Value) )) + geom_point() + geom_vline(xintercept = 1)
 
 ```
 
 #Submit
 MY BEST: 0.84357
 v1: 0.84357 min(0.8431303)
+v2: 0.84324 min(0.8426456)
 ```{r submit, echo=FALSE}
   #model_pred = pred.xgb
   #df[pred.lgb_cv, target_lgb :=  i.avg, on=.(id)]
   #fwrite(df, file.path(working_folder,'Playground/Feb2021/data/df.csv'))
  
-  file = file.path(working_folder, "Playground/Feb2021/submit_v1.lgb.csv")
+  file = file.path(working_folder, "Playground/Feb2021/submit_v2.lgb.csv")
   fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)

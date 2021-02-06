@@ -15,5 +15,5 @@ while True:
     c3 = encode('ROBERT', lut)   
     if c1 + c2 ==  c3:
         print(lut)
-        print('%s + %s = %s' % (c1, c2, c3))
+        print('%s + %s = %s' % (c1, c2, c3)) #526485 + 197485 = 723970
         break;

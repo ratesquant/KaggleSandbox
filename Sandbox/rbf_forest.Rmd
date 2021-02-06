@@ -13,6 +13,13 @@ library(proxy)
 library(MASS)
 library(ggplot2)
 library(plyr)
+library(dplyr)
+
+
+working_folder = 'D:/Github/KaggleSandbox'
+
+source(file.path(working_folder, 'Utils/common.R'))
+
 ```
 
 ## RBF function
@@ -39,6 +46,68 @@ rbf.predict <- function(model, X){
   return ( as.numeric(pred) )
 }
 
+rbf_boot.create <- function(X, Y, max_nodes, n_runs = 10, kernel_params = 1.0, kernel_fun = function(d, c) exp(-c * d * d), dist_fun = 'L1' ){
+  model_list = llply(seq(n_runs), function(run_id) {
+    rbf.create(X, Y, as.matrix(X[sample.int(nrow(X), max_nodes),]), kernel_params = kernel_params, kernel_fun = kernel_fun,dist_fun = dist_fun )
+  })
+}
+
+rbf_boot.predict <-function(models, X) {
+  
+  res = ldply(seq(length(models)), function(run_id) {
+    y_pred = as.numeric(rbf.predict(models[[run_id]], X))
+    data.frame(run_id, y_pred, id = seq(length(y_pred)) )
+    })
+    return (res)
+}
+
+rbf_boost.create <- function(X, Y, max_nodes, boot_runs = 10, kernel_params = 1.0, kernel_fun = function(d, c) exp(-c * d * d), dist_fun = 'L1' ){
+  
+  max_it = 10
+  n_nodes = 2
+  current_objective = Y
+  
+  all_models = list()
+  
+  for(it in 1:max_it)
+  {
+    
+    model_list = rbf_boot.create(X, current_objective, n_nodes, n_runs = boot_runs, kernel_params = kernel_params, kernel_fun = kernel_fun, dist_fun = dist_fun)
+    res = rbf_boot.predict(model_list, X)
+    
+    setDT(res)
+    res_agg = res[, .(y_pred = mean(y_pred)), by =.(id)]
+    setorder(res_agg, id)
+    
+    print(sprintf('%d: %f', it, rms(current_objective, res_agg$y_pred) ))
+    
+    current_objective = current_objective - res_agg$y_pred
+
+    all_models[[it]] = model_list    
+    
+    n_nodes = 2 * n_nodes
+    
+    if(n_nodes > max_nodes)
+      break
+  }
+  return (all_models)
+}
+
+rbf_boost.predict <- function(models, X){
+   res = ldply(seq(length(models)), function(model_id1) {
+     
+     boot_models = models[[model_id1]]
+     
+     ldply(seq(length(boot_models)), function(model_id2) {
+       y_pred = as.numeric(rbf.predict(boot_models[[model_id2]], X))
+       data.frame(model_id1, model_id2, y_pred, id = seq(length(y_pred)) )
+    })
+   })
+   return (res)
+}
+
+rms <-function(y1, y2) sqrt( mean( (y1 - y2)^2 ))
+
 ```
 
 ## Test
@@ -58,9 +127,9 @@ ggplot(cbind(df, y_pred), aes(x, y)) + geom_point() + geom_line(aes(x, y_pred), 
 ```
 
 
-## RBF Forest
+## RBF Boot
 
-```{r rbf_forest}
+```{r rbf_boot}
 x = seq(0, 1, by = 0.01)
 y = 0.2 + 0.4 * x * x + 0.3 *x * sin(15 * x) + 0.05 * cos(50 * x)
 df = data.table(x, y)
@@ -68,21 +137,96 @@ df[, id:=seq(nrow(df))]
 
 max_nodes = 20
 
-rbf_res = ldply(seq(100), function(run_id) {
-  model.rbf = rbf.create(df[,.(x)], df$y, as.matrix(df[sample.int(nrow(df), max_nodes),.(x)]), kernel_fun = function(x, c) x)
-  y_pred = as.numeric(rbf.predict(model.rbf, df[,.(x)]))
-  
-  data.frame(run_id, y_pred, id = df$id)
-  
-})
-setDT(rbf_res)
+models = rbf.boot.create(df[,.(x)], df$y, max_nodes, n_runs = 1000, kernel_fun = function(x, c) x)
+res = rbf_boot.predict(models, df[,.(x)])
+setDT(res)
+res_agg = res[, .(y_pred = mean(y_pred), sigma = sd(y_pred), .N ), by =.(id)]
 
-rbf_res_sum = rbf_res[, .(y_pred = mean(y_pred), sigma = sd(y_pred) ), by =.(id)]
-rbf_res_sum[df, y := i.y, on=.(id) ]
-rbf_res_sum[df, x := i.x, on=.(id) ]
+res_agg[df, y := i.y, on=.(id) ]
+res_agg[df, x := i.x, on=.(id) ]
+res[df, x := i.x, on=.(id) ]
 
-ggplot(rbf_res_sum, aes(x, y)) + geom_point() + geom_line(aes(x, y_pred), color = 'red', size = 1) + 
+#all fits
+ggplot(res, aes(x, y_pred, group = run_id)) + geom_line(color = 'blue', alpha = 0.2) 
+
+#average
+ggplot(res_agg, aes(x, y)) + geom_point() + geom_line(aes(x, y_pred), color = 'red', size = 1) + 
   geom_ribbon(aes(x, ymin = y_pred - 2*sigma, ymax = y_pred + 2*sigma), alpha = 0.2, fill = 'blue')
 
+#convergence
+res[order(run_id),y_pred_cum := cummean(y_pred), by =.(id) ]
+ggplot(res, aes(x, y_pred_cum, group = run_id)) + geom_line(color = 'blue', alpha = 0.2) 
+
+it_error = res[order(id), .(error = rms(df$y, y_pred_cum)), by =.(run_id) ] #it_error[error == min(error)]
+ggplot(it_error, aes(run_id, error)) + geom_line()
+
 ```
+
+## RBF Boosting
+
+```{r rbf_boosting}
+x = seq(0, 1, by = 0.01)
+y = 0.2 + 0.4 * x * x + 0.3 *x * sin(15 * x) + 0.05 * cos(50 * x)
+df = data.table(x, y)
+df[, id:=seq(nrow(df))]
+
+max_nodes = 65
+
+models_boost =  rbf_boost.create(df[,.(x)],  df$y, max_nodes, boot_runs = 100, kernel_params = 1.0, kernel_fun = function(x, c) x, dist_fun = 'L1' )
+res = rbf_boost.predict(models_boost, df[,.(x)])
+
+setDT(res)
+ 
+#show all - curves
+res[df, x := i.x, on=.(id) ]
+ggplot(res, aes(x, y_pred, group = model_id2 )) + geom_line(alpha = 0.3) + facet_wrap(~model_id1 )
+
+#boost results for each step
+res_sum = res[, .(y_pred = mean(y_pred)), by =.(id, model_id1 )]
+res_sum[df, x := i.x, on=.(id) ]
+ggplot(res_sum, aes(x, y_pred, group = model_id1 )) + geom_line()  + facet_wrap(~model_id1 )
+
+#boost results for each step
+res_conv = res[, .(y_pred = mean(y_pred)), by =.(id, model_id1 )]
+res_conv[order(model_id1), y_pred_cum := cumsum(y_pred), by =.(id)]
+res_conv[df, x := i.x, on=.(id) ]
+ggplot(res_conv, aes(x, y_pred_cum)) + geom_line(color = 'red', size = 1)  + geom_point(data = df, aes(x, y)) + facet_wrap(~model_id1 )
+
+#Convergence
+ggplot(res_conv[order(id), .(error = rms(y_pred_cum, df$y)), by =.(model_id1) ] , aes(model_id1, error)) + geom_line() +  geom_point()
+
+```
+
+## RBF Boosting: Large Scale Test
+
+```{r rbf_boosting_test}
+
+train <- fread(file.path(working_folder,'Playground/Jan2021/data/train.csv'), check.names = TRUE)
+test  <- fread(file.path(working_folder,'Playground/Jan2021/data/test.csv'),  check.names = TRUE) # 1459   80
+test[, target:=NA]
+df = rbind(train, test)
+
+test_index = is.na(df$target)
+train_index = !test_index
+
+obj_var = 'target'
+all_vars = names(df) %!in_set% c('id', obj_var) #14 variables
+all_vars = all_vars[grep('cont', all_vars)]
+
+max_nodes = 1000
+
+my_index = sample( which(train_index), 1.0*sum(train_index))
+
+models_boost =  rbf_boost.create(df[my_index,all_vars, with = FALSE],  df$target[my_index], max_nodes, boot_runs = 100, kernel_params = 1.0, kernel_fun = function(x, c) x, dist_fun = 'L1' )
+res = rbf_boost.predict(models_boost, df[my_index,all_vars, with = FALSE])
+
+setDT(res)
+ 
+#boost results for each step
+res_conv = res[, .(y_pred = mean(y_pred)), by =.(id, model_id1 )]
+res_conv[order(model_id1), y_pred_cum := cumsum(y_pred), by =.(id)]
+ggplot(res_conv[order(id), .(error = rms(y_pred_cum, df$target[my_index])), by =.(model_id1) ] , aes(model_id1, error)) + geom_line() +  geom_point()
+
+```
+
 

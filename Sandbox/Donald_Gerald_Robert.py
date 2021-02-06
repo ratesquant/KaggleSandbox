@@ -1,9 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Sat Jul 18 00:07:11 2020
-
-@author: chirokov
-"""
 import random
 
 chars = set(['D', 'O', 'N', 'A', 'L', 'G', 'E', 'R', 'B', 'T'])

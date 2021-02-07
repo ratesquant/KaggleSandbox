@@ -40,7 +40,7 @@ rmsqr <-function(actual, model) {
 ## Load Data
 
 ```{r load_data}
-load_existing = FALSE
+load_existing = TRUE
 
 if (load_existing) {
   df <- fread(file.path(working_folder,'Playground/Feb2021/data/df.csv'), check.names = TRUE)
@@ -286,6 +286,7 @@ plot_profiles(pred.mars[train_index], df[train_index,])
 ```
 
 #LightGBM
+Round = 62	learning_rate = 0.0092	bagging_fraction = 0.8911	min_data = 959.0000	num_leaves = 16.0000	min_data_in_bin = 4.0000	Value = -0.8499 
 
 ```{r light_gbm, eval = FALSE}
 
@@ -307,6 +308,13 @@ dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$t
 params <- list(objective = "regression", metric = "rmse")
 #params <- list(objective = "huber")
 
+var.monotone = rep(0, length(lgb_vars))
+mon_inc_vars = c('cont4')
+mon_dec_vars = c()
+var.monotone[lgb_vars %in% mon_inc_vars]  =  1
+var.monotone[lgb_vars %in% mon_dec_vars]  = -1
+
+
 set.seed(140937345)
 
 model.lgb <- lgb.cv(
@@ -316,11 +324,14 @@ model.lgb <- lgb.cv(
   nfold = 10,
   num_threads = 5, 
   
-  min_data = 1152,
-  learning_rate = 0.00821259,
-  num_leaves = 12,
-  bagging_fraction = 0.967491,
-  min_data_in_bin = 6,
+  monotone_constraints= var.monotone,
+  monotone_constraints_method  = 'intermediate',
+  
+  min_data = 974,
+  learning_rate = 0.0087,
+  num_leaves = 15,
+  bagging_fraction = 0.9192,
+  min_data_in_bin = 5,
   
   boost_from_average = TRUE,
   eval_freq = 100,
@@ -357,8 +368,7 @@ df[pred.lgb_cv, target_lgb :=  i.avg, on=.(id)]
 lgb_importance = lgb.importance(model.lgb$boosters[[1]][[1]], percentage = TRUE)
 lgb.plot.interpretation(lgb_importance)
 #
-p_index = which(train_index)
-p_index = sample(p_index, 10000)
+p_index = sample(which(train_index), 10000)
 ggplot(df[p_index, ], aes(target_lgb, target)) + geom_point(alpha = 0.2) + geom_abline(slope = 1, color = 'red')
 #ggplot(df[p_index, ], aes(p_cont3, target)) + geom_point(alpha = 0.5) + geom_smooth(se = FALSE)
 ggplot(df[p_index, ], aes(cont8, target)) + geom_point(alpha = 0.5) + geom_smooth(se = FALSE)
@@ -371,16 +381,13 @@ plots = llply(lgb_vars, function(vname){
 marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
 
 
-ggplot(df[train_index & target > 5, ], aes(cont13, cont3)) + stat_bin_2d(bins = 100)
-ggplot(df[train_index & target > 5, ], aes(cont13, cont3, z = target)) + stat_summary_2d(bins = 100)
+ggplot(df[train_index & target > 4, ], aes(cont13, cont3)) + stat_bin_2d(bins = 100)
+ggplot(df[train_index & target > 4, ], aes(cont13, cont3, z = target)) + stat_summary_2d(bins = 100)
 ggplot(df[train_index & target > 5, ], aes(cont13, cont3, z =target_lgb)) + stat_summary_2d(bins = 100)
 
 ggplot(df[train_index & target > 5, ], aes(cont10, target)) + stat_bin_2d(bins = 200)
-ggplot(df[train_index & target > 5, ], aes(w_cont10, target)) + stat_bin_2d(bins = 200)
-
 
 ggplot(df[p_index, ], aes(sample = target_lgb - target)) + stat_qq() + stat_qq_line()
-
 
 ggplot(df[p_index, ], aes(target_lgb, target)) + geom_point(alpha = 0.2) + geom_abline(slope = 1, color = 'red')
 ggplot(df[p_index, ], aes(target_lgb, target  - target_lgb)) + geom_point(alpha = 0.2)
@@ -396,20 +403,98 @@ plot_profile(df[train_index, target],  df[train_index, target_lgb],
 
 #cor(df[train_index, .(target, shift(cont13, 100) )], use = 'pairwise.complete.obs')
 
-pdp_index = sample(which(train_index), 100)
+pdp_index = sample(which(train_index), 1000)
 
 my_model = model.lgb$boosters[[1]][[1]]
 df_plot = partialPlot(my_model, data.matrix(df[pdp_index,lgb_vars, with = FALSE]), xname = "cont1")
 ggplot(df_plot, aes(x, y)) + geom_line()
 
-plots = llply(lgb_vars, function(vname){
+plots = llply(lgb_vars %!in_set% cat_vars, function(vname){
   df_plot = partialPlot(my_model, data.matrix(df[pdp_index,lgb_vars, with = FALSE]), xname = vname, n.pt = 100)
   df_plot[vname] = df_plot$x
-  p = ggplot(df_plot, aes_string(vname, 'y')) + geom_line() + geom_point() + 
-    geom_rug(data = df[pdp_index,c(vname, 'target'), with = FALSE], aes_string(vname, 'target'))
+  p = ggplot(df_plot, aes_string(vname, 'y')) + geom_line() +
+    geom_rug(data = df[pdp_index,c(vname, 'target'), with = FALSE], aes_string(x = vname), sides = 'b', alpha = 0.2, size = 0.1, inherit.aes = FALSE)
 })
-marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
+marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 
+```
+
+# Regress error
+```{r error_regression, eval = FALSE}
+df[, error_lgb := target - target_lgb]
+
+sqrt(mean(df$error_lgb[train_index]^2))
+
+formula.knn    = formula(stri_join( 'error_lgb', ' ~ ', stri_join(unique(all_vars), collapse = ' + ')))
+
+#control = trainControl(method = "repeatedcv", number = 10,repeats = 3)
+control = trainControl("cv", number = 10)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+dfs = df[t_index_v1, all.vars(formula.knn), with = FALSE]
+system.time(model.knn <- train(formula.knn, data = dfs, 
+                               method = "knn", #kknn
+                               trControl = control,
+                               tuneGrid = data.frame(k = seq(200, 500,50)), #use instead of tuneLength
+                               tuneLength = 10,
+                               metric = "RMSE"))
+model.knn
+plot(model.knn)
+
+pred.knn = predict(model.knn, df, type = 'raw')
+
+```
+
+#LightGBM: NON-CV
+
+```{r light_gbm_non_cv, eval = FALSE}
+
+set.seed(132140937)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+lgb_vars = all_vars
+#lgb_vars = stri_join('p_', all_vars)
+#lgb_vars = stri_join('w_', all_vars) #0.6564345
+
+#lgb_vars = c(stri_join('w_', all_vars), stri_join('d6_', all_vars), stri_join('d7_', all_vars))
+
+dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
+dfs = dfs[target >= 4]
+
+dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target, categorical_feature = cat_vars)
+params <- list(objective = "regression", metric = "rmse")
+#params <- list(objective = "huber")
+
+set.seed(140937345)
+
+model.lgb <- lgb.train(
+  params = params,
+  data = dtrain,
+  nrounds = 6100,
+  num_threads = 5, 
+  
+  min_data = 959,
+  learning_rate = 0.0092,
+  num_leaves = 16,
+  bagging_fraction = 0.8911,
+  min_data_in_bin = 4,
+  
+  boost_from_average = TRUE,
+  eval_freq = 100,
+  force_col_wise=TRUE
+)
+
+
+pred.lgb = predict(model.lgb, data.matrix(df[,lgb_vars, with = F]))
+df[, target_lgb :=  pred.lgb]
+#df[, target_lgb :=  predict(model.lgb, data.matrix(df[,lgb_vars, with = F]))]
+
+lgb_importance = lgb.importance(model.lgb, percentage = TRUE)
+lgb.plot.interpretation(lgb_importance)
 
 ```
 
@@ -453,7 +538,7 @@ my_params = data.table(
                        min_data_in_bin = sample(seq(5, 7),n_runs, TRUE),
                        num_leaves = sample(seq(10, 30),n_runs, TRUE))
 
-
+monotone_constraints 
 param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   #run_index = 1
   print(run_index)
@@ -507,9 +592,101 @@ ggplot(param_res, aes(num_leaves, best_score)) + geom_point()  + geom_smooth(spa
 
 ```
 
+#LightGBM Tuning: Mono
+```{r light_gbm_tune, eval = FALSE}
+
+set.seed(132140937)
+
+lgb_vars = all_vars
+#lgb_vars = stri_join('w_', all_vars)
+#lgb_vars = c(all_vars, 'target_knn')
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
+dfs = dfs[target >= 4]
+
+params <- list(objective = "regression", metric = "rmse")
+
+n_cat_vars = length(cat_vars)
+n_con_vars = length(lgb_vars)-n_cat_vars
+n_runs = 1 + 2*n_con_vars # 10 runs per hour
+my_params = matrix(rep(0, length(lgb_vars) * n_runs), nrow = n_runs )
+
+for(i in seq(1,n_runs-1, by =2) ){
+  my_params[i  ,n_cat_vars + 1 + (i%/%2) %% n_con_vars] =  1
+  my_params[i+1,n_cat_vars + 1 + (i%/%2) %% n_con_vars] = -1
+}
+
+n_runs = 100
+my_params =  matrix(sample(c(-1, 0, 1), length(lgb_vars) * n_runs, replace = TRUE), nrow = n_runs )
+my_params[,1:n_cat_vars] = 0
+#all monotonicity combinations
+#data.table(expand.grid(V11 = c(-1, 0, 1), V12 = c(-1, 0, 1), V13 = c(-1, 0, 1), V14 = c(-1, 0, 1), V15 = c(-1, 0, 1), V16 = c(-1, 0, 1), V17 = c(-1, 0, 1), V18 = c(-1, 0, 1),V18 = c(-1, 0, 1) ))
+
+my_params = data.table( my_params)
+#my_params[, V15 := 1] #0.8426315 
+ 
+param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
+  #run_index = 1
+  print(run_index)
+  print(my_params[run_index,])
+  
+  start_time <- Sys.time()
+  
+  dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target, categorical_feature = cat_vars)
+  
+  
+  model.lgb <- lgb.cv(
+  params = params,
+  data = dtrain,
+  nfold = 5,
+  num_threads = 5, 
+  verbose = 0,
+  force_col_wise=TRUE,
+  
+  monotone_constraints= as.numeric(my_params[run_index,]),
+  
+  min_data = 974,
+  learning_rate = 0.0087,
+  num_leaves = 15,
+  bagging_fraction = 0.9192,
+  min_data_in_bin = 5,
+  
+  monotone_constraints_method  = 'intermediate',
+  nrounds = 10000,
+  boost_from_average = TRUE,
+  eval_freq = 100,
+  early_stopping_rounds = 100)
+  
+  print(model.lgb$best_score)
+  
+  gc(reset = TRUE)
+  elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
+  return ( data.frame(best_it = model.lgb$best_iter, best_score = model.lgb$best_score, elapsed = elapsed, run_index= run_index ) ) 
+})
+
+setDT(param_res_raw)
+
+param_res = cbind(param_res_raw, my_params)
+#param_res_raw[best_score  == min(best_score)]
+#param_res = param_res_raw[my_params, on =.(run_index)]
+#setorder(param_res, best_score)
+param_res[, score_diff := best_score - min(best_score)]
+param_res[best_score  == min(best_score)]
+param_res[, score_diff := best_score - min(best_score) ]
+
+#learning_rate = 0.008, bagging_fraction=0.95, min_data = 950, min_data_in_bin = 6
+ggplot(param_res, aes(run_index , best_score)) + geom_point()
+
+```
+
 
 #LightGBM Bayes Tuning
 Round = 14	learning_rate = 0.0092	bagging_fraction = 0.9005	min_data = 818.0000	num_leaves = 14.0000	min_data_in_bin = 6.0000	Value = -0.8501 
+Round = 62	learning_rate = 0.0092	bagging_fraction = 0.8911	min_data = 959.0000	num_leaves = 16.0000	min_data_in_bin = 4.0000	Value = -0.8499 
+Round = 14	learning_rate = 0.0087	bagging_fraction = 0.9192	min_data = 974.0000	num_leaves = 15.0000	min_data_in_bin = 5.0000	Value = -0.8581 
 ```{r light_gbm_bayes_tune, eval = FALSE}
 
 set.seed(132140937)
@@ -521,7 +698,7 @@ t_index_v = which(train_index)
 t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
 
 dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
-dfs = dfs[target >= 5] #exclude target < 5.0
+dfs = dfs[target >= 4] #exclude target < 5.0
 
 
 params <- list(objective = "regression", metric = "rmse")
@@ -557,14 +734,14 @@ lgb_cv_bayes <- function(learning_rate, bagging_fraction, min_data, num_leaves, 
 
 OPT_Res <- BayesianOptimization(lgb_cv_bayes,
                                 bounds = list(
-                                learning_rate = c(0.007, 0.01),
-                                bagging_fraction = c(0.8, 1.0), #default: 1.0
-                                min_data = c(600L, 1200L), #default: 20
-                                num_leaves =c(8L, 30L), #default: 31
-                                min_data_in_bin =c(3L, 9L)), #default: 3
+                                learning_rate = c(0.008, 0.012),
+                                bagging_fraction = c(0.85, 0.95), #default: 1.0
+                                min_data = c(800L, 1200L), #default: 20
+                                num_leaves =c(12L, 20L), #default: 31
+                                min_data_in_bin =c(3L, 6L)), #default: 3
                                 init_grid_dt = NULL, 
                                 init_points = 5, #10
-                                n_iter = 60,     #50
+                                n_iter = 100,     #50
                                 acq = "ucb", kappa = 2.576, eps = 0.0,
                                 verbose = TRUE)
 opt_res = data.table(OPT_Res$History, it_count=as.numeric(OPT_Res$Pred))
@@ -618,12 +795,13 @@ ggplot(opt_res, aes(y, log(-Value) )) + geom_point() + geom_vline(xintercept = 1
 MY BEST: 0.84357
 v1: 0.84357 min(0.8431303)
 v2: 0.84324 min(0.8426456)
+v3: 0.84317 min(0.8426591)
+v4: 0.84327
+v5: 0.84317
 ```{r submit, echo=FALSE}
-  #model_pred = pred.xgb
-  #df[pred.lgb_cv, target_lgb :=  i.avg, on=.(id)]
   #fwrite(df, file.path(working_folder,'Playground/Feb2021/data/df.csv'))
  
-  file = file.path(working_folder, "Playground/Feb2021/submit_v2.lgb.csv")
+  file = file.path(working_folder, "Playground/Feb2021/submit_v5.lgb.csv")
   fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)

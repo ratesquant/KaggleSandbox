@@ -63,6 +63,37 @@ rbf_boot.predict <-function(models, X) {
     return (res)
 }
 
+rbf_boot.create_cv <- function(X, Y, max_nodes, boot_runs = 10, nfolds =10,  kernel_params = 1.0, kernel_fun = function(d, c) exp(-c * d * d), dist_fun = 'L1' ){
+  
+  cv_index = create_cv_index(nrow(X), nfolds)
+  
+    cv_errors = rep(0, nfolds)
+    for (cv_fold in 1:nfolds){
+      
+       start_time <- Sys.time()
+      
+      model_list = rbf_boot.create(X[cv_index != cv_fold], Y[cv_index != cv_fold], max_nodes, n_runs = boot_runs, kernel_params = kernel_params, kernel_fun = kernel_fun, dist_fun = dist_fun)
+      res  = rbf_boot.predict(model_list, X)
+      
+      setDT(res)
+      res_agg = res[, .(y_pred = mean(y_pred)), by =.(id)]
+      setorder(res_agg, id)
+      
+      error_in  = rms(Y[cv_index != cv_fold], res_agg$y_pred[cv_index != cv_fold])
+      error_out = rms(Y[cv_index == cv_fold], res_agg$y_pred[cv_index == cv_fold])
+      
+      elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
+      
+      print(sprintf('cv: %d, error (in): %f, error (out): %f, elapsed: %f', cv_fold, error_in, error_out, elapsed) )
+      
+      cv_errors[cv_fold] = error_out
+    }
+    
+    print(sprintf('cv-error: %f, sigma: %f', mean(cv_errors), sd(cv_errors)) )
+  
+  return (cv_errors)
+}
+
 rbf_boost.create <- function(X, Y, boot_runs = 10, max_it = 20, growth_rate =1.5, kernel_params = 1.0, kernel_fun = function(d, c) exp(-c * d * d), dist_fun = 'L1' ){
   
   n_nodes = 2 * ncol(X)
@@ -326,7 +357,7 @@ y = 0.2 + 0.4 * x * x + 0.3 *x * sin(15 * x) + 0.05 * cos(50 * x)
 df = data.table(x, yt = y, y = y + 0.1*rnorm(length(y)))
 df[, id:=seq(nrow(df))]
 
-ggplot(df, aes(x, y)) + geom_point()
+ggplot(df, aes(x, y)) + geom_point() + geom_line(aes(x, yt), color = 'red', size = 1)
 
 # CV
 cv_res = rbf_boost.create_cv(df[,.(x)],  df$y, boot_runs = 1000, max_it = 20, growth_rate =1.2, nfolds = 10, kernel_params = 1.0, kernel_fun = function(x, c) x, dist_fun = 'L1' )
@@ -387,8 +418,16 @@ ggplot(res_agg, aes(x, y)) + geom_point() + geom_line(aes(x, y_pred), color = 'r
 res[order(run_id),y_pred_cum := cummean(y_pred), by =.(id) ]
 
 it_error = res[order(id), .(error = rms(df$y, y_pred_cum)), by =.(run_id) ] #it_error[error == min(error)]
-ggplot(it_error, aes(run_id, error)) + geom_line()
+ggplot(it_error, aes(run_id, error)) + geom_line() + geom_hline(yintercept = 0.1, color = 'red', linetype = 'dashed')
 
+## ------------- Boot CV
+run_cases = expand.grid(nodes = seq(20, 40), runs = c(100, 200, 300))
+cv_res = ldply(seq(nrow(run_cases)), function(run_id){
+  cv_res = rbf_boot.create_cv(df[,.(x)], df$y, max_nodes = run_cases$nodes[run_id], boot_runs = run_cases$runs[run_id], nfolds =10,  kernel_params = 1.0, kernel_fun = function(x, c) x, dist_fun = 'L1' )
+  data.frame(cv_error = mean(cv_res), max_nodes = run_cases$nodes[run_id], boot_runs = run_cases$runs[run_id])
+})
+
+ggplot(cv_res, aes(max_nodes, cv_error, group = boot_runs, color = factor(boot_runs) )) + geom_point() +  geom_line() + geom_smooth(se = FALSE, color = 'black') + facet_wrap(~boot_runs)
 ```
 
 ## RBF Boosting: Large Scale Test

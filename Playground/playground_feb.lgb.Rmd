@@ -40,7 +40,7 @@ rmsqr <-function(actual, model) {
 ## Load Data
 
 ```{r load_data}
-load_existing = TRUE
+load_existing = FALSE
 
 if (load_existing) {
   df <- fread(file.path(working_folder,'Playground/Feb2021/data/df.csv'), check.names = TRUE)
@@ -62,8 +62,9 @@ obj_var = 'target'
 all_vars = names(df) %!in_set% c('id', obj_var) #14 variables
 all_vars = all_vars[grep('^(cont|cat)', all_vars)]
 cat_vars = all_vars[grep('^(cat)', all_vars)]
+con_vars = all_vars[grep('^(cont)', all_vars)]
 
-df[, (cat_vars):=lapply(.SD, function(x) fct_infreq(fct_lump_min(x, 0.01*nrow(df), other_level = "OT"))), .SDcols = cat_vars]
+df[, (cat_vars):=lapply(.SD, function(x) fct_infreq(fct_lump_min(x, 0.03*nrow(df), other_level = "OT"))), .SDcols = cat_vars]
 
 plot_profiles <-function(model, data)
 {
@@ -203,6 +204,30 @@ ggplot(df[p_index], aes((cont13 / cont14 ), target)) + geom_point() + geom_smoot
 
 ```
 
+## DCT
+does not help
+```{r dct,  eval = FALSE}
+library(dtt)
+
+dct_vars = stri_join('dct_', con_vars)
+dst_vars = stri_join('dst_', con_vars)
+dht_vars = stri_join('dht_', con_vars)
+
+df_dct =  data.table(dct(df[, con_vars, with = FALSE], inverted = FALSE))
+names(df_dct) <- dct_vars
+df = cbind(df, df_dct)
+
+df_dst =  data.table(dst(df[, con_vars, with = FALSE], inverted = FALSE))
+names(df_dst) <- dst_vars
+df = cbind(df, df_dst)
+
+df_dht =  data.table(dht(df[, con_vars, with = FALSE], inverted = FALSE))
+names(df_dht) <- dht_vars
+df = cbind(df, df_dht)
+
+```
+
+
 
 ## Winsorization
 
@@ -224,6 +249,34 @@ df[, (w_vars):=lapply(.SD, function(x) winsoraze(x, x[train_index], 0.009123116)
 #df[, (d_vars):=lapply(.SD, function(x) (100*x) %% 7 ), .SDcols = all_vars]
 
 ```
+
+## TSNE
+takes a really long time
+```{r tsne,  eval = FALSE}
+library(Rtsne)
+
+set.seed(132140937)
+
+c_index = sample.int(nrow(df), 10000)
+
+tsne <- Rtsne(df[c_index, con_vars, with = FALSE], perplexity = 30, num_threads = 2, verbose = 1, theta=0.5, max_iter = 1000)
+
+ggplot(data.frame(tsne$Y, label = factor(df[c_index, is.na(target)]) ), aes(X1, X2, group = label, color = label)) + geom_point()
+
+#head(tsne$Y)
+#all data 
+#tsne_all <- Rtsne(df[, con_vars, with = FALSE], perplexity = 100)
+
+#fwrite(data.frame(id = df$id[c_index], x = tsne$Y ), file.path(working_folder,'Playground/Feb2021/data/tsne.csv'))
+
+#all 
+tsne <- Rtsne(df[, con_vars, with = FALSE], perplexity = 30, num_threads = 2, verbose = 1, theta=0.5, max_iter = 1000)
+fwrite(data.frame(id = df$id, x = tsne$Y ), file.path(working_folder,'Playground/Feb2021/data/tsne.csv'))
+
+df = cbind(df, tsne1 = tsne$Y[,1], tsne2 = tsne$Y[,1])
+
+```
+
 
 ## Count vars
 
@@ -249,41 +302,6 @@ ggplot(df[p_index, ], aes(temp, target )) + geom_point(alpha = 0.2) + geom_smoot
 
 ```
 
-##MARS
-
-```{r mars}
-library(earth)
-
-t_index_v = which(train_index)
-t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
-
-
-formula.mars = formula(stri_join( obj_var, ' ~ ', stri_join(all_vars, collapse = ' + ')))
-
-model.mars <- earth(formula.mars, 
-                    data = df[t_index_v1, c(obj_var, all_vars), with = FALSE], 
-                    degree = 3, nfold = 5, trace = 2, nk = 100, pmethod="cv", thresh = 0.001)
-
-#degree 1,  GRSq 0.03410652  RSq 0.03433832  mean.oof.RSq 0.03411973 (sd 0.00129)
-#degree 2,  GRSq 0.03862549  RSq 0.03901  mean.oof.RSq 0.04015907 (sd 0.00344)
-
-summary(model.mars)
-plot(evimp(model.mars))
-
-#basis_fun = data.table(id = df$id[t_index_v1], model.mars$bx)
-#fwrite(basis_fun, file.path(working_folder,'Playground/Jan2021/data/basis_fun.csv'))
-
-pred.mars <- predict(model.mars, df[,all_vars, with = F] )
-
-rmsqr(df$target[train_index], pred.mars[train_index] )
-#rmsqr(df$target[train_index], df$target_mars[train_index] )
-
-plot_profiles(pred.mars[train_index], df[train_index,])
-
-#df[, target_mars := pred.mars]
-#fwrite(df, file.path(working_folder,'Playground/Jan2021/data/df.csv'))
-
-```
 
 #LightGBM
 Round = 62	learning_rate = 0.0092	bagging_fraction = 0.8911	min_data = 959.0000	num_leaves = 16.0000	min_data_in_bin = 4.0000	Value = -0.8499 
@@ -296,6 +314,8 @@ t_index_v = which(train_index)
 t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
 
 lgb_vars = all_vars
+#lgb_vars = c(all_vars, 'tsne1', 'tsne2') 
+#lgb_vars = c(all_vars, dct_vars, dst_vars, dht_vars) 
 #lgb_vars = stri_join('p_', all_vars)
 #lgb_vars = stri_join('w_', all_vars) #0.6564345
 
@@ -309,7 +329,7 @@ params <- list(objective = "regression", metric = "rmse")
 #params <- list(objective = "huber")
 
 var.monotone = rep(0, length(lgb_vars))
-mon_inc_vars = c('cont4')
+mon_inc_vars = c()
 mon_dec_vars = c()
 var.monotone[lgb_vars %in% mon_inc_vars]  =  1
 var.monotone[lgb_vars %in% mon_dec_vars]  = -1
@@ -371,11 +391,12 @@ lgb.plot.interpretation(lgb_importance)
 p_index = sample(which(train_index), 10000)
 ggplot(df[p_index, ], aes(target_lgb, target)) + geom_point(alpha = 0.2) + geom_abline(slope = 1, color = 'red')
 #ggplot(df[p_index, ], aes(p_cont3, target)) + geom_point(alpha = 0.5) + geom_smooth(se = FALSE)
-ggplot(df[p_index, ], aes(cont8, target)) + geom_point(alpha = 0.5) + geom_smooth(se = FALSE)
+ggplot(df[p_index, ], aes(sin(10*cont7), target)) + geom_point(alpha = 0.5) + geom_smooth(se = FALSE, span = 0.1)
+ggplot(df[p_index, ], aes(cont7, sin(10*cont7))) + geom_point(alpha = 0.5)
 
 #all y ~ x counts
 plots = llply(lgb_vars, function(vname){
-  p = ggplot(df[train_index & target > 5, ], aes_string(vname, 'target')) + stat_bin_2d(bins = 200) +ggtitle(vname) + 
+  p = ggplot(df[train_index & target >= 4, ], aes_string(vname, 'target')) + stat_bin_2d(bins = 200) +ggtitle(vname) + 
     theme(axis.title.x = element_blank(), legend.position = 'none')
 })
 marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
@@ -383,9 +404,8 @@ marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
 
 ggplot(df[train_index & target > 4, ], aes(cont13, cont3)) + stat_bin_2d(bins = 100)
 ggplot(df[train_index & target > 4, ], aes(cont13, cont3, z = target)) + stat_summary_2d(bins = 100)
-ggplot(df[train_index & target > 5, ], aes(cont13, cont3, z =target_lgb)) + stat_summary_2d(bins = 100)
-
-ggplot(df[train_index & target > 5, ], aes(cont10, target)) + stat_bin_2d(bins = 200)
+ggplot(df[train_index & target > 4, ], aes(cont13, cont3, z =target_lgb)) + stat_summary_2d(bins = 100)
+ggplot(df[train_index & target > 4, ], aes(cont10, target)) + stat_bin_2d(bins = 200)
 
 ggplot(df[p_index, ], aes(sample = target_lgb - target)) + stat_qq() + stat_qq_line()
 
@@ -400,6 +420,8 @@ ggplot(df[train_index, ], aes(target_lgb - target)) + stat_ecdf()
 
 plot_profile(df[train_index, target],  df[train_index, target_lgb], 
              df[train_index,  cont8], bucket_count = 50, error_band = 'norm') 
+
+plot_profiles(df$target_lgb[train_index], df[train_index,])
 
 #cor(df[train_index, .(target, shift(cont13, 100) )], use = 'pairwise.complete.obs')
 
@@ -418,6 +440,85 @@ plots = llply(lgb_vars %!in_set% cat_vars, function(vname){
 marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 
 ```
+
+#LightGBM: Bagging
+
+```{r light_gbm_bagging, eval = FALSE}
+
+set.seed(132140937)
+
+n_runs = 10
+
+for (run_id in 1:n_runs){
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v), replace = TRUE)
+
+lgb_vars = all_vars
+
+dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
+dfs = dfs[target >= 4]
+
+dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target, categorical_feature = cat_vars)
+params <- list(objective = "regression", metric = "rmse")
+
+model.lgb <- lgb.cv(
+  params = params,
+  data = dtrain,
+  nrounds = 20000,
+  nfold = 10,
+  num_threads = 5, 
+  
+  #monotone_constraints= var.monotone,
+  #monotone_constraints_method  = 'intermediate',
+  
+  min_data = 974,
+  learning_rate = 0.0087,
+  num_leaves = 15,
+  bagging_fraction = 0.9192,
+  min_data_in_bin = 5,
+  
+  boost_from_average = TRUE,
+  eval_freq = 100,
+  early_stopping_rounds = 100,
+  force_col_wise=TRUE
+)
+
+#best.iter = model.lgb$best_iter #
+#model.lgb$best_score #0.6983437
+
+cv_error = as.numeric(model.lgb$record_evals$valid$rmse$eval)
+#ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line()
+
+min(cv_error)
+
+dm_all = data.matrix(df[,lgb_vars, with = F])
+pred.lgb_cvi = ldply(seq(length(model.lgb$boosters)), function(i){ data.frame(cv = i, id = df$id, pred=  predict(model.lgb$boosters[[i]], dm_all)$booster) } )
+setDT(pred.lgb_cvi)
+
+pred.lgb_cv_summary = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(cv)]
+pred.lgb_cv         = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(id)]
+
+my_rms = rmsqr(df$target[train_index], pred.lgb_cv$avg[train_index] )
+
+df[pred.lgb_cv, target_lgb :=  i.avg, on=.(id)]
+
+print(sprintf('%d, best_it: %d, best_cv: %f, rms: %f', run_id,  model.lgb$best_iter, model.lgb$best_score, my_rms ))
+
+fwrite(df, file.path(working_folder, sprintf('Playground/Feb2021/data/df_bag_%d.csv', run_id)))
+
+}
+
+```
+
+
+#LightGBM: Read Bagging results
+
+```{r light_gbm_bagging_results, eval = FALSE}
+
+
+```
+
 
 # Regress error
 ```{r error_regression, eval = FALSE}
@@ -592,6 +693,82 @@ ggplot(param_res, aes(num_leaves, best_score)) + geom_point()  + geom_smooth(spa
 
 ```
 
+#LightGBM Tuning: 1D
+ 
+```{r light_gbm_tune, eval = FALSE}
+
+set.seed(132140937)
+
+lgb_vars = all_vars
+#lgb_vars = stri_join('w_', all_vars)
+#lgb_vars = c(all_vars, 'target_knn')
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
+dfs = dfs[target >= 4]
+
+params <- list(objective = "regression", metric = "rmse")
+
+my_params = data.table(cat_min  = seq(0.01, 0.1, by = 0.01))  #default: 31
+
+param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
+  #run_index = 1
+  print(run_index)
+  print(my_params[run_index,])
+  
+  start_time <- Sys.time()
+  
+  
+  dfs[, (cat_vars):=lapply(.SD, function(x) fct_infreq(fct_lump_min(x, my_params$cat_min[run_index]*nrow(dfs), other_level = "OT"))), .SDcols = cat_vars]
+  
+  dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target, categorical_feature = cat_vars)
+  
+  model.lgb <- lgb.cv(
+  params = params,
+  data = dtrain,
+  nfold = 10,
+  num_threads = 5, 
+  verbose = 0,
+  force_col_wise=TRUE,
+
+  min_data = 974,
+  learning_rate = 0.0087,
+  num_leaves = 15,
+  bagging_fraction = 0.9192,
+  min_data_in_bin = 5,
+  
+  nrounds = 10000,
+  boost_from_average = TRUE,
+  eval_freq = 100,
+  early_stopping_rounds = 100)
+  
+  print(model.lgb$best_score)
+  
+  gc(reset = TRUE)
+  elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
+  return ( data.frame(best_it = model.lgb$best_iter, best_score = model.lgb$best_score, elapsed = elapsed ) ) 
+})
+
+param_res = cbind(param_res_raw, my_params)
+setDT(param_res)
+setorder(param_res, best_score)
+param_res[, rank:=seq(nrow(param_res))]
+param_res[best_score  == min(best_score)]
+
+#learning_rate = 0.008, bagging_fraction=0.95, min_data = 950, min_data_in_bin = 6
+
+ggplot(param_res, aes(best_it, elapsed)) + geom_point()
+ggplot(param_res, aes(cat_min, best_score)) + geom_point()
+ggplot(param_res, aes(learning_rate, best_score)) + geom_point() + geom_smooth()
+ggplot(param_res, aes(bagging_fraction, best_score)) + geom_point() + geom_smooth()
+ggplot(param_res, aes(min_data, best_score)) + geom_point()+ geom_smooth()
+ggplot(param_res, aes(min_data_in_bin, best_score)) + geom_point() + geom_smooth(span  = 0.5)
+ggplot(param_res, aes(num_leaves, best_score)) + geom_point()  + geom_smooth(span  = 0.5)
+
+```
+
 #LightGBM Tuning: Mono
 ```{r light_gbm_tune, eval = FALSE}
 
@@ -619,9 +796,10 @@ for(i in seq(1,n_runs-1, by =2) ){
   my_params[i+1,n_cat_vars + 1 + (i%/%2) %% n_con_vars] = -1
 }
 
-n_runs = 100
+n_runs = 1
 my_params =  matrix(sample(c(-1, 0, 1), length(lgb_vars) * n_runs, replace = TRUE), nrow = n_runs )
 my_params[,1:n_cat_vars] = 0
+my_params[,] = 0
 #all monotonicity combinations
 #data.table(expand.grid(V11 = c(-1, 0, 1), V12 = c(-1, 0, 1), V13 = c(-1, 0, 1), V14 = c(-1, 0, 1), V15 = c(-1, 0, 1), V16 = c(-1, 0, 1), V17 = c(-1, 0, 1), V18 = c(-1, 0, 1),V18 = c(-1, 0, 1) ))
 
@@ -647,6 +825,81 @@ param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   force_col_wise=TRUE,
   
   monotone_constraints= as.numeric(my_params[run_index,]),
+  
+  min_data = 974,
+  learning_rate = 0.0087,
+  num_leaves = 15,
+  bagging_fraction = 0.9192,
+  min_data_in_bin = 5,
+  
+  monotone_constraints_method  = 'intermediate',
+  nrounds = 10000,
+  boost_from_average = TRUE,
+  eval_freq = 100,
+  early_stopping_rounds = 100)
+  
+  print(model.lgb$best_score)
+  
+  gc(reset = TRUE)
+  elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
+  return ( data.frame(best_it = model.lgb$best_iter, best_score = model.lgb$best_score, elapsed = elapsed, run_index= run_index ) ) 
+})
+
+setDT(param_res_raw)
+
+param_res = cbind(param_res_raw, my_params)
+#param_res_raw[best_score  == min(best_score)]
+#param_res = param_res_raw[my_params, on =.(run_index)]
+#setorder(param_res, best_score)
+param_res[, score_diff := best_score - min(best_score)]
+param_res[best_score  == min(best_score)]
+param_res[, score_diff := best_score - min(best_score) ]
+
+#learning_rate = 0.008, bagging_fraction=0.95, min_data = 950, min_data_in_bin = 6
+ggplot(param_res, aes(run_index , best_score)) + geom_point()
+
+```
+
+#LightGBM Tuning: Var Exclusion
+    best_it best_score  elapsed run_index    var
+ 1:    5911  0.8426344 6.822805         8   cat7
+ 2:    6337  0.8427150 7.585254        13  cont2
+ 3:    7387  0.8427190 8.681920        15  cont4
+ 4:    6469  0.8427234 7.527228         5   cat4
+ 5:    6548  0.8427421 7.801312         6   cat5
+```{r light_gbm_var_exclude, eval = FALSE}
+
+set.seed(132140937)
+
+lgb_vars = all_vars
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
+dfs = dfs[target >= 4]
+
+params <- list(objective = "regression", metric = "rmse")
+
+my_params = data.table( var = c('', all_vars))
+
+param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
+  #run_index = 1
+  print(run_index)
+  print(my_params[run_index,])
+  
+  start_time <- Sys.time()
+  
+  dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars %!in_set% my_params[run_index,] , with = FALSE]), label = dfs$target, categorical_feature = cat_vars %!in_set% my_params[run_index,])
+  
+  
+  model.lgb <- lgb.cv(
+  params = params,
+  data = dtrain,
+  nfold = 10,
+  num_threads = 5, 
+  verbose = 0,
+  force_col_wise=TRUE,
   
   min_data = 974,
   learning_rate = 0.0087,
@@ -798,10 +1051,13 @@ v2: 0.84324 min(0.8426456)
 v3: 0.84317 min(0.8426591)
 v4: 0.84327
 v5: 0.84317
+v6: 0.84309
+v7: 0.84398
+    0.84309
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Feb2021/data/df.csv'))
  
-  file = file.path(working_folder, "Playground/Feb2021/submit_v5.lgb.csv")
+  file = file.path(working_folder, "Playground/Feb2021/submit_v7.lgb.csv")
   fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)

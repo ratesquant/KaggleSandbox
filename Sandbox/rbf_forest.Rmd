@@ -117,6 +117,9 @@ rbf_boost.predict <- function(models, X, combine_boots = TRUE){
        
        return (temp[, .(.N, y_pred = mean(y_pred, na.rm = TRUE), y_pred_sigma = sd(y_pred, na.rm = TRUE)), by =.(id, model_id1)])
      })
+     
+     setDT(res)
+     res = res[order(model_id1), y_pred_cum := cumsum(y_pred), by =.(id)]
     
   }else{
      res = ldply(seq(length(models)), function(model_id1) {
@@ -141,7 +144,7 @@ create_cv_index <- function(n, nfolds){
 rbf_boost.create_cv <- function(X, Y, max_nodes, boot_runs = 10, nfolds =10,  kernel_params = 1.0, kernel_fun = function(d, c) exp(-c * d * d), dist_fun = 'L1' ){
   
   max_it = 10
-  n_nodes = 2
+  n_nodes = 2 * ncol(X)
   
   objective_list = llply(seq(nfolds), function(i) Y)
   
@@ -153,6 +156,8 @@ rbf_boost.create_cv <- function(X, Y, max_nodes, boot_runs = 10, nfolds =10,  ke
   {
     cv_errors = rep(0, nfolds)
     for (cv_fold in 1:nfolds){
+      
+       start_time <- Sys.time()
       
       current_objective = objective_list[[cv_fold]]
       
@@ -166,7 +171,10 @@ rbf_boost.create_cv <- function(X, Y, max_nodes, boot_runs = 10, nfolds =10,  ke
       error_in  = rms(current_objective[cv_index != cv_fold], res_agg$y_pred[cv_index != cv_fold])
       error_out = rms(current_objective[cv_index == cv_fold], res_agg$y_pred[cv_index == cv_fold])
       
-      print(sprintf('it: %d, nodes: %d, cv: %d, error (in): %f, error (out): %f', it, n_nodes, cv_fold, error_in, error_out) )
+      
+      elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
+      
+      print(sprintf('it: %d, nodes: %d, cv: %d, error (in): %f, error (out): %f, elapsed: %f', it, n_nodes, cv_fold, error_in, error_out, elapsed) )
       
       objective_list[[cv_fold]] = current_objective - res_agg$y_pred
       cv_errors[cv_fold] = error_out
@@ -236,6 +244,38 @@ ggplot(res, aes(x, y_pred_cum, group = run_id)) + geom_line(color = 'blue', alph
 it_error = res[order(id), .(error = rms(df$y, y_pred_cum)), by =.(run_id) ] #it_error[error == min(error)]
 ggplot(it_error, aes(run_id, error)) + geom_line()
 
+
+### timing -----
+#     i    elapsed max_nodes runs
+# 1   1 0.06701708        10  100
+# 2   2 0.09002113        20  100
+# 3   3 0.09902382        30  100
+# 4   4 0.14203405        40  100
+# 5   5 0.19905114        50  100
+# 6   6 0.72421694       100  100
+# 7   7 0.12702894        10  200
+# 8   8 0.16515708        20  200
+# 9   9 0.20706105        30  200
+# 10 10 0.28006792        40  200
+# 11 11 0.36710811        50  200
+# 12 12 1.22707701       100  200
+# 13 13 0.19611096        10  300
+# 14 14 0.24510908        20  300
+# 15 15 0.31862092        30  300
+# 16 16 0.43617892        40  300
+# 17 17 0.66931200        50  300
+# 18 18 2.01136398       100  300
+run_cases = expand.grid(max_nodes = c(10, 20, 30, 40, 50, 100), boot_samples = c(100, 200, 300))
+
+timing_res = ldply(seq(nrow(run_cases)), function(i){
+  
+ start_time = Sys.time()
+ models = rbf_boot.create(df[,.(x)], df$y, max_nodes = run_cases$max_nodes[i], n_runs = run_cases$boot_samples[i], kernel_fun = function(x, c) x)
+ 
+ data.frame(i, elapsed = as.numeric(Sys.time() - start_time), max_nodes = run_cases$max_nodes[i],  runs = run_cases$boot_samples[i])
+})
+
+ggplot(timing_res, aes(max_nodes, elapsed)) + geom_line() + facet_wrap(~runs)
 ```
 
 ## RBF Boosting
@@ -296,15 +336,14 @@ all_vars = all_vars[grep('cont', all_vars)]
 
 max_nodes = 1024
 
-my_index = sample( which(train_index), 0.01*sum(train_index))
+my_index = sample( which(train_index), 1.0*sum(train_index))
 
 models_boost =  rbf_boost.create(df[my_index,all_vars, with = FALSE],  df$target[my_index], max_nodes, boot_runs = 100, kernel_params = 1.0, kernel_fun = function(x, c) x, dist_fun = 'L1' )
 res = rbf_boost.predict(models_boost, df[my_index,all_vars, with = FALSE], combine_boots = TRUE)
 setDT(res)
 
-ggplot(res[order(id), .(error = rms(y_pred, df$target[my_index])), by =.(model_id1) ] , aes(model_id1, error)) + geom_line() +  geom_point()
+ggplot(res[order(id), .(error = rms(y_pred_cum, df$target[my_index])), by =.(model_id1) ] , aes(model_id1, error)) + geom_line() +  geom_point()
 
- 
 #boost results for each step, run with combine_boots = FALSE
 res_conv = res[, .(y_pred = mean(y_pred)), by =.(id, model_id1 )]
 res_conv[order(model_id1), y_pred_cum := cumsum(y_pred), by =.(id)]
@@ -312,7 +351,7 @@ ggplot(res_conv[order(id), .(error = rms(y_pred_cum, df$target[my_index])), by =
 
 
 # CV ---------
-cv_res = rbf_boost.create_cv(df[,.(x)],  df$y, max_nodes = 160, boot_runs = 100, nfolds = 10, kernel_params = 1.0, kernel_fun = function(x, c) x, dist_fun = 'L1' )
+cv_res = rbf_boost.create_cv(df[my_index,all_vars, with = FALSE],  df$target[my_index], max_nodes = 1024, boot_runs = 100, nfolds = 10, kernel_params = 1.0, kernel_fun = function(x, c) x, dist_fun = 'L1' )
 df_cv_res = data.table(it = seq(nrow(cv_res)), avg = apply(cv_res, 1, mean ), sigma = apply(cv_res, 1, sd ), cv_res )
 ggplot(df_cv_res[avg>0], aes(it, avg)) + geom_line() + geom_ribbon(aes(it, ymin = avg - sigma, ymax = avg + sigma), alpha = 0.2, fill = 'blue')
 ```

@@ -14,6 +14,7 @@ library(MASS)
 library(ggplot2)
 library(plyr)
 library(dplyr)
+library(stringi)
 
 
 working_folder = 'D:/Github/KaggleSandbox'
@@ -72,7 +73,7 @@ rbf_boot.create_cv <- function(X, Y, max_nodes, boot_runs = 10, nfolds =10,  ker
       
        start_time <- Sys.time()
       
-      model_list = rbf_boot.create(X[cv_index != cv_fold], Y[cv_index != cv_fold], max_nodes, n_runs = boot_runs, kernel_params = kernel_params, kernel_fun = kernel_fun, dist_fun = dist_fun)
+      model_list = rbf_boot.create(X[cv_index != cv_fold,], Y[cv_index != cv_fold], max_nodes, n_runs = boot_runs, kernel_params = kernel_params, kernel_fun = kernel_fun, dist_fun = dist_fun)
       res  = rbf_boot.predict(model_list, X)
       
       setDT(res)
@@ -421,34 +422,70 @@ it_error = res[order(id), .(error = rms(df$y, y_pred_cum)), by =.(run_id) ] #it_
 ggplot(it_error, aes(run_id, error)) + geom_line() + geom_hline(yintercept = 0.1, color = 'red', linetype = 'dashed')
 
 ## ------------- Boot CV
-run_cases = expand.grid(nodes = seq(20, 40), runs = c(100, 200, 300))
+run_cases = expand.grid(nodes = seq(10, 60), runs = c(100, 200, 300, 1000), nfolds = c(2, 3, 4, 5, 6, 7, 8, 9, 10, 20))
 cv_res = ldply(seq(nrow(run_cases)), function(run_id){
-  cv_res = rbf_boot.create_cv(df[,.(x)], df$y, max_nodes = run_cases$nodes[run_id], boot_runs = run_cases$runs[run_id], nfolds =10,  kernel_params = 1.0, kernel_fun = function(x, c) x, dist_fun = 'L1' )
-  data.frame(cv_error = mean(cv_res), max_nodes = run_cases$nodes[run_id], boot_runs = run_cases$runs[run_id])
+  cv_res = rbf_boot.create_cv(df[,.(x)], df$y, max_nodes = run_cases$nodes[run_id], boot_runs = run_cases$runs[run_id], nfolds =run_cases$nfolds[run_id],  
+                              kernel_params = 1.0, kernel_fun = function(x, c) x, dist_fun = 'L1' )
+  data.frame(cv_error = mean(cv_res), max_nodes = run_cases$nodes[run_id], boot_runs = run_cases$runs[run_id], nfolds =run_cases$nfolds[run_id])
 })
 
-ggplot(cv_res, aes(max_nodes, cv_error, group = boot_runs, color = factor(boot_runs) )) + geom_point() +  geom_line() + geom_smooth(se = FALSE, color = 'black') + facet_wrap(~boot_runs)
+ggplot(cv_res, aes(max_nodes, cv_error, group = nfolds, color = factor(nfolds) )) + geom_point() +  geom_line() + geom_smooth(se = FALSE, color = 'black') + facet_grid(nfolds~boot_runs) +
+   geom_hline(yintercept = 0.1, color = 'red', linetype = 'dashed')
 ```
 
 ## RBF Boosting: Large Scale Test
 
 ```{r rbf_boosting_test}
 
-train <- fread(file.path(working_folder,'Playground/Jan2021/data/train.csv'), check.names = TRUE)
-test  <- fread(file.path(working_folder,'Playground/Jan2021/data/test.csv'),  check.names = TRUE) # 1459   80
+train <- fread(file.path(working_folder,'Playground/Feb2021/data/train.csv'), check.names = TRUE)
+test  <- fread(file.path(working_folder,'Playground/Feb2021/data/test.csv'),  check.names = TRUE) # 1459   80
 test[, target:=NA]
 df = rbind(train, test)
+
+gc(reset=TRUE)
 
 test_index = is.na(df$target)
 train_index = !test_index
 
 obj_var = 'target'
 all_vars = names(df) %!in_set% c('id', obj_var) #14 variables
-all_vars = all_vars[grep('cont', all_vars)]
+all_vars = all_vars[grep('^(cont|cat)', all_vars)]
+cat_vars = all_vars[grep('^(cat)', all_vars)]
+con_vars = all_vars[grep('^(cont)', all_vars)]
 
-max_nodes = 1024
+## ------------- Boot CV ------
+convert_to_prob <-function(x, train_index){
+  if(is.character(x) )x = as.numeric(as.factor(x))
+  ecdf(x[train_index])(x)
+}
+p_vars = stri_join('p_', all_vars)
+df[, (p_vars):=lapply(.SD, function(x) convert_to_prob(x, train_index)), .SDcols = all_vars]
+
 
 my_index = sample( which(train_index), 1.0*sum(train_index))
+run_cases = expand.grid(nodes = c(10, 60, 100, 150, 200, 300, 400, 500), runs = c(10, 100, 200))
+
+dfs = data.matrix(df[my_index,p_vars, with = FALSE])
+target = df$target[my_index]
+
+cv_res = ldply(seq(nrow(run_cases)), function(run_id){
+  cv_res = rbf_boot.create_cv(dfs, target, max_nodes = run_cases$nodes[run_id], boot_runs = run_cases$runs[run_id], nfolds = 10,  
+                              kernel_params = 1.0, kernel_fun = function(x, c) x, dist_fun = 'L1' )
+  data.frame(cv_error = mean(cv_res), cv_sigma = sd(cv_res), max_nodes = run_cases$nodes[run_id], boot_runs = run_cases$runs[run_id])
+})
+
+#cv error: 0.8510029
+#target: 0.84309
+min(cv_res$cv_error) #0.8529316
+
+ggplot(cv_res, aes(max_nodes, cv_error, group = boot_runs, color = factor(boot_runs) )) + geom_point() +  geom_line() + # + geom_smooth(se = FALSE, color = 'black') + 
+   geom_hline(yintercept = 0.84164, color = 'red', linetype = 'dashed')
+
+
+
+
+
+
 
 models_boost =  rbf_boost.create(df[my_index,all_vars, with = FALSE],  df$target[my_index], max_nodes, boot_runs = 100, kernel_params = 1.0, kernel_fun = function(x, c) x, dist_fun = 'L1' )
 res = rbf_boost.predict(models_boost, df[my_index,all_vars, with = FALSE], combine_boots = TRUE)

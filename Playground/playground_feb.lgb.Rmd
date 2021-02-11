@@ -447,12 +447,13 @@ marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 
 set.seed(132140937)
 
-n_runs = 10
+n_runs = 30
 
 for (run_id in 1:n_runs){
 
 t_index_v = which(train_index)
-t_index_v1 = sample(t_index_v, 1.0*length(t_index_v), replace = TRUE)
+#t_index_v1 = sample(t_index_v, 1.0*length(t_index_v), replace = TRUE)
+t_index_v1 = sample(t_index_v, 0.8*length(t_index_v), replace = FALSE)
 
 lgb_vars = all_vars
 
@@ -513,10 +514,26 @@ fwrite(df, file.path(working_folder, sprintf('Playground/Feb2021/data/df_bag_%d.
 
 
 #LightGBM: Read Bagging results
-
+best so far: 0.84309
+10 runs without replacement (70%) 0.84318
+30 runs without replacement (80%) 0.84310
 ```{r light_gbm_bagging_results, eval = FALSE}
+library(foreach)
 
+ bag_files = list.files(file.path(working_folder,'Playground/Feb2021/data/'), pattern = glob2rx('df_bag_*.csv'), full.names = TRUE)
 
+ df_t = foreach(name = bag_files, .combine = rbind) %do% {
+  df_t = fread(name)
+  df_t[, name := basename(name) ]
+  return(df_t)
+ }
+ 
+ df_res = df_t[, .(.N, target = mean(target_lgb, na.rm = TRUE)), by =.(id)]
+ 
+  file = file.path(working_folder, "Playground/Feb2021/submit_v8.lgb.csv")
+  fwrite(df_res[id %in% df$id[test_index] , .(id, target)], file = file, row.names = FALSE)
+  zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
+  print(file)
 ```
 
 

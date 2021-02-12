@@ -20,207 +20,9 @@ library(stringi)
 working_folder = 'D:/Github/KaggleSandbox'
 
 source(file.path(working_folder, 'Utils/common.R'))
-
-```
-
-## RBF function
-
-```{r rbf_functions}
+source(file.path(working_folder, 'Utils/rbf_utils.R'))
 
 rms <-function(y1, y2) sqrt( mean( (y1 - y2)^2 ))
-
-rbf.create <- function(X, Y, nodes, kernel_params = 1.0, kernel_fun = function(d, c) exp(-c * d * d), dist_fun = 'L1' ){
-  M = cbind(1, kernel_fun(dist(X, nodes, method = dist_fun), kernel_params) ) 
-  w = ginv(t(M) %*% M) %*% t(M) %*% Y 
-  
-  return ( list(weights = w, nodes = nodes, kernel_params = kernel_params, kernel_fun = kernel_fun, dist_fun = dist_fun) )
-}
-
-rbf.predict <- function(model, X){
-  
-  nodes          = model$nodes
-  weights        = model$weights
-  dist_fun       = model$dist_fun
-  kernel_params  = model$kernel_params
-  kernel_fun     = model$kernel_fun
-  
-  M = kernel_fun(dist(X, nodes, method = dist_fun), kernel_params)
-  pred = weights[1] + M %*% weights[-1]
-  return ( as.numeric(pred) )
-}
-
-rbf_boot.create <- function(X, Y, max_nodes, n_runs = 10, kernel_params = 1.0, kernel_fun = function(d, c) exp(-c * d * d), dist_fun = 'L1' ){
-  model_list = llply(seq(n_runs), function(run_id) {
-    rbf.create(X, Y, as.matrix(X[sample.int(nrow(X), max_nodes),]), kernel_params = kernel_params, kernel_fun = kernel_fun, dist_fun = dist_fun )
-  })
-}
-
-rbf_boot.predict <-function(models, X) {
-  
-  res = ldply(seq(length(models)), function(run_id) {
-    y_pred = as.numeric(rbf.predict(models[[run_id]], X))
-    data.frame(run_id, y_pred, id = seq(length(y_pred)) )
-    })
-    return (res)
-}
-
-rbf_boot.create_cv <- function(X, Y, max_nodes, boot_runs = 10, nfolds =10,  kernel_params = 1.0, kernel_fun = function(d, c) exp(-c * d * d), dist_fun = 'L1' ){
-  
-  cv_index = create_cv_index(nrow(X), nfolds)
-  
-    cv_errors = rep(0, nfolds)
-    for (cv_fold in 1:nfolds){
-      
-       start_time <- Sys.time()
-      
-      model_list = rbf_boot.create(X[cv_index != cv_fold,], Y[cv_index != cv_fold], max_nodes, n_runs = boot_runs, kernel_params = kernel_params, kernel_fun = kernel_fun, dist_fun = dist_fun)
-      res  = rbf_boot.predict(model_list, X)
-      
-      setDT(res)
-      res_agg = res[, .(y_pred = mean(y_pred)), by =.(id)]
-      setorder(res_agg, id)
-      
-      error_in  = rms(Y[cv_index != cv_fold], res_agg$y_pred[cv_index != cv_fold])
-      error_out = rms(Y[cv_index == cv_fold], res_agg$y_pred[cv_index == cv_fold])
-      
-      elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
-      
-      print(sprintf('cv: %d, error (in): %f, error (out): %f, elapsed: %f', cv_fold, error_in, error_out, elapsed) )
-      
-      cv_errors[cv_fold] = error_out
-    }
-    
-    print(sprintf('cv-error: %f, sigma: %f', mean(cv_errors), sd(cv_errors)) )
-  
-  return (cv_errors)
-}
-
-rbf_boost.create <- function(X, Y, boot_runs = 10, max_it = 20, growth_rate =1.5, kernel_params = 1.0, kernel_fun = function(d, c) exp(-c * d * d), dist_fun = 'L1' ){
-  
-  n_nodes = 2 * ncol(X)
-  current_objective = Y
-  
-  all_models = list()
-  
-  for(it in 1:max_it)
-  {
-    
-    start_time <- Sys.time()
-    
-    model_list = rbf_boot.create(X, current_objective, n_nodes, n_runs = boot_runs, kernel_params = kernel_params, kernel_fun = kernel_fun, dist_fun = dist_fun)
-    res = rbf_boot.predict(model_list, X)
-    
-    setDT(res)
-    res_agg = res[, .(y_pred = mean(y_pred)), by =.(id)]
-    setorder(res_agg, id)
-    
-    elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
-    
-    print(sprintf('it: %d, nodes: %d, error: %f, elapsed: %f', it, n_nodes, rms(current_objective, res_agg$y_pred), elapsed ))
-    
-    current_objective = current_objective - res_agg$y_pred
-
-    all_models[[it]] = model_list    
-    
-    n_nodes = pmax(round(growth_rate * n_nodes), n_nodes + 1) 
-    
-    if(n_nodes >= nrow(X))
-      break
-  }
-  return (all_models)
-}
-
-rbf_boost.predict <- function(models, X, combine_boots = TRUE){
-  
-  res = NULL
-  
-  if(combine_boots){
-     res = ldply(seq(length(models)), function(model_id1) {
-       
-       boot_models = models[[model_id1]]
-       
-       temp = ldply(seq(length(boot_models)), function(model_id2) {
-         y_pred = as.numeric(rbf.predict(boot_models[[model_id2]], X))
-         data.frame(model_id1, model_id2, y_pred, id = seq(length(y_pred)) )
-      })
-       
-       setDT(temp)
-       
-       return (temp[, .(.N, y_pred = mean(y_pred, na.rm = TRUE), y_pred_sigma = sd(y_pred, na.rm = TRUE)), by =.(id, model_id1)])
-     })
-     
-     setDT(res)
-     res = res[order(model_id1), y_pred_cum := cumsum(y_pred), by =.(id)]
-    
-  }else{
-     res = ldply(seq(length(models)), function(model_id1) {
-       
-       boot_models = models[[model_id1]]
-       
-       ldply(seq(length(boot_models)), function(model_id2) {
-         y_pred = as.numeric(rbf.predict(boot_models[[model_id2]], X))
-         data.frame(model_id1, model_id2, y_pred, id = seq(length(y_pred)) )
-      })
-     })
-  }
-   return (res)
-}
-
-create_cv_index <- function(n, nfolds){
-  index = c(rep(seq(nfolds), n %/% nfolds), sample(seq(nfolds), n%%nfolds))
-  return( sample(index, n) )
-}
-
-
-rbf_boost.create_cv <- function(X, Y, max_nodes, boot_runs = 10, max_it = 20, growth_rate =1.5, nfolds =10,  kernel_params = 1.0, kernel_fun = function(d, c) exp(-c * d * d), dist_fun = 'L1' ){
-  
-  n_nodes = 2 * ncol(X)
-  
-  objective_list = llply(seq(nfolds), function(i) Y)
-  
-  cv_index = create_cv_index(nrow(X), nfolds)
-  
-  res_cv = matrix(0, max_it, nfolds)
-  
-  for(it in 1:max_it)
-  {
-    cv_errors = rep(0, nfolds)
-    for (cv_fold in 1:nfolds){
-      
-       start_time <- Sys.time()
-      
-      current_objective = objective_list[[cv_fold]]
-      
-      model_list = rbf_boot.create(X[cv_index != cv_fold], current_objective[cv_index != cv_fold], n_nodes, n_runs = boot_runs, kernel_params = kernel_params, kernel_fun = kernel_fun, dist_fun = dist_fun)
-      res  = rbf_boot.predict(model_list, X)
-      
-      setDT(res)
-      res_agg = res[, .(y_pred = mean(y_pred)), by =.(id)]
-      setorder(res_agg, id)
-      
-      error_in  = rms(current_objective[cv_index != cv_fold], res_agg$y_pred[cv_index != cv_fold])
-      error_out = rms(current_objective[cv_index == cv_fold], res_agg$y_pred[cv_index == cv_fold])
-      
-      
-      elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
-      
-      print(sprintf('it: %d, nodes: %d, cv: %d, error (in): %f, error (out): %f, elapsed: %f', it, n_nodes, cv_fold, error_in, error_out, elapsed) )
-      
-      objective_list[[cv_fold]] = current_objective - res_agg$y_pred
-      cv_errors[cv_fold] = error_out
-    }
-    
-    print(sprintf('it: %d, nodes: %d, cv-error: %f, sigma: %f', it, n_nodes, mean(cv_errors), sd(cv_errors)) )
-    
-    res_cv[it,] = cv_errors
-    
-    n_nodes = pmax(round(growth_rate * n_nodes), n_nodes + 1)
-    
-    if( n_nodes > nrow(X) * (nfolds - 1) / nfolds)
-      break
-  }
-  return (res_cv)
-}
 
 ```
 
@@ -232,7 +34,13 @@ y = 0.2 + 0.4 * x * x + 0.3 *x * sin(15 * x) + 0.05 * cos(50 * x)
 
 df = data.table(x, y)
 
-model.rbf = rbf.create(df[,.(x)], df$y, as.matrix(c(0.5, 0.1, 0.7)), kernel_fun = function(x, c) x)
+model.rbf = rbf.create(df[,.(x)], df$y, as.matrix(c(0.5, 0.1, 0.7)), kernel_fun = rbf_linear_kernel)
+#model.rbf = rbf.create(df[,.(x)], df$y, as.matrix(c(0.5, 0.1, 0.7)), kernel_fun = rbf_tp_kernel)
+#model.rbf = rbf.create(df[,.(x)], df$y, as.matrix(c(0.5, 0.1, 0.7)), kernel_fun = rbf_cauchy_kernel)
+#model.rbf = rbf.create(df[,.(x)], df$y, as.matrix(c(0.5, 0.1, 0.7)), kernel_fun = rbf_cubic_kernel)
+#model.rbf = rbf.create(df[,.(x)], df$y, as.matrix(c(0.5, 0.1, 0.7)), kernel_fun = function(x) rbf_imquad_kernel(x*10))
+#model.rbf = rbf.create(df[,.(x)], df$y, as.matrix(c(0.5, 0.1, 0.7)), kernel_fun = function(x) rbf_mquad_kernel(x*10))
+#model.rbf = rbf.create(df[,.(x)], df$y, as.matrix(c(0.5, 0.1, 0.7)), kernel_fun =function(x) rbf_bump_kernel(10*x))
 
 y_pred = rbf.predict(model.rbf, df[,.(x)])
 
@@ -251,7 +59,8 @@ df[, id:=seq(nrow(df))]
 
 max_nodes = 20
 
-models = rbf_boot.create(df[,.(x)], df$y, max_nodes, n_runs = 1000, kernel_fun = function(x, c) x)
+models = rbf_boot.create(df[,.(x)], df$y, max_nodes, n_runs = 100, kernel_fun = rbf_linear_kernel)
+#models = rbf_boot.create(df[,.(x)], df$y, max_nodes, n_runs = 100, kernel_fun = rbf_tp_kernel)
 res = rbf_boot.predict(models, df[,.(x)])
 setDT(res)
 res_agg = res[, .(y_pred = mean(y_pred), sigma = sd(y_pred), .N ), by =.(id)]
@@ -277,37 +86,25 @@ ggplot(it_error, aes(run_id, error)) + geom_line()
 ```
 
 ## RBF Timing
-     i    elapsed max_nodes runs
- 1   1 0.06701708        10  100
- 2   2 0.09002113        20  100
- 3   3 0.09902382        30  100
- 4   4 0.14203405        40  100
- 5   5 0.19905114        50  100
- 6   6 0.72421694       100  100
- 7   7 0.12702894        10  200
- 8   8 0.16515708        20  200
- 9   9 0.20706105        30  200
- 10 10 0.28006792        40  200
- 11 11 0.36710811        50  200
- 12 12 1.22707701       100  200
- 13 13 0.19611096        10  300
- 14 14 0.24510908        20  300
- 15 15 0.31862092        30  300
- 16 16 0.43617892        40  300
- 17 17 0.66931200        50  300
- 18 18 2.01136398       100  300
+                       Estimate Std. Error t value Pr(>|t|)    
+(Intercept)              -2.664e-01  9.741e-02  -2.735   0.0153 *  
+I(max_nodes * max_nodes)  9.883e-05  1.038e-05   9.520 9.50e-08 ***
+runs                      3.217e-03  4.335e-04   7.423 2.14e-06 ***
+
 ```{r rbf_timing}
 run_cases = expand.grid(max_nodes = c(10, 20, 30, 40, 50, 100), boot_samples = c(100, 200, 300))
 
 timing_res = ldply(seq(nrow(run_cases)), function(i){
   
  start_time = Sys.time()
- models = rbf_boot.create(df[,.(x)], df$y, max_nodes = run_cases$max_nodes[i], n_runs = run_cases$boot_samples[i], kernel_fun = function(x, c) x)
+ models = rbf_boot.create(df[,.(x)], df$y, max_nodes = run_cases$max_nodes[i], n_runs = run_cases$boot_samples[i], kernel_fun =rbf_linear_kernel)
  
  data.frame(i, elapsed = as.numeric(Sys.time() - start_time), max_nodes = run_cases$max_nodes[i],  runs = run_cases$boot_samples[i])
 })
 
 ggplot(timing_res, aes(max_nodes, elapsed)) + geom_line() + facet_wrap(~runs)
+
+summary(lm(elapsed  ~ I(max_nodes * max_nodes) + runs, timing_res))
 ```
 
 ## RBF Boosting
@@ -320,7 +117,7 @@ df[, id:=seq(nrow(df))]
 
 max_nodes = 65
 
-models_boost =  rbf_boost.create(df[,.(x)],  df$y, max_nodes, boot_runs = 100,  growth_rate =1.5, kernel_params = 1.0, kernel_fun = function(x, c) x, dist_fun = 'L1' )
+models_boost =  rbf_boost.create(df[,.(x)],  df$y, max_nodes, boot_runs = 100,  growth_rate =1.5, kernel_fun =rbf_linear_kernel)
 res = rbf_boost.predict(models_boost, df[,.(x)], combine_boots = FALSE)
 
 setDT(res)
@@ -343,11 +140,10 @@ ggplot(res_conv, aes(x, y_pred_cum)) + geom_line(color = 'red', size = 1)  + geo
 #Convergence
 ggplot(res_conv[order(id), .(error = rms(y_pred_cum, df$y)), by =.(model_id1) ] , aes(model_id1, error)) + geom_line() +  geom_point()
 
-
 # CV ---------
-cv_res = rbf_boost.create_cv(df[,.(x)],  df$y, max_nodes = 160, boot_runs = 100, growth_rate =1.5, nfolds = 10, kernel_params = 1.0, kernel_fun = function(x, c) x, dist_fun = 'L1' )
+cv_res = rbf_boost.create_cv(df[,.(x)],  df$y, max_nodes = 10, boot_runs = 10, max_it = 20, growth_rate =2.0, nfolds = 10, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' )
 df_cv_res = data.table(it = seq(nrow(cv_res)), avg = apply(cv_res, 1, mean ), sigma = apply(cv_res, 1, sd ), cv_res )
-ggplot(df_cv_res[avg>0], aes(it, avg)) + geom_line() + geom_ribbon(aes(it, ymin = avg - sigma, ymax = avg + sigma), alpha = 0.2, fill = 'blue')
+ggplot(df_cv_res, aes(it, avg)) + geom_line() + geom_ribbon(aes(it, ymin = avg - sigma, ymax = avg + sigma), alpha = 0.2, fill = 'blue')
 ```
 
 ## RBF with Noise
@@ -361,7 +157,7 @@ df[, id:=seq(nrow(df))]
 ggplot(df, aes(x, y)) + geom_point() + geom_line(aes(x, yt), color = 'red', size = 1)
 
 # CV
-cv_res = rbf_boost.create_cv(df[,.(x)],  df$y, boot_runs = 1000, max_it = 20, growth_rate =1.2, nfolds = 10, kernel_params = 1.0, kernel_fun = function(x, c) x, dist_fun = 'L1' )
+cv_res = rbf_boost.create_cv(df[,.(x)],  df$y, max_nodes = 100, boot_runs = 30, max_it = 20, growth_rate = 2.0, nfolds = 10, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' )
 df_cv_res = data.table(it = seq(nrow(cv_res)), avg = apply(cv_res, 1, mean ), sigma = apply(cv_res, 1, sd ), cv_res )
 ggplot(df_cv_res[avg>0], aes(it, avg)) + geom_line() + geom_ribbon(aes(it, ymin = avg - sigma, ymax = avg + sigma), alpha = 0.2, fill = 'blue') + 
   geom_hline(yintercept = 0.1, color = 'red', linetype = 'dashed')
@@ -369,7 +165,7 @@ ggplot(df_cv_res[avg>0], aes(it, avg)) + geom_line() + geom_ribbon(aes(it, ymin 
 df_cv_res[avg == min(avg)]#0.102632 
 
 # build model
-models_boost =  rbf_boost.create(df[,.(x)],  df$y, boot_runs = 1000, max_it = 12, growth_rate =1.2, kernel_params = 1.0, kernel_fun = function(x, c) x, dist_fun = 'L1' )
+models_boost =  rbf_boost.create(df[,.(x)],  df$y, boot_runs = 30, max_nodes = 20, max_it = 20, growth_rate =2, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' )
 res = rbf_boost.predict(models_boost, df[,.(x)], combine_boots = FALSE)
 setDT(res)
  
@@ -398,7 +194,7 @@ rms(df$yt, res_conv[model_id1 == 12]$y_pred_cum)
 
 
 ## ------------- Boot model with the same number of nodes
-models = rbf_boot.create(df[,.(x)], df$y, max_nodes = 31, n_runs = 1000, kernel_fun = function(x, c) x)
+models = rbf_boot.create(df[,.(x)], df$y, max_nodes = 31, n_runs = 1000, kernel_fun = rbf_linear_kernel)
 res = rbf_boot.predict(models, df[,.(x)])
 setDT(res)
 

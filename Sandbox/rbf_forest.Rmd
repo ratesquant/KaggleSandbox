@@ -92,19 +92,19 @@ I(max_nodes * max_nodes)  9.883e-05  1.038e-05   9.520 9.50e-08 ***
 runs                      3.217e-03  4.335e-04   7.423 2.14e-06 ***
 
 ```{r rbf_timing}
-run_cases = expand.grid(max_nodes = c(10, 20, 30, 40, 50, 100), boot_samples = c(100, 200, 300))
+run_cases = expand.grid(n_nodes = c(10, 20, 30, 40, 50, 100), boot_samples = c(100, 200, 300))
 
 timing_res = ldply(seq(nrow(run_cases)), function(i){
   
  start_time = Sys.time()
- models = rbf_boot.create(df[,.(x)], df$y, max_nodes = run_cases$max_nodes[i], n_runs = run_cases$boot_samples[i], kernel_fun =rbf_linear_kernel)
+ models = rbf_boot.create(df[,.(x)], df$y, n_nodes = run_cases$n_nodes[i], n_runs = run_cases$boot_samples[i], kernel_fun =rbf_linear_kernel)
  
- data.frame(i, elapsed = as.numeric(Sys.time() - start_time), max_nodes = run_cases$max_nodes[i],  runs = run_cases$boot_samples[i])
+ data.frame(i, elapsed = as.numeric(Sys.time() - start_time), n_nodes = run_cases$n_nodes[i],  runs = run_cases$boot_samples[i])
 })
 
-ggplot(timing_res, aes(max_nodes, elapsed)) + geom_line() + facet_wrap(~runs)
+ggplot(timing_res, aes(n_nodes, elapsed)) + geom_line() + facet_wrap(~runs)
 
-summary(lm(elapsed  ~ I(max_nodes * max_nodes) + runs, timing_res))
+summary(lm(elapsed  ~ I(n_nodes * n_nodes) + runs, timing_res))
 ```
 
 ## RBF Boosting

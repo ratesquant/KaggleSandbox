@@ -29,21 +29,21 @@ rbf.predict <- function(model, X){
   return ( as.numeric(pred) )
 }
 #bootstrap RBF regressions 
-rbf_boot.create <- function(X, Y, max_nodes, n_runs = 10, kernel_fun = rbf_linear_kernel, dist_fun = 'L2' ){
+rbf_boot.create <- function(X, Y, n_nodes, n_runs = 10, kernel_fun = rbf_linear_kernel, dist_fun = 'L2' ){
   model_list = llply(seq(n_runs), function(run_id) {
-    rbf.create(X, Y, as.matrix(X[sample.int(nrow(X), max_nodes),]), kernel_fun = kernel_fun, dist_fun = dist_fun )
+    rbf.create(X, Y, as.matrix(X[sample.int(nrow(X), n_nodes),]), kernel_fun = kernel_fun, dist_fun = dist_fun )
   })
 }
 
 rbf_boot.predict <-function(models, X) {
   res = ldply(seq(length(models)), function(run_id) {
     y_pred = as.numeric(rbf.predict(models[[run_id]], X))
-    data.frame(run_id, y_pred, id = seq(length(y_pred)) )
+    data.frame(run_id, y_pred, id = seq(length(y_pred)))
   })
   return (res)
 }
 
-rbf_boot.create_cv <- function(X, Y, max_nodes, boot_runs = 10, nfolds =10, kernel_fun = rbf_linear_kernel, dist_fun = 'L2' ){
+rbf_boot.create_cv <- function(X, Y, n_nodes, n_runs = 10, nfolds =10, kernel_fun = rbf_linear_kernel, dist_fun = 'L2' ){
   
   cv_index = create_cv_index(nrow(X), nfolds)
   
@@ -52,7 +52,7 @@ rbf_boot.create_cv <- function(X, Y, max_nodes, boot_runs = 10, nfolds =10, kern
     
     start_time <- Sys.time()
     
-    model_list = rbf_boot.create(X[cv_index != cv_fold], Y[cv_index != cv_fold], max_nodes, n_runs = boot_runs, kernel_fun = kernel_fun, dist_fun = dist_fun)
+    model_list = rbf_boot.create(X[cv_index != cv_fold,], Y[cv_index != cv_fold], n_nodes = n_nodes, n_runs = n_runs, kernel_fun = kernel_fun, dist_fun = dist_fun)
     res  = rbf_boot.predict(model_list, X)
     
     setDT(res)
@@ -64,17 +64,17 @@ rbf_boot.create_cv <- function(X, Y, max_nodes, boot_runs = 10, nfolds =10, kern
     
     elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
     
-    print(sprintf('cv: %d, error (in/out): %f / %f, elapsed: %f', cv_fold, error_in, error_out, elapsed) )
+    print(sprintf('cv: %d, error (in/out): %f / %f, elapsed: %f min', cv_fold, error_in, error_out, elapsed) )
     
     cv_errors[cv_fold] = error_out
   }
   
-  print(sprintf('cv-error: %f, sigma: %f', mean(cv_errors), sd(cv_errors)) )
+  print(sprintf('cv-error: %f, sigma: %f, nodes: %d, runs: %d', mean(cv_errors), sd(cv_errors), n_nodes, n_runs) )
   
   return (cv_errors)
 }
 
-rbf_boost.create <- function(X, Y, boot_runs = 10, max_nodes = 20, max_it = 20, growth_rate =1.5, kernel_fun = rbf_linear_kernel, dist_fun = 'L2' ){
+rbf_boost.create <- function(X, Y, max_nodes = 20, n_runs = 10, max_it = 20, growth_rate =2.0, kernel_fun = rbf_linear_kernel, dist_fun = 'L2' ){
   
   n_nodes = 2 * ncol(X)
   current_objective = Y
@@ -83,10 +83,9 @@ rbf_boost.create <- function(X, Y, boot_runs = 10, max_nodes = 20, max_it = 20, 
   
   for(it in 1:max_it)
   {
-    
     start_time <- Sys.time()
     
-    model_list = rbf_boot.create(X, current_objective, n_nodes, n_runs = boot_runs, kernel_fun = kernel_fun, dist_fun = dist_fun)
+    model_list = rbf_boot.create(X, current_objective, n_nodes, n_runs = n_runs, kernel_fun = kernel_fun, dist_fun = dist_fun)
     res = rbf_boot.predict(model_list, X)
     
     setDT(res)
@@ -151,7 +150,7 @@ create_cv_index <- function(n, nfolds){
 }
 
 
-rbf_boost.create_cv <- function(X, Y, max_nodes, boot_runs = 10, max_it = 20, growth_rate =1.5, nfolds =10, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' ){
+rbf_boost.create_cv <- function(X, Y, max_nodes, n_runs = 10, max_it = 20, growth_rate = 2.0, nfolds =10, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' ){
   
   n_nodes = 2 * ncol(X)
   
@@ -170,7 +169,7 @@ rbf_boost.create_cv <- function(X, Y, max_nodes, boot_runs = 10, max_it = 20, gr
       
       current_objective = objective_list[[cv_fold]]
       
-      model_list = rbf_boot.create(X[cv_index != cv_fold], current_objective[cv_index != cv_fold], n_nodes, n_runs = boot_runs, kernel_fun = kernel_fun, dist_fun = dist_fun)
+      model_list = rbf_boot.create(X[cv_index != cv_fold,], current_objective[cv_index != cv_fold], n_nodes = n_nodes, n_runs = n_runs, kernel_fun = kernel_fun, dist_fun = dist_fun)
       res  = rbf_boot.predict(model_list, X)
       
       setDT(res)

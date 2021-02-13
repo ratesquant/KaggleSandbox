@@ -117,7 +117,7 @@ df[, id:=seq(nrow(df))]
 
 max_nodes = 65
 
-models_boost =  rbf_boost.create(df[,.(x)],  df$y, max_nodes, boot_runs = 100,  growth_rate =1.5, kernel_fun =rbf_linear_kernel)
+models_boost =  rbf_boost.create(df[,.(x)],  df$y, max_nodes, n_runs = 100,  growth_rate =1.5, kernel_fun =rbf_linear_kernel)
 res = rbf_boost.predict(models_boost, df[,.(x)], combine_boots = FALSE)
 
 setDT(res)
@@ -141,7 +141,7 @@ ggplot(res_conv, aes(x, y_pred_cum)) + geom_line(color = 'red', size = 1)  + geo
 ggplot(res_conv[order(id), .(error = rms(y_pred_cum, df$y)), by =.(model_id1) ] , aes(model_id1, error)) + geom_line() +  geom_point()
 
 # CV ---------
-cv_res = rbf_boost.create_cv(df[,.(x)],  df$y, max_nodes = 10, boot_runs = 10, max_it = 20, growth_rate =2.0, nfolds = 10, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' )
+cv_res = rbf_boost.create_cv(df[,.(x)],  df$y, max_nodes = 100, n_runs = 10, max_it = 20, growth_rate =2.0, nfolds = 10, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' )
 df_cv_res = data.table(it = seq(nrow(cv_res)), avg = apply(cv_res, 1, mean ), sigma = apply(cv_res, 1, sd ), cv_res )
 ggplot(df_cv_res, aes(it, avg)) + geom_line() + geom_ribbon(aes(it, ymin = avg - sigma, ymax = avg + sigma), alpha = 0.2, fill = 'blue')
 ```
@@ -157,7 +157,7 @@ df[, id:=seq(nrow(df))]
 ggplot(df, aes(x, y)) + geom_point() + geom_line(aes(x, yt), color = 'red', size = 1)
 
 # CV
-cv_res = rbf_boost.create_cv(df[,.(x)],  df$y, max_nodes = 100, boot_runs = 30, max_it = 20, growth_rate = 2.0, nfolds = 10, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' )
+cv_res = rbf_boost.create_cv(df[,.(x)],  df$y, max_nodes = 100, n_runs = 30, max_it = 20, growth_rate = 2.0, nfolds = 10, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' )
 df_cv_res = data.table(it = seq(nrow(cv_res)), avg = apply(cv_res, 1, mean ), sigma = apply(cv_res, 1, sd ), cv_res )
 ggplot(df_cv_res[avg>0], aes(it, avg)) + geom_line() + geom_ribbon(aes(it, ymin = avg - sigma, ymax = avg + sigma), alpha = 0.2, fill = 'blue') + 
   geom_hline(yintercept = 0.1, color = 'red', linetype = 'dashed')
@@ -165,7 +165,7 @@ ggplot(df_cv_res[avg>0], aes(it, avg)) + geom_line() + geom_ribbon(aes(it, ymin 
 df_cv_res[avg == min(avg)]#0.102632 
 
 # build model
-models_boost =  rbf_boost.create(df[,.(x)],  df$y, boot_runs = 30, max_nodes = 20, max_it = 20, growth_rate =2, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' )
+models_boost =  rbf_boost.create(df[,.(x)],  df$y,  max_nodes = 20, n_runs = 30, max_it = 20, growth_rate =2, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' )
 res = rbf_boost.predict(models_boost, df[,.(x)], combine_boots = FALSE)
 setDT(res)
  
@@ -259,44 +259,46 @@ df[, (p_vars):=lapply(.SD, function(x) convert_to_prob(x, train_index)), .SDcols
 
 
 my_index = sample( which(train_index), 1.0*sum(train_index))
-run_cases = expand.grid(nodes = c(10, 60, 100, 150, 200, 300, 400, 500), runs = c(10, 100, 200))
+run_cases = expand.grid(nodes = c(700, 800, 900), runs = c(10, 20), dist_fun = c('L1'), stringsAsFactors = FALSE )
+
+#%% bootsrap runs ----------------
+#10 runs with 500 nodes - 4 min
 
 dfs = data.matrix(df[my_index,p_vars, with = FALSE])
 target = df$target[my_index]
 
 cv_res = ldply(seq(nrow(run_cases)), function(run_id){
-  cv_res = rbf_boot.create_cv(dfs, target, max_nodes = run_cases$nodes[run_id], boot_runs = run_cases$runs[run_id], nfolds = 10,  
-                              kernel_params = 1.0, kernel_fun = function(x, c) x, dist_fun = 'L1' )
-  data.frame(cv_error = mean(cv_res), cv_sigma = sd(cv_res), max_nodes = run_cases$nodes[run_id], boot_runs = run_cases$runs[run_id])
+  cv_res = rbf_boot.create_cv(dfs, target, n_nodes = run_cases$nodes[run_id], n_runs = run_cases$runs[run_id], nfolds = 7, kernel_fun = rbf_linear_kernel, dist_fun = run_cases$dist_fun[run_id] )
+  data.frame(cv_error = mean(cv_res), cv_sigma = sd(cv_res), n_nodes = run_cases$nodes[run_id], n_runs = run_cases$runs[run_id], dist_fun = run_cases$dist_fun[run_id])
 })
+setDT(cv_res)
 
-#cv error: 0.8510029
-#target: 0.84309
-min(cv_res$cv_error) #0.8529316
+#rbf_boot.create_cv(dfs, target, n_nodes = 1000, n_runs = 10, nfolds = 5, kernel_fun = rbf_linear_kernel, dist_fun = 'L1')
 
-ggplot(cv_res, aes(max_nodes, cv_error, group = boot_runs, color = factor(boot_runs) )) + geom_point() +  geom_line() + # + geom_smooth(se = FALSE, color = 'black') + 
+#source(file.path(working_folder, 'Utils/rbf_utils.R'))
+ggplot(cv_res, aes(n_nodes, cv_error, group = n_runs, color = factor(n_runs) )) + geom_point() +  geom_line() # + facet_wrap(~dist_fun)# + geom_smooth(se = FALSE, color = 'black') + 
    geom_hline(yintercept = 0.84164, color = 'red', linetype = 'dashed')
 
 
+#cv error: 0.8510029
+#target: 0.84309
+min(cv_res$cv_error) #0.8533613
 
 
-
-
-
-models_boost =  rbf_boost.create(df[my_index,all_vars, with = FALSE],  df$target[my_index], max_nodes, boot_runs = 100, kernel_params = 1.0, kernel_fun = function(x, c) x, dist_fun = 'L1' )
-res = rbf_boost.predict(models_boost, df[my_index,all_vars, with = FALSE], combine_boots = TRUE)
+#%% boost runs ----------------
+models_boost =  rbf_boost.create(dfs, target, max_nodes = 6000, n_runs = 20, max_it = 20, growth_rate = 2.0, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' )
+res = rbf_boost.predict(models_boost, dfs, combine_boots = TRUE)
 setDT(res)
-
 ggplot(res[order(id), .(error = rms(y_pred_cum, df$target[my_index])), by =.(model_id1) ] , aes(model_id1, error)) + geom_line() +  geom_point()
 
 #boost results for each step, run with combine_boots = FALSE
-res_conv = res[, .(y_pred = mean(y_pred)), by =.(id, model_id1 )]
-res_conv[order(model_id1), y_pred_cum := cumsum(y_pred), by =.(id)]
-ggplot(res_conv[order(id), .(error = rms(y_pred_cum, df$target[my_index])), by =.(model_id1) ] , aes(model_id1, error)) + geom_line() +  geom_point()
+#res_conv = res[, .(y_pred = mean(y_pred)), by =.(id, model_id1 )]
+#res_conv[order(model_id1), y_pred_cum := cumsum(y_pred), by =.(id)]
+#ggplot(res_conv[order(id), .(error = rms(y_pred_cum, df$target[my_index])), by =.(model_id1) ] , aes(model_id1, error)) + geom_line() +  geom_point()
 
 
 # CV ---------
-cv_res = rbf_boost.create_cv(df[my_index,all_vars, with = FALSE],  df$target[my_index], max_nodes = 1024, boot_runs = 100, nfolds = 10, kernel_params = 1.0, kernel_fun = function(x, c) x, dist_fun = 'L1' )
+cv_res = rbf_boost.create_cv(dfs, target, max_nodes = 1024, n_runs = 20, max_it = 20, nfolds = 10, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' )
 df_cv_res = data.table(it = seq(nrow(cv_res)), avg = apply(cv_res, 1, mean ), sigma = apply(cv_res, 1, sd ), cv_res )
 ggplot(df_cv_res[avg>0], aes(it, avg)) + geom_line() + geom_ribbon(aes(it, ymin = avg - sigma, ymax = avg + sigma), alpha = 0.2, fill = 'blue')
 ```

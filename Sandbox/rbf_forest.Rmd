@@ -15,7 +15,8 @@ library(ggplot2)
 library(plyr)
 library(dplyr)
 library(stringi)
-
+library(caret)
+library(gridExtra)
 
 working_folder = 'D:/Github/KaggleSandbox'
 
@@ -34,20 +35,45 @@ y = 0.2 + 0.4 * x * x + 0.3 *x * sin(15 * x) + 0.05 * cos(50 * x)
 
 df = data.table(x, y)
 
-model.rbf = rbf.create(df[,.(x)], df$y, as.matrix(c(0.5, 0.1, 0.7)), kernel_fun = rbf_linear_kernel)
-#model.rbf = rbf.create(df[,.(x)], df$y, as.matrix(c(0.5, 0.1, 0.7)), kernel_fun = rbf_tp_kernel)
-#model.rbf = rbf.create(df[,.(x)], df$y, as.matrix(c(0.5, 0.1, 0.7)), kernel_fun = rbf_cauchy_kernel)
-#model.rbf = rbf.create(df[,.(x)], df$y, as.matrix(c(0.5, 0.1, 0.7)), kernel_fun = rbf_cubic_kernel)
-#model.rbf = rbf.create(df[,.(x)], df$y, as.matrix(c(0.5, 0.1, 0.7)), kernel_fun = function(x) rbf_imquad_kernel(x*10))
-#model.rbf = rbf.create(df[,.(x)], df$y, as.matrix(c(0.5, 0.1, 0.7)), kernel_fun = function(x) rbf_mquad_kernel(x*10))
-#model.rbf = rbf.create(df[,.(x)], df$y, as.matrix(c(0.5, 0.1, 0.7)), kernel_fun =function(x) rbf_bump_kernel(10*x))
+nodes = as.matrix(c(0.25, 0.75))
+
+model.rbf = rbf.create(df[,.(x)], df$y, nodes, kernel_fun = rbf_linear_kernel)
+model.rbf = rbf.create(df[,.(x)], df$y, nodes, kernel_fun = rbf_tp_kernel)
+model.rbf = rbf.create(df[,.(x)], df$y, nodes, kernel_fun = rbf_cauchy_kernel)
+model.rbf = rbf.create(df[,.(x)], df$y, nodes, kernel_fun = rbf_cubic_kernel)
+model.rbf = rbf.create(df[,.(x)], df$y, nodes, kernel_fun = rbf_imquad_kernel)
+model.rbf = rbf.create(df[,.(x)], df$y, nodes, kernel_fun = rbf_mquad_kernel)
+model.rbf = rbf.create(df[,.(x)], df$y, nodes, kernel_fun = rbf_bump_kernel)
 
 y_pred = rbf.predict(model.rbf, df[,.(x)])
-
 ggplot(cbind(df, y_pred), aes(x, y)) + geom_point() + geom_line(aes(x, y_pred), color = 'red')
 
 ```
 
+## Test ALL
+
+```{r test_ALL}
+x = seq(0, 1, by = 0.01)
+y = 0.2 + 0.4 * x * x + 0.3 *x * sin(15 * x) + 0.05 * cos(50 * x)
+
+df = data.table(x, y)
+
+nodes = as.matrix(c(0.25, 0.75))
+
+rbf_kernels = list('rbf_linear_kernel' = rbf_linear_kernel, 'rbf_cauchy_kernel' = rbf_cauchy_kernel, 
+                   'rbf_cubic_kernel' = rbf_cubic_kernel, 'rbf_gauss_kernel' = rbf_gauss_kernel, 
+                   'rbf_bump_kernel' = rbf_bump_kernel, 'rbf_mquad_kernel' = rbf_mquad_kernel, 'rbf_imquad_kernel' = rbf_imquad_kernel,
+                   'rbf_tp_kernel' = rbf_tp_kernel, 'rbf_iquad_kernel' = rbf_iquad_kernel, 'rbf_acq_kernel' = rbf_acq_kernel)
+
+df_res = ldply(names(rbf_kernels), function(my_kernel) {
+  model.rbf = rbf.create(df[,.(x)], df$y, nodes, kernel_fun = function(x) rbf_kernels[[my_kernel]](x) )  
+  y_pred = rbf.predict(model.rbf, df[,.(x)])
+  return ( cbind(df, y_pred, my_kernel) )
+  })
+
+ggplot(df_res, aes(x, y)) + geom_point(alpha = 0.5) + geom_line(aes(x, y_pred), color = 'red', size = 1) + 
+  geom_vline(xintercept = c(0.25, 0.75), linetype = 'dashed') + facet_wrap(~my_kernel)
+```
 
 ## RBF Boot
 
@@ -254,27 +280,30 @@ convert_to_prob <-function(x, train_index){
   if(is.character(x) )x = as.numeric(as.factor(x))
   ecdf(x[train_index])(x)
 }
-p_vars = stri_join('p_', all_vars)
+p_vars = stri_join('p_', con_vars)
 df[, (p_vars):=lapply(.SD, function(x) convert_to_prob(x, train_index)), .SDcols = all_vars]
 
+#one hot for categorical variables ----
+one_hot <- dummyVars(" ~ .", data=df[, cat_vars, with = FALSE])
+dt_one_hot <- data.table(predict(one_hot, newdata =df[, cat_vars, with = FALSE]))
+df = cbind(df, dt_one_hot)
+rfb_vars = c(p_vars, names(dt_one_hot))
 
-my_index = sample( which(train_index), 1.0*sum(train_index))
-run_cases = expand.grid(nodes = c(700, 800, 900), runs = c(10, 20), dist_fun = c('L1'), stringsAsFactors = FALSE )
+my_index = sample( which(train_index), 0.1*sum(train_index))
 
 #%% bootsrap runs ----------------
 #10 runs with 500 nodes - 4 min
 
-dfs = data.matrix(df[my_index,p_vars, with = FALSE])
+dfs = data.matrix(df[my_index,rfb_vars, with = FALSE])
 target = df$target[my_index]
 
+run_cases = expand.grid(nodes = c(700), runs = c(10), dist_fun = c('L1'), stringsAsFactors = FALSE )
 cv_res = ldply(seq(nrow(run_cases)), function(run_id){
   cv_res = rbf_boot.create_cv(dfs, target, n_nodes = run_cases$nodes[run_id], n_runs = run_cases$runs[run_id], nfolds = 7, kernel_fun = rbf_linear_kernel, dist_fun = run_cases$dist_fun[run_id] )
   data.frame(cv_error = mean(cv_res), cv_sigma = sd(cv_res), n_nodes = run_cases$nodes[run_id], n_runs = run_cases$runs[run_id], dist_fun = run_cases$dist_fun[run_id])
 })
 setDT(cv_res)
-
 #rbf_boot.create_cv(dfs, target, n_nodes = 1000, n_runs = 10, nfolds = 5, kernel_fun = rbf_linear_kernel, dist_fun = 'L1')
-
 #source(file.path(working_folder, 'Utils/rbf_utils.R'))
 ggplot(cv_res, aes(n_nodes, cv_error, group = n_runs, color = factor(n_runs) )) + geom_point() +  geom_line() # + facet_wrap(~dist_fun)# + geom_smooth(se = FALSE, color = 'black') + 
    geom_hline(yintercept = 0.84164, color = 'red', linetype = 'dashed')
@@ -286,21 +315,81 @@ min(cv_res$cv_error) #0.8533613
 
 
 #%% boost runs ----------------
-models_boost =  rbf_boost.create(dfs, target, max_nodes = 6000, n_runs = 20, max_it = 20, growth_rate = 2.0, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' )
-res = rbf_boost.predict(models_boost, dfs, combine_boots = TRUE)
+models_boost =  rbf_boost.create(dfs, target, max_nodes = 320, n_runs = 10, max_it = 20, growth_rate = 2.0, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1' )
+res = rbf_boost.predict(models_boost, df[,p_vars, with = FALSE], combine_boots = TRUE)
 setDT(res)
-ggplot(res[order(id), .(error = rms(y_pred_cum, df$target[my_index])), by =.(model_id1) ] , aes(model_id1, error)) + geom_line() +  geom_point()
+df[, target_rbf := res[order(id)][model_id1 == max(model_id1), y_pred_cum]] 
+#ggplot(res[order(id), .(error = rms(y_pred_cum, df$target[my_index])), by =.(model_id1) ] , aes(model_id1, error)) + geom_line() +  geom_point()
 
 #boost results for each step, run with combine_boots = FALSE
 #res_conv = res[, .(y_pred = mean(y_pred)), by =.(id, model_id1 )]
 #res_conv[order(model_id1), y_pred_cum := cumsum(y_pred), by =.(id)]
 #ggplot(res_conv[order(id), .(error = rms(y_pred_cum, df$target[my_index])), by =.(model_id1) ] , aes(model_id1, error)) + geom_line() +  geom_point()
 
-
 # CV ---------
-cv_res = rbf_boost.create_cv(dfs, target, max_nodes = 1024, n_runs = 20, max_it = 20, nfolds = 10, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' )
+cv_res = rbf_boost.create_cv(dfs, target, max_nodes = 320, n_runs = 10, max_it = 20, nfolds = 10, kernel_fun = rbf_acq_kernel, dist_fun = 'L1' )
 df_cv_res = data.table(it = seq(nrow(cv_res)), avg = apply(cv_res, 1, mean ), sigma = apply(cv_res, 1, sd ), cv_res )
 ggplot(df_cv_res[avg>0], aes(it, avg)) + geom_line() + geom_ribbon(aes(it, ymin = avg - sigma, ymax = avg + sigma), alpha = 0.2, fill = 'blue')
+
+#runs cv boost cases - grid search for optimal params
+run_cases = expand.grid(nodes = c(1000), runs = c(10), dist_fun = c('L1', 'L2'), rbf_kernel = names(rbf_kernels), stringsAsFactors = FALSE )
+cv_res = ldply(seq(nrow(run_cases)), function(run_id){
+  cv_res = rbf_boost.create_cv(dfs, target, max_nodes = run_cases$nodes[run_id], n_runs = run_cases$runs[run_id], nfolds = 5, kernel_fun = rbf_kernels[[run_cases$rbf_kernel[run_id] ]], dist_fun = run_cases$dist_fun[run_id] )
+  data.frame(cv_it = seq(nrow(cv_res)), cv_error = rowMeans(cv_res), cv_sigma = apply(cv_res,1, sd), 
+             n_nodes = run_cases$nodes[run_id], 
+             n_runs = run_cases$runs[run_id], 
+             dist_fun = run_cases$dist_fun[run_id], 
+             kernel_fun = run_cases$rbf_kernel[run_id])
+})
+setDT(cv_res)
+ggplot(cv_res, aes(cv_it, cv_error, group = dist_fun, color = factor(dist_fun) )) + geom_point() +  geom_line()  + facet_wrap(~kernel_fun)# + geom_smooth(se = FALSE, color = 'black') + 
+   geom_hline(yintercept = 0.84164, color = 'red', linetype = 'dashed')
+
+   
+# Profiles
+plots = llply(all_vars, function(var_name) {
+  p = plot_profile( df[['target_rbf']][train_index],  df[['target']][train_index], df[[var_name]][train_index], bucket_count = 20, error_band = 'norm') +
+    ggtitle(var_name) +  theme(title =element_text(size=6))
+  return( ggplotGrob(p) )
+})
+marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
 ```
 
+## RBF 2D test
+
+```{r rbf_2d_test}
+
+df = data.table(expand.grid(x = seq(-1, 1, by = 0.02), y = seq(-1, 1, by = 0.02)))
+df[, target_true:= sin(20*x * y)]
+df[, target:= target_true + 0.2*rnorm(nrow(df))]
+df[, id := seq(nrow(df))]
+
+ggplot(df, aes(x, y, fill = target)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+ggplot(df, aes(x, y, fill = target_true)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+
+#rbf_mquad_kernel, 
+
+models_boost =  rbf_boost.create(df[,.(x, y)], df$target, max_nodes = 600, n_runs = 50, max_it = 100, growth_rate = 2.0, kernel_fun = function(x) sqrt(1+x*x) / (1 + x), dist_fun = 'L1' )
+res = rbf_boost.predict(models_boost, df[,.(x, y)], combine_boots = TRUE)
+setDT(res)
+
+res[order(id), .(rms(y_pred_cum, df$target), rms(y_pred_cum, df$target_true)), by = .(model_id1)]
+
+res_df = res[df, on = .(id)]
+
+ggplot(res_df, aes(x, y, fill = y_pred_cum  )) + geom_tile() + scale_fill_custom('jet', discrete = FALSE) + facet_wrap(~model_id1)
+#ggplot(res_df, aes(x, y, fill = y_pred  )) + geom_tile() + scale_fill_custom('jet', discrete = FALSE) + facet_wrap(~model_id1)
+
+
+```
+
+```{r submit, echo=FALSE}
+  #fwrite(df, file.path(working_folder,'Playground/Feb2021/data/df.csv'))
+ 
+  file = file.path(working_folder, "Playground/Feb2021/submit_v1.rbf.csv")
+  fwrite(df[test_index, .(id, target=target_rbf)], file = file, row.names = FALSE)
+  zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
+  print(file)
+
+```
 

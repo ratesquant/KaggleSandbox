@@ -1,5 +1,4 @@
 rbf_linear_kernel <- function(x) x
-
 rbf_cauchy_kernel <- function(x) 1/(1 + x)
 rbf_cubic_kernel <- function(x) x*x*x
 rbf_gauss_kernel <- function(x) exp(- x * x)
@@ -8,6 +7,7 @@ rbf_mquad_kernel <- function(x) sqrt(1+x*x)
 rbf_imquad_kernel <- function(x) 1/sqrt(1+x*x)
 rbf_tp_kernel <- function(x) x * log(x^x)
 rbf_iquad_kernel <- function(x) 1/(1+x*x)
+rbf_acq_kernel <- function(x) sqrt(1+x*x) / (1 + x)
 
 rbf.create <- function(X, Y, nodes, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' ){
   M = cbind(1, kernel_fun(dist(X, nodes, method = dist_fun)) ) 
@@ -76,7 +76,7 @@ rbf_boot.create_cv <- function(X, Y, n_nodes, n_runs = 10, nfolds =10, kernel_fu
 
 rbf_boost.create <- function(X, Y, max_nodes = 20, n_runs = 10, max_it = 20, growth_rate =2.0, kernel_fun = rbf_linear_kernel, dist_fun = 'L2' ){
   
-  n_nodes = 2 * ncol(X)
+  n_nodes = ncol(X)
   current_objective = Y
   
   all_models = list()
@@ -152,13 +152,15 @@ create_cv_index <- function(n, nfolds){
 
 rbf_boost.create_cv <- function(X, Y, max_nodes, n_runs = 10, max_it = 20, growth_rate = 2.0, nfolds =10, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' ){
   
-  n_nodes = 2 * ncol(X)
+  n_nodes = ncol(X)
   
   objective_list = llply(seq(nfolds), function(i) Y)
   
   cv_index = create_cv_index(nrow(X), nfolds)
   
   res_cv = matrix(0, max_it, nfolds)
+  
+  prev_cv_error = Inf 
   
   for(it in 1:max_it)
   {
@@ -192,10 +194,15 @@ rbf_boost.create_cv <- function(X, Y, max_nodes, n_runs = 10, max_it = 20, growt
     
     res_cv[it,] = cv_errors
     
+    curr_cv_error = mean(cv_errors, na.rm = TRUE)
+    
+    if(curr_cv_error > prev_cv_error) break;
+    
+    prev_cv_error = curr_cv_error
+    
     n_nodes = pmax(round(growth_rate * n_nodes), n_nodes + 1)
     
-    if( n_nodes > nrow(X) * (nfolds - 1) / nfolds | n_nodes > max_nodes)
-      break
+    if( n_nodes > nrow(X) * (nfolds - 1) / nfolds | n_nodes > max_nodes) break
   }
   #return ( res_cv)
   return ( res_cv[res_cv[,1]>0,] )

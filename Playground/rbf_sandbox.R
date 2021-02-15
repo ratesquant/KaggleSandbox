@@ -7,6 +7,7 @@ library(ggplot2)
 library(plyr)
 library(dplyr)
 library(stringi)
+library(caret)
 
 
 working_folder = 'D:/Github/KaggleSandbox'
@@ -38,23 +39,27 @@ convert_to_prob <-function(x, train_index){
   if(is.character(x) )x = as.numeric(as.factor(x))
   ecdf(x[train_index])(x)
 }
-p_vars = stri_join('p_', all_vars)
-df[, (p_vars):=lapply(.SD, function(x) convert_to_prob(x, train_index)), .SDcols = all_vars]
+p_vars = stri_join('p_', con_vars)
+df[, (p_vars):=lapply(.SD, function(x) convert_to_prob(x, train_index)), .SDcols = con_vars]
 
+one_hot <- dummyVars(" ~ .", data=df[, cat_vars, with = FALSE])
+dt_one_hot <- data.table(predict(one_hot, newdata =df[, cat_vars, with = FALSE]))
+df = cbind(df, dt_one_hot)
+rfb_vars = c(p_vars, names(dt_one_hot))
 
 my_index = sample( which(train_index), 0.1*sum(train_index))
 
 rbf_kernels = list('rbf_linear_kernel' = rbf_linear_kernel, 'rbf_cauchy_kernel' = rbf_cauchy_kernel, 'rbf_cubic_kernel' = rbf_cubic_kernel, 
                    'rbf_gauss_kernel' = rbf_gauss_kernel, 'rbf_bump_kernel' = rbf_bump_kernel, 'rbf_mquad_kernel' = rbf_mquad_kernel, 'rbf_imquad_kernel' = rbf_imquad_kernel,
-                   'rbf_tp_kernel' = rbf_tp_kernel, 'rbf_iquad_kernel' = rbf_iquad_kernel)
+                   'rbf_tp_kernel' = rbf_tp_kernel, 'rbf_iquad_kernel' = rbf_iquad_kernel, 'rbf_acq_kernel' = rbf_acq_kernel)
 
 #%% boost runs ----------------
 #10 runs with 500 nodes - 4 min
-run_cases = expand.grid(nodes = c(516), runs = c(10, 30), growth_rate = c(1.5, 2.0), dist_fun = c('L1'), kernel_scale = c(1, 10), 
-                        rbf_kernel = c('rbf_linear_kernel', 'rbf_mquad_kernel'),#names(rbf_kernels),
+run_cases = expand.grid(nodes = c(200), runs = c(10, 30), growth_rate = c(1.5, 2.0), dist_fun = c('L1'), kernel_scale = c(1, 10), 
+                        rbf_kernel = c('rbf_linear_kernel', 'rbf_mquad_kernel', 'rbf_acq_kernel'),#names(rbf_kernels),
                         stringsAsFactors = FALSE )
 
-dfs = data.matrix(df[my_index,p_vars, with = FALSE])
+dfs = data.matrix(df[my_index,rfb_vars, with = FALSE])
 target = df$target[my_index]
 
 cv_res = ldply(seq(nrow(run_cases)), function(run_id){

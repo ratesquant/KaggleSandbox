@@ -357,25 +357,35 @@ one_hot <- dummyVars(" ~ .", data=df[, cat_vars, with = FALSE])
 dt_one_hot <- data.table(predict(one_hot, newdata =df[, cat_vars, with = FALSE]))
 df = cbind(df, dt_one_hot)
 rfb_vars = c(p_vars, names(dt_one_hot))
+#rfb_vars= c(con_vars, names(dt_one_hot))
 
 my_index = sample( which(train_index), 0.1*sum(train_index))
+dfs = data.matrix(df[my_index,rfb_vars, with = FALSE])
+target = df$target[my_index]
 
 #%% bootsrap runs ----------------
 #10 runs with 500 nodes - 4 min
 
-dfs = data.matrix(df[my_index,rfb_vars, with = FALSE])
-target = df$target[my_index]
+null_rms = rms(target, mean(target) )
 
-run_cases = expand.grid(nodes = c(700), runs = c(10), dist_fun = c('L1'), stringsAsFactors = FALSE )
+
+run_cases = expand.grid(nodes = c(300), runs = c(30, 40), dist_fun = c('L1'), rbf_kernel = c('rbf_linear_kernel', 'rbf_cauchy_kernel', 'rbf_mquad_kernel'), kernel_scale = c(1,2,3), stringsAsFactors = FALSE )
+
 cv_res = ldply(seq(nrow(run_cases)), function(run_id){
-  cv_res = rbf_boot.create_cv(dfs, target, n_nodes = run_cases$nodes[run_id], n_runs = run_cases$runs[run_id], nfolds = 7, kernel_fun = rbf_linear_kernel, dist_fun = run_cases$dist_fun[run_id] )
-  data.frame(cv_error = mean(cv_res), cv_sigma = sd(cv_res), n_nodes = run_cases$nodes[run_id], n_runs = run_cases$runs[run_id], dist_fun = run_cases$dist_fun[run_id])
+  
+  print(sprintf('it: %d out of %d', run_id, nrow(run_cases)))
+  
+  kernel_fun = function(x) rbf_kernels[[run_cases$rbf_kernel[run_id]]](x * run_cases$kernel_scale[run_id])
+  
+  cv_res = rbf_boot.create_cv(dfs, target, n_nodes = run_cases$nodes[run_id], n_runs = run_cases$runs[run_id], nfolds = 7, kernel_fun = rbf_kernels[[run_cases$rbf_kernel[run_id]]], dist_fun = run_cases$dist_fun[run_id] )
+  data.frame(cv_error = mean(cv_res), cv_sigma = sd(cv_res), n_nodes = run_cases$nodes[run_id], n_runs = run_cases$runs[run_id], dist_fun = run_cases$dist_fun[run_id], 
+             kernel_fun = run_cases$rbf_kernel[run_id],  scale = run_cases$kernel_scale[run_id])
 })
 setDT(cv_res)
 #rbf_boot.create_cv(dfs, target, n_nodes = 1000, n_runs = 10, nfolds = 5, kernel_fun = rbf_linear_kernel, dist_fun = 'L1')
 #source(file.path(working_folder, 'Utils/rbf_utils.R'))
-ggplot(cv_res, aes(n_nodes, cv_error, group = n_runs, color = factor(n_runs) )) + geom_point() +  geom_line() # + facet_wrap(~dist_fun)# + geom_smooth(se = FALSE, color = 'black') + 
-   geom_hline(yintercept = 0.84164, color = 'red', linetype = 'dashed')
+ggplot(cv_res, aes(kernel_fun, cv_error, group = n_runs/null_rms, color = factor(n_runs) )) + geom_point() +  geom_line() + facet_wrap(~scale) # + facet_wrap(~dist_fun)# + geom_smooth(se = FALSE, color = 'black') + 
+ 
 
 
 #cv error: 0.8510029
@@ -384,7 +394,7 @@ min(cv_res$cv_error) #0.8533613
 
 
 #%% boost runs ----------------
-models_boost =  rbf_boost.create(dfs, target, max_nodes = 3000, n_runs = 10, max_it = 20, growth_rate = 2.0, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1' )
+models_boost =  rbf_boost.create(dfs, target, max_nodes = 1281, n_runs = 20, max_it = 20, growth_rate = 2.0, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1' )
 res = rbf_boost.predict(models_boost, df[,p_vars, with = FALSE], combine_boots = TRUE)
 setDT(res)
 df[, target_rbf := res[order(id)][model_id1 == max(model_id1), y_pred_cum]] 

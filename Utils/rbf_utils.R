@@ -9,7 +9,6 @@ rbf_imquad_kernel <- function(x) 1/sqrt(1+x*x)
 rbf_iquad_kernel <- function(x) 1/(1+x*x)
 rbf_tp_kernel <- function(x) x * log(x^x)     #x^2 * log(x)
 rbf_tp2_kernel <- function(x) x*x*x*log(x^x)  #x^4 * log(x)
-
 rbf_iquad_kernel <- function(x) 1/(1+x*x)
 rbf_acq_kernel <- function(x) sqrt(1+x*x) / (1 + x)
 
@@ -168,6 +167,8 @@ rbf_boost.create_cv <- function(X, Y, max_nodes, n_runs = 10, max_it = 20, growt
   
   res_cv = matrix(0, max_it, nfolds)
   
+  sample_prob = NULL
+  
   prev_cv_error = Inf 
   
   for(it in 1:max_it)
@@ -179,12 +180,14 @@ rbf_boost.create_cv <- function(X, Y, max_nodes, n_runs = 10, max_it = 20, growt
       
       current_objective = objective_list[[cv_fold]]
       
-      model_list = rbf_boot.create(X[cv_index != cv_fold,], current_objective[cv_index != cv_fold], n_nodes = n_nodes, n_runs = n_runs, kernel_fun = kernel_fun, dist_fun = dist_fun, adaptive = adaptive)
+      model_list = rbf_boot.create(X[cv_index != cv_fold,], current_objective[cv_index != cv_fold], n_nodes = n_nodes, n_runs = n_runs, kernel_fun = kernel_fun, dist_fun = dist_fun, sample_prob)
       res  = rbf_boot.predict(model_list, X)
       
       setDT(res)
       res_agg = res[, .(y_pred = mean(y_pred)), by =.(id)]
       setorder(res_agg, id)
+      
+      if(adaptive) sample_prob = abs(current_objective[cv_index != cv_fold] - res_agg$y_pred[cv_index != cv_fold])
       
       error_in  = rms(current_objective[cv_index != cv_fold], res_agg$y_pred[cv_index != cv_fold])
       error_out = rms(current_objective[cv_index == cv_fold], res_agg$y_pred[cv_index == cv_fold])

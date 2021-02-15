@@ -1,11 +1,15 @@
 rbf_linear_kernel <- function(x) x
 rbf_cauchy_kernel <- function(x) 1/(1 + x)
 rbf_cubic_kernel <- function(x) x*x*x
+rbf_p5_kernel <- function(x) x^5
 rbf_gauss_kernel <- function(x) exp(- x * x)
 rbf_bump_kernel <- function(x) ifelse(x<1.0, exp(-1/(1-x*x)), 0)
 rbf_mquad_kernel <- function(x) sqrt(1+x*x)
 rbf_imquad_kernel <- function(x) 1/sqrt(1+x*x)
-rbf_tp_kernel <- function(x) x * log(x^x)
+rbf_iquad_kernel <- function(x) 1/(1+x*x)
+rbf_tp_kernel <- function(x) x * log(x^x)     #x^2 * log(x)
+rbf_tp2_kernel <- function(x) x*x*x*log(x^x)  #x^4 * log(x)
+
 rbf_iquad_kernel <- function(x) 1/(1+x*x)
 rbf_acq_kernel <- function(x) sqrt(1+x*x) / (1 + x)
 
@@ -29,9 +33,9 @@ rbf.predict <- function(model, X){
   return ( as.numeric(pred) )
 }
 #bootstrap RBF regressions 
-rbf_boot.create <- function(X, Y, n_nodes, n_runs = 10, kernel_fun = rbf_linear_kernel, dist_fun = 'L2' ){
+rbf_boot.create <- function(X, Y, n_nodes, n_runs = 10, kernel_fun = rbf_linear_kernel, dist_fun = 'L2', sample_prob = NULL ){
   model_list = llply(seq(n_runs), function(run_id) {
-    rbf.create(X, Y, as.matrix(X[sample.int(nrow(X), n_nodes),]), kernel_fun = kernel_fun, dist_fun = dist_fun )
+    rbf.create(X, Y, as.matrix(X[sample.int(nrow(X), n_nodes, prob = sample_prob),]), kernel_fun = kernel_fun, dist_fun = dist_fun )
   })
 }
 
@@ -74,10 +78,12 @@ rbf_boot.create_cv <- function(X, Y, n_nodes, n_runs = 10, nfolds =10, kernel_fu
   return (cv_errors)
 }
 
-rbf_boost.create <- function(X, Y, max_nodes = 20, n_runs = 10, max_it = 20, growth_rate =2.0, kernel_fun = rbf_linear_kernel, dist_fun = 'L2' ){
+rbf_boost.create <- function(X, Y, max_nodes = 20, n_runs = 10, max_it = 20, growth_rate =2.0, kernel_fun = rbf_linear_kernel, dist_fun = 'L1', adaptive = FALSE ){
   
   n_nodes = ncol(X)
   current_objective = Y
+  
+  sample_prob = NULL
   
   all_models = list()
   
@@ -85,7 +91,7 @@ rbf_boost.create <- function(X, Y, max_nodes = 20, n_runs = 10, max_it = 20, gro
   {
     start_time <- Sys.time()
     
-    model_list = rbf_boot.create(X, current_objective, n_nodes, n_runs = n_runs, kernel_fun = kernel_fun, dist_fun = dist_fun)
+    model_list = rbf_boot.create(X, current_objective, n_nodes, n_runs = n_runs, kernel_fun = kernel_fun, dist_fun = dist_fun, sample_prob)
     res = rbf_boot.predict(model_list, X)
     
     setDT(res)
@@ -95,6 +101,8 @@ rbf_boost.create <- function(X, Y, max_nodes = 20, n_runs = 10, max_it = 20, gro
     elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
     
     print(sprintf('it: %d, nodes: %d, error: %f, elapsed: %f', it, n_nodes, rms(current_objective, res_agg$y_pred), elapsed ))
+    
+    if(adaptive) sample_prob = abs(current_objective - res_agg$y_pred)
     
     current_objective = current_objective - res_agg$y_pred
     
@@ -150,7 +158,7 @@ create_cv_index <- function(n, nfolds){
 }
 
 
-rbf_boost.create_cv <- function(X, Y, max_nodes, n_runs = 10, max_it = 20, growth_rate = 2.0, nfolds =10, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' ){
+rbf_boost.create_cv <- function(X, Y, max_nodes, n_runs = 10, max_it = 20, growth_rate = 2.0, nfolds =10, kernel_fun = rbf_linear_kernel, dist_fun = 'L1', adaptive = FALSE ){
   
   n_nodes = ncol(X)
   
@@ -171,7 +179,7 @@ rbf_boost.create_cv <- function(X, Y, max_nodes, n_runs = 10, max_it = 20, growt
       
       current_objective = objective_list[[cv_fold]]
       
-      model_list = rbf_boot.create(X[cv_index != cv_fold,], current_objective[cv_index != cv_fold], n_nodes = n_nodes, n_runs = n_runs, kernel_fun = kernel_fun, dist_fun = dist_fun)
+      model_list = rbf_boot.create(X[cv_index != cv_fold,], current_objective[cv_index != cv_fold], n_nodes = n_nodes, n_runs = n_runs, kernel_fun = kernel_fun, dist_fun = dist_fun, adaptive = adaptive)
       res  = rbf_boot.predict(model_list, X)
       
       setDT(res)

@@ -18,8 +18,8 @@ source(file.path(working_folder, 'Utils/rbf_utils.R'))
 rms <-function(y1, y2) sqrt( mean( (y1 - y2)^2 ))
 
 
-train <- fread(file.path(working_folder,'Playground/Feb2021/data/train.csv'), check.names = TRUE)
-test  <- fread(file.path(working_folder,'Playground/Feb2021/data/test.csv'),  check.names = TRUE) # 1459   80
+train <- fread(file.path(working_folder,'Playground/Jan2021/data/train.csv'), check.names = TRUE)
+test  <- fread(file.path(working_folder,'Playground/Jan2021/data/test.csv'),  check.names = TRUE) # 1459   80
 test[, target:=NA]
 df = rbind(train, test)
 
@@ -46,6 +46,7 @@ one_hot <- dummyVars(" ~ .", data=df[, cat_vars, with = FALSE])
 dt_one_hot <- data.table(predict(one_hot, newdata =df[, cat_vars, with = FALSE]))
 df = cbind(df, dt_one_hot)
 rfb_vars = c(p_vars, names(dt_one_hot))
+
 
 my_index = sample( which(train_index), 0.1*sum(train_index))
 

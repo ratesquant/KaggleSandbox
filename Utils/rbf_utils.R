@@ -162,12 +162,11 @@ rbf_boost.create_cv <- function(X, Y, max_nodes, n_runs = 10, max_it = 20, growt
   n_nodes = ncol(X)
   
   objective_list = llply(seq(nfolds), function(i) Y)
+  sample_prob = llply(seq(nfolds), function(i) NULL)
   
   cv_index = create_cv_index(nrow(X), nfolds)
   
   res_cv = matrix(0, max_it, nfolds)
-  
-  sample_prob = NULL
   
   prev_cv_error = Inf 
   
@@ -180,14 +179,14 @@ rbf_boost.create_cv <- function(X, Y, max_nodes, n_runs = 10, max_it = 20, growt
       
       current_objective = objective_list[[cv_fold]]
       
-      model_list = rbf_boot.create(X[cv_index != cv_fold,], current_objective[cv_index != cv_fold], n_nodes = n_nodes, n_runs = n_runs, kernel_fun = kernel_fun, dist_fun = dist_fun, sample_prob)
+      model_list = rbf_boot.create(X[cv_index != cv_fold,], current_objective[cv_index != cv_fold], n_nodes = n_nodes, n_runs = n_runs, kernel_fun = kernel_fun, dist_fun = dist_fun,  sample_prob[[cv_fold]])
       res  = rbf_boot.predict(model_list, X)
       
       setDT(res)
       res_agg = res[, .(y_pred = mean(y_pred)), by =.(id)]
       setorder(res_agg, id)
       
-      if(adaptive) sample_prob = abs(current_objective[cv_index != cv_fold] - res_agg$y_pred[cv_index != cv_fold])
+      if(adaptive) sample_prob[[cv_fold]] = abs(current_objective[cv_index != cv_fold] - res_agg$y_pred[cv_index != cv_fold])
       
       error_in  = rms(current_objective[cv_index != cv_fold], res_agg$y_pred[cv_index != cv_fold])
       error_out = rms(current_objective[cv_index == cv_fold], res_agg$y_pred[cv_index == cv_fold])

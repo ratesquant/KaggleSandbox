@@ -59,14 +59,15 @@ y = 0.2 + 0.4 * x * x + 0.3 *x * sin(15 * x) + 0.05 * cos(50 * x)
 
 df = data.table(x, y)
 
+nodes = as.matrix(c(0.5))
 #nodes = as.matrix(c(0.25, 0.75))
-nodes = as.matrix(seq(0, 1, by =0.1))
+#nodes = as.matrix(seq(0, 1, by =0.1))
 
 rbf_kernels = list('rbf_linear_kernel' = rbf_linear_kernel, 'rbf_cauchy_kernel' = rbf_cauchy_kernel, 
                    'rbf_cubic_kernel' = rbf_cubic_kernel, 'rbf_gauss_kernel' = rbf_gauss_kernel, 
                    'rbf_bump_kernel' = rbf_bump_kernel, 'rbf_mquad_kernel' = rbf_mquad_kernel, 'rbf_imquad_kernel' = rbf_imquad_kernel,
                    'rbf_tp_kernel' = rbf_tp_kernel, 'rbf_iquad_kernel' = rbf_iquad_kernel, 'rbf_acq_kernel' = rbf_acq_kernel,
-                   'rbf_tp2_kernel' = rbf_tp2_kernel, 'rbf_p5_kernel' = rbf_p5_kernel)
+                   'rbf_p5_kernel' = rbf_p5_kernel, 'rbf_logistic_kernel' = rbf_logistic_kernel, 'rbf_wendland_kernel' = rbf_wendland_kernel)
 
 df_res = ldply(names(rbf_kernels), function(my_kernel) {
   model.rbf = rbf.create(df[,.(x)], df$y, nodes, kernel_fun = function(x) rbf_kernels[[my_kernel]](x) )  
@@ -76,6 +77,9 @@ df_res = ldply(names(rbf_kernels), function(my_kernel) {
 
 ggplot(df_res, aes(x, y)) + geom_point(alpha = 0.5) + geom_line(aes(x, y_pred), color = 'red', size = 1) + 
   geom_vline(xintercept = c(0.25, 0.75), linetype = 'dashed') + facet_wrap(~my_kernel)
+
+#x = seq(0, 1, by = 0.1)
+#plot(x, rbf_logistic_kernel(10*x))
 ```
 
 ## RBF Boot
@@ -88,7 +92,7 @@ df[, id:=seq(nrow(df))]
 
 max_nodes = 20
 
-models = rbf_boot.create(df[,.(x)], df$y, max_nodes, n_runs = 100, kernel_fun = rbf_linear_kernel)
+models = rbf_boot.create(df[,.(x)], df$y, max_nodes, n_runs = 100, kernel_fun = rbf_logistic_kernel)
 #models = rbf_boot.create(df[,.(x)], df$y, max_nodes, n_runs = 100, kernel_fun = rbf_tp_kernel)
 res = rbf_boot.predict(models, df[,.(x)])
 setDT(res)
@@ -213,7 +217,7 @@ ggplot(df_cv_res, aes(it, avg)) + geom_line() + geom_ribbon(aes(it, ymin = avg -
 ```{r rbf_boost_test}
 x = seq(0, 1, by = 0.01)
 y = 0.2 + 0.4 * x * x + 0.3 *x * sin(15 * x) + 0.05 * cos(50 * x)
-y = as.numeric(x>0.5)
+y = as.numeric(x>0.5) + 0.1*rnorm(length(x))
 df = data.table(x, y)
 df[, id:=seq(nrow(df))]
 
@@ -449,7 +453,7 @@ ggplot(df, aes(x, y, fill = target_true)) + geom_tile() + scale_fill_custom('jet
 
 #rbf_mquad_kernel, 
 
-models_boost =  rbf_boost.create(df[,.(x, y)], df$target, max_nodes = 600, n_runs = 50, max_it = 100, growth_rate = 2.0, kernel_fun = function(x) sqrt(1+x*x) / (1 + x), dist_fun = 'L1' )
+models_boost =  rbf_boost.create(df[,.(x, y)], df$target, max_nodes = 512, n_runs = 10, max_it = 100, growth_rate = 2.0, kernel_fun = rbf_linear_kernel, dist_fun = 'L2', adaptive = TRUE)
 res = rbf_boost.predict(models_boost, df[,.(x, y)], combine_boots = TRUE)
 setDT(res)
 
@@ -459,9 +463,32 @@ res_df = res[df, on = .(id)]
 
 ggplot(res_df, aes(x, y, fill = y_pred_cum  )) + geom_tile() + scale_fill_custom('jet', discrete = FALSE) + facet_wrap(~model_id1)
 #ggplot(res_df, aes(x, y, fill = y_pred  )) + geom_tile() + scale_fill_custom('jet', discrete = FALSE) + facet_wrap(~model_id1)
+#0.244613
+
+
+nodes = ldply(seq(length(models_boost)), function(model_id1) {
+      boot_models = models_boost[[model_id1]]
+      ldply(seq(length(boot_models)), function(model_id2) {
+        data.frame(boot_models[[model_id2]]$nodes, model_id1, model_id2)
+      })
+    })
+ggplot(nodes, aes(x, y)) + geom_point(size = 0.2) + facet_wrap(~model_id1) 
+
+```
+
+
+## RBF Singular
+
+```{r rbf_singular}
+df = data.table(expand.grid(x = c(0, 1), y = c(0, 1)))
+df[, v := sample(c(0, 1), nrow(df), replace = TRUE) ]
+
+rbf.create(df[,.(x, y)], df$v, df[,.(x, y)], rbf_linear_kernel, dist_fun = 'L1')
+
 
 
 ```
+
 
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Feb2021/data/df.csv'))

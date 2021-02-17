@@ -11,6 +11,9 @@ rbf_tp_kernel <- function(x) x * log(x^x)     #x^2 * log(x)
 rbf_tp2_kernel <- function(x) x*x*x*log(x^x)  #x^4 * log(x)
 rbf_iquad_kernel <- function(x) 1/(1+x*x)
 rbf_acq_kernel <- function(x) sqrt(1+x*x) / (1 + x)
+rbf_logistic_kernel <- function(x) 1/(1+exp(-x))
+rbf_wendland_kernel <- function(x) ifelse( x<1, (1+4*x)*(1 - x)^4, 0)
+
 
 rbf.create <- function(X, Y, nodes, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' ){
   M = cbind(1, kernel_fun(dist(X, nodes, method = dist_fun)) ) 

@@ -1,0 +1,266 @@
+---
+title: 'Kaggle Playground: Feb 2020'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+#library(dplyr)
+library(plyr)
+#library(zip)
+library(caret)
+library(forcats)
+library(proxy)
+library(MASS)
+
+
+working_folder = 'D:/Github/KaggleSandbox'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
+
+source(file.path(working_folder, 'Utils/common.R'))
+source(file.path(working_folder, 'Utils/rbf_utils.R'))
+
+
+rms <-function(actual, model) {
+  sqrt( mean( (actual - model) * (actual - model) ) )
+}
+
+```
+
+## Load Data
+
+```{r load_data}
+load_existing = FALSE
+
+if (load_existing) {
+  df <- fread(file.path(working_folder,'Playground/Feb2021/data/df.csv'), check.names = TRUE)
+  
+} else{
+  train <- fread(file.path(working_folder,'Playground/Feb2021/data/train.csv'), check.names = TRUE)
+  test  <- fread(file.path(working_folder,'Playground/Feb2021/data/test.csv'),  check.names = TRUE) # 1459   80
+  test[, target:=NA]
+  df = rbind(train, test)
+  
+  gc(reset=TRUE)
+}
+  
+
+test_index = is.na(df$target)
+train_index = !test_index
+
+obj_var = 'target'
+all_vars = names(df) %!in_set% c('id', obj_var) #14 variables
+all_vars = all_vars[grep('^(cont|cat)', all_vars)]
+cat_vars = all_vars[grep('^(cat)', all_vars)]
+con_vars = all_vars[grep('^(cont)', all_vars)]
+
+df[, (cat_vars):=lapply(.SD, function(x) fct_infreq(fct_lump_min(x, 0.03*nrow(df), other_level = "OT"))), .SDcols = cat_vars]
+
+plot_profiles <-function(model, data)
+{
+  #stri_join('p_',all_vars)
+    plots = llply(all_vars, function(var_name) {
+    p = plot_profile(model,  data[['target']], data[[var_name]], bucket_count = 20, error_band = 'norm') +
+      ggtitle(var_name) +  theme(title =element_text(size=6))
+    return( ggplotGrob(p) )
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
+}
+
+#plot_profiles(df$target_lgb[train_index], df[train_index,])
+
+plot_profiles_2d <-function(model, data)
+{
+   all_comb = data.table(t(combn(all_vars, m = 2)) )
+   all_comb = all_comb[V1!=V2]
+   #all_comb = all_comb[1:36]
+  
+    plots = llply(seq(nrow(all_comb)), function(i) {
+      var1 = all_comb$V1[i]
+      var2 = all_comb$V2[i]
+     p = ggplot(cbind(data, model), aes_string(var1, var2, z = 'target - model')) + stat_summary_hex(fun = function(x) ifelse(length(x)>100, mean(x), NA), bins = 10) + scale_fill_gradient2() +theme(title =element_text(size=6)) +  theme(legend.position = "None")
+     #p = ggplot(data, aes_string(var1, var2)) + geom_hex(bins = 10) + theme(legend.position = "None")
+    
+    return( ggplotGrob(p) )
+  })
+  marrangeGrob(plots, nrow = 6, ncol = 6, top = NULL)
+}
+
+#plot_profiles_2d(df$target_lgb[train_index], df[train_index,])
+partialPlot <- function(obj, pred.data, xname, n.pt = 19, discrete.x = FALSE, 
+                        subsample = pmin(1, n.pt * 100 / nrow(pred.data)), which.class = NULL,
+                        xlab = deparse(substitute(xname)), ylab = "", type = if (discrete.x) "p" else "b",
+                        main = "", rug = TRUE, seed = NULL, ...) {
+  stopifnot(dim(pred.data) >= 1)
+  
+  if (subsample < 1) {
+    if (!is.null(seed)) {
+      set.seed(seed)
+    } 
+    n <- nrow(pred.data)
+    picked <- sample(n, trunc(subsample * n))
+    pred.data <- pred.data[picked, , drop = FALSE]
+  }
+  xv <- pred.data[, xname]
+  
+  if (discrete.x) {
+    x <- unique(xv)
+  } else {
+    x <- quantile(xv, seq(0.03, 0.97, length.out = n.pt), names = FALSE)
+  }
+  y <- numeric(length(x))
+  
+  isRanger <- inherits(obj, "ranger")
+  isLm <- inherits(obj, "lm") | inherits(obj, "lmrob") | inherits(obj, "lmerMod")
+
+  for (i in seq_along(x)) {
+   pred.data[, xname] <- x[i]
+
+    if (isRanger) {
+      if (!is.null(which.class)) {
+        if (obj$treetype != "Probability estimation") {
+          stop("Choose probability = TRUE when fitting ranger multiclass model") 
+        }
+        preds <- predict(obj, pred.data)$predictions[, which.class]
+      }
+      else {
+        preds <- predict(obj, pred.data)$predictions
+      }
+    } else if (isLm) {
+      preds <- predict(obj, pred.data) 
+    } else {
+      if (!is.null(which.class)) {
+        preds <- predict(obj, pred.data, reshape = TRUE)[, which.class + 1] 
+      } else {
+        preds <- predict(obj, pred.data)
+      }
+    }
+    
+    y[i] <- mean(preds)
+  }
+  
+  #plot(x, y, xlab = xlab, ylab = ylab, main = main, type = type, ...)
+  data.frame(x = x, y = y)
+}
+
+```
+
+
+## Pre-processing
+
+```{r pre_processing,  eval = FALSE}
+convert_to_prob <-function(x, train_index){
+  if(is.character(x) )x = as.numeric(as.factor(x))
+  ecdf(x[train_index])(x)
+}
+p_vars = stri_join('p_', all_vars)
+df[, (p_vars):=lapply(.SD, function(x) convert_to_prob(x, train_index)), .SDcols = all_vars]
+
+#one hot for categorical variables ----
+one_hot <- dummyVars(" ~ .", data=df[, cat_vars, with = FALSE])
+dt_one_hot <- data.table(predict(one_hot, newdata =df[, cat_vars, with = FALSE]))
+df = cbind(df, dt_one_hot)
+rfb_vars = c(p_vars, names(dt_one_hot))
+#rfb_vars= c(con_vars, names(dt_one_hot))
+
+```
+
+
+#RBF
+
+```{r rbf, eval = FALSE}
+
+set.seed(132140937)
+
+my_index = sample( which(train_index), 0.1*sum(train_index))
+dfs = data.matrix(df[my_index,rfb_vars, with = FALSE])
+target = df$target[my_index]
+
+
+models_boost =  rbf_boost.create(dfs, target, max_nodes = 100, n_runs = 20, max_it = 20, growth_rate = 1.5, kernel_fun = rbf_linear_kernel, dist_fun = 'L1', adaptive =TRUE )
+res = rbf_boost.predict(models_boost, df[,rfb_vars, with = FALSE], combine_boots = TRUE)
+setDT(res)
+df[, target_rbf := res[order(id)][model_id1 == max(model_id1), y_pred_cum]] 
+
+rmsqr(df$target[train_index], df$target_rbf[train_index] )
+
+#-- PLOTS ------------
+p_index = sample(which(train_index), 10000)
+ggplot(df[p_index, ], aes(target_rbf, target)) + geom_point(alpha = 0.2) + geom_abline(slope = 1, color = 'red')
+#ggplot(df[p_index, ], aes(p_cont3, target)) + geom_point(alpha = 0.5) + geom_smooth(se = FALSE)
+
+
+plot_profiles(df$target_rbf[train_index], df[train_index,])
+
+```
+
+
+#RBF Tuning
+ 
+```{r rbf_tune, eval = FALSE}
+
+
+rbf_kernels = list('rbf_linear_kernel' = rbf_linear_kernel, 'rbf_cauchy_kernel' = rbf_cauchy_kernel, 
+                   'rbf_cubic_kernel' = rbf_cubic_kernel, 'rbf_gauss_kernel' = rbf_gauss_kernel, 
+                   'rbf_bump_kernel' = rbf_bump_kernel, 'rbf_mquad_kernel' = rbf_mquad_kernel, 'rbf_imquad_kernel' = rbf_imquad_kernel,
+                   'rbf_tp_kernel' = rbf_tp_kernel, 'rbf_iquad_kernel' = rbf_iquad_kernel, 'rbf_acq_kernel' = rbf_acq_kernel,
+                   'rbf_tp2_kernel' = rbf_tp2_kernel, 'rbf_p5_kernel' = rbf_p5_kernel)
+
+set.seed(132140937)
+
+my_index = sample( which(train_index), 0.1*sum(train_index))
+dfs = data.matrix(df[my_index,rfb_vars, with = FALSE])
+target = df$target[my_index]
+
+
+# CV ---------
+cv_res = rbf_boost.create_cv(dfs, target, max_nodes = 300, n_runs = 40, max_it = 20, nfolds = 5, kernel_fun = rbf_linear_kernel, dist_fun = 'L1', adaptive =TRUE )
+df_cv_res = data.table(it = seq(nrow(cv_res)), avg = apply(cv_res, 1, mean ), sigma = apply(cv_res, 1, sd ), cv_res )
+ggplot(df_cv_res[avg>0], aes(it, avg)) + geom_line() + geom_ribbon(aes(it, ymin = avg - sigma, ymax = avg + sigma), alpha = 0.2, fill = 'blue')
+
+
+null_rms = rms(target, mean(target))
+
+#runs cv boost cases - grid search for optimal params, linear/mquad, L2
+run_cases = expand.grid(nodes = c(2000), runs = c(10, 20), dist_fun = c('L1', 'L2'), rbf_kernel = c('rbf_linear_kernel','rbf_mquad_kernel'), stringsAsFactors = FALSE )
+cv_res = ldply(seq(nrow(run_cases)), function(run_id){
+  
+  start_time <- Sys.time()
+  
+  cv_res = rbf_boost.create_cv(dfs, target, max_nodes = run_cases$nodes[run_id], n_runs = run_cases$runs[run_id], nfolds = 5, kernel_fun = rbf_kernels[[run_cases$rbf_kernel[run_id] ]], dist_fun = run_cases$dist_fun[run_id], adaptive = TRUE )
+  
+  elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
+   
+  data.frame(cv_it = seq(nrow(cv_res)), cv_error = rowMeans(cv_res), cv_sigma = apply(cv_res,1, sd), 
+             n_nodes = run_cases$nodes[run_id], 
+             n_runs = run_cases$runs[run_id], 
+             dist_fun = run_cases$dist_fun[run_id], 
+             kernel_fun = run_cases$rbf_kernel[run_id], elapsed)
+})
+setDT(cv_res)
+cv_res[order(cv_error)]
+ggplot(cv_res, aes(cv_it, cv_error, group = dist_fun, color = factor(dist_fun) )) + geom_point() +  geom_line()  + facet_wrap(~kernel_fun) + 
+   geom_hline(yintercept = c(null_rms, ), color = 'red', linetype = 'dashed')
+
+
+```
+
+#Submit
+```{r submit, echo=FALSE}
+  file = file.path(working_folder, "Playground/Feb2021/submit_v3.rbf.csv")
+  fwrite(df[test_index, .(id, target=target_rbf)], file = file, row.names = FALSE)
+  zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
+  print(file)
+
+```
+
+

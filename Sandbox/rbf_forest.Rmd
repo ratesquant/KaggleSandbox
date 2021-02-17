@@ -359,7 +359,7 @@ df = cbind(df, dt_one_hot)
 rfb_vars = c(p_vars, names(dt_one_hot))
 #rfb_vars= c(con_vars, names(dt_one_hot))
 
-my_index = sample( which(train_index), 0.1*sum(train_index))
+my_index = sample( which(train_index), 1.0*sum(train_index))
 dfs = data.matrix(df[my_index,rfb_vars, with = FALSE])
 target = df$target[my_index]
 
@@ -394,8 +394,8 @@ min(cv_res$cv_error) #0.8533613
 
 
 #%% boost runs ----------------
-models_boost =  rbf_boost.create(dfs, target, max_nodes = 1281, n_runs = 20, max_it = 20, growth_rate = 2.0, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1' )
-res = rbf_boost.predict(models_boost, df[,p_vars, with = FALSE], combine_boots = TRUE)
+models_boost =  rbf_boost.create(dfs, target, max_nodes = 2561, n_runs = 20, max_it = 20, growth_rate = 1.5, kernel_fun = rbf_linear_kernel, dist_fun = 'L1', adaptive =TRUE )
+res = rbf_boost.predict(models_boost, df[,rfb_vars, with = FALSE], combine_boots = TRUE)
 setDT(res)
 df[, target_rbf := res[order(id)][model_id1 == max(model_id1), y_pred_cum]] 
 #ggplot(res[order(id), .(error = rms(y_pred_cum, df$target[my_index])), by =.(model_id1) ] , aes(model_id1, error)) + geom_line() +  geom_point()
@@ -406,7 +406,7 @@ df[, target_rbf := res[order(id)][model_id1 == max(model_id1), y_pred_cum]]
 #ggplot(res_conv[order(id), .(error = rms(y_pred_cum, df$target[my_index])), by =.(model_id1) ] , aes(model_id1, error)) + geom_line() +  geom_point()
 
 # CV ---------
-cv_res = rbf_boost.create_cv(dfs, target, max_nodes = 3000, n_runs = 10, max_it = 20, nfolds = 5, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1' )
+cv_res = rbf_boost.create_cv(dfs, target, max_nodes = 300, n_runs = 40, max_it = 20, nfolds = 5, kernel_fun = rbf_linear_kernel, dist_fun = 'L1', adaptive =TRUE )
 df_cv_res = data.table(it = seq(nrow(cv_res)), avg = apply(cv_res, 1, mean ), sigma = apply(cv_res, 1, sd ), cv_res )
 ggplot(df_cv_res[avg>0], aes(it, avg)) + geom_line() + geom_ribbon(aes(it, ymin = avg - sigma, ymax = avg + sigma), alpha = 0.2, fill = 'blue')
 
@@ -465,8 +465,15 @@ ggplot(res_df, aes(x, y, fill = y_pred_cum  )) + geom_tile() + scale_fill_custom
 
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Feb2021/data/df.csv'))
- 
-  file = file.path(working_folder, "Playground/Feb2021/submit_v1.rbf.csv")
+
+  #%% boost runs ----------------
+  models_boost =  rbf_boost.create(dfs, target, max_nodes = 2561, n_runs = 20, max_it = 20, growth_rate = 1.5, kernel_fun = rbf_linear_kernel, dist_fun = 'L1', adaptive =TRUE )
+  res = rbf_boost.predict(models_boost, df[,rfb_vars, with = FALSE], combine_boots = TRUE)
+  setDT(res)
+  df[, target_rbf := res[order(id)][model_id1 == max(model_id1), y_pred_cum]] 
+  
+
+  file = file.path(working_folder, "Playground/Feb2021/submit_v3.rbf.csv")
   fwrite(df[test_index, .(id, target=target_rbf)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)

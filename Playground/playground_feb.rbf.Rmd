@@ -185,12 +185,14 @@ train_index = !is.na(df$target) & df$target >= 4
 
 set.seed(132140937)
 
-my_index = sample( which(train_index), 0.1*sum(train_index))
+rfb_vars = c(p_vars)
+
+my_index = sample( which(train_index), 1.0*sum(train_index))
 dfs = data.matrix(df[my_index,rfb_vars, with = FALSE])
 target = df$target[my_index]
 
 
-models_boost =  rbf_boost.create(dfs, target, max_nodes = 100, n_runs = 20, max_it = 20, growth_rate = 2.0, kernel_fun = rbf_linear_kernel, dist_fun = 'L1', adaptive =TRUE )
+models_boost =  rbf_boost.create(dfs, target, 2, max_nodes = 1024*2, n_runs = 30, max_it = 20, growth_rate = 1.5, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1', adaptive =TRUE )
 res = rbf_boost.predict(models_boost, df[,rfb_vars, with = FALSE], combine_boots = TRUE)
 setDT(res)
 df[, target_rbf := res[order(id)][model_id1 == max(model_id1), y_pred_cum]] 
@@ -227,13 +229,16 @@ rbf_kernels = list('rbf_linear_kernel' = rbf_linear_kernel, 'rbf_cauchy_kernel' 
 
 set.seed(132140937)
 
-my_index = sample( which(train_index), 0.1*sum(train_index))
+my_index = sample( which(train_index), 1.0*sum(train_index))
 dfs = data.matrix(df[my_index,p_vars, with = FALSE])
 target = df$target[my_index]
 
 
 # CV ---------
-cv_res = rbf_boost.create_cv(dfs, target, 2, max_nodes = 1024*2, n_runs = 20, max_it = 20, nfolds = 5, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1', adaptive = FALSE )
+# cv_it  cv_error    cv_sigma n_nodes n_runs dist_fun       kernel_fun adaptive var_set growth_rate kernel_scale  elapsed       tag
+#  1:    13 0.8482968 0.005317974    2048     30       L1 rbf_mquad_kernel     TRUE   pvars         1.5            1 14.15168  TRUE: 30
+ 
+cv_res = rbf_boost.create_cv(dfs, target, 2, max_nodes = 1024*2, n_runs = 30, max_it = 20, growth_rate = 1.5, nfolds = 5, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1', adaptive = TRUE )
 df_cv_res = data.table(it = seq(nrow(cv_res)), avg = apply(cv_res, 1, mean ), sigma = apply(cv_res, 1, sd ), cv_res )
 ggplot(df_cv_res[avg>0], aes(it, avg)) + geom_line() + geom_ribbon(aes(it, ymin = avg - sigma, ymax = avg + sigma), alpha = 0.2, fill = 'blue') + 
   geom_hline(yintercept = c(null_rms, 0.84310), color = 'red', linetype = 'dashed')
@@ -276,7 +281,7 @@ setDT(cv_res)
 cv_res[order(cv_error)]
 cv_res[, tag:= stri_join(adaptive, ': ', n_runs) ]
 
-ggplot(cv_res, aes(factor(cv_it), cv_error, group = n_runs, color = factor(n_runs), linetype = adaptive )) + geom_point() +  geom_line()  + facet_grid(growth_rate   ~ kernel_fun) + 
+ggplot(cv_res, aes(factor(cv_it), cv_error, group = n_runs, color = factor(n_runs))) + geom_point() +  geom_line()  + facet_grid(growth_rate ~ kernel_fun + adaptive) + 
    geom_hline(yintercept = c(null_rms, 0.84310), color = 'red', linetype = 'dashed')
 
 ggplot(cv_res[cv_it>6], aes(factor(cv_it), cv_error, group = tag, color = tag )) + geom_point() +  geom_line()  + facet_grid(kernel_scale   ~ kernel_fun) + 
@@ -284,6 +289,7 @@ ggplot(cv_res[cv_it>6], aes(factor(cv_it), cv_error, group = tag, color = tag ))
 
 
 ggplot(cv_res[cv_it == max(cv_it)], aes(kernel_fun , cv_error, group = tag, color = tag )) + geom_point() +  geom_line()  + facet_wrap(~var_set )
+
 
 ```
 

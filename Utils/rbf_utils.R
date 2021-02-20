@@ -80,9 +80,8 @@ rbf_boot.create_cv <- function(X, Y, n_nodes, n_runs = 10, nfolds =10, kernel_fu
   return (cv_errors)
 }
 
-rbf_boost.create <- function(X, Y, max_nodes = 20, n_runs = 10, max_it = 20, growth_rate =2.0, kernel_fun = rbf_linear_kernel, dist_fun = 'L1', adaptive = FALSE ){
+rbf_boost.create <- function(X, Y, n_nodes = ncol(X), max_nodes = 20, n_runs = 10, max_it = 20, growth_rate =2.0, kernel_fun = rbf_linear_kernel, dist_fun = 'L1', adaptive = FALSE ){
   
-  n_nodes = ncol(X)
   current_objective = Y
   
   sample_prob = NULL
@@ -160,9 +159,9 @@ create_cv_index <- function(n, nfolds){
 }
 
 
-rbf_boost.create_cv <- function(X, Y, max_nodes, n_runs = 10, max_it = 20, growth_rate = 2.0, nfolds =10, kernel_fun = rbf_linear_kernel, dist_fun = 'L1', adaptive = FALSE ){
+rbf_boost.create_cv <- function(X, Y, n_nodes = ncol(X), max_nodes, n_runs = 10, max_it = 20, growth_rate = 2.0, nfolds =10, kernel_fun = rbf_linear_kernel, dist_fun = 'L1', adaptive = FALSE ){
   
-  n_nodes = ncol(X)
+  #n_nodes = ncol(X)
   
   objective_list = llply(seq(nfolds), function(i) Y)
   sample_prob = llply(seq(nfolds), function(i) NULL)

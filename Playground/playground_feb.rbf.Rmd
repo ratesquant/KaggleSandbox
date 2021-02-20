@@ -163,8 +163,17 @@ convert_to_prob <-function(x, train_index){
   if(is.character(x) )x = as.numeric(as.factor(x))
   ecdf(x[train_index])(x)
 }
+
+convert_to_normal_prob <-function(x, train_index){
+  if(is.character(x) )x = as.numeric(as.factor(x))
+  qnorm(ecdf(x[train_index])(x))
+}
+
 p_vars = stri_join('p_', all_vars)
 df[, (p_vars):=lapply(.SD, function(x) convert_to_prob(x, train_index)), .SDcols = all_vars]
+
+q_vars = stri_join('q_', all_vars)
+df[, (q_vars):=lapply(.SD, function(x) convert_to_normal_prob(x, train_index)), .SDcols = all_vars]
 
 #one hot for categorical variables ----
 one_hot <- dummyVars(" ~ .", data=df[, cat_vars, with = FALSE])
@@ -206,6 +215,7 @@ ggplot(df[p_index, ], aes(target_rbf, target)) + geom_point(alpha = 0.2) + geom_
 
 
 plot_profiles(df$target_rbf[train_index], df[train_index,])
+plot_profile(df$target_rbf[train_index], df$target[train_index], df$q_cont2[train_index])
 
 ```
 
@@ -229,7 +239,7 @@ rbf_kernels = list('rbf_linear_kernel' = rbf_linear_kernel, 'rbf_cauchy_kernel' 
 
 set.seed(132140937)
 
-my_index = sample( which(train_index), 1.0*sum(train_index))
+my_index = sample( which(train_index), 0.1*sum(train_index))
 dfs = data.matrix(df[my_index,p_vars, with = FALSE])
 target = df$target[my_index]
 
@@ -245,11 +255,11 @@ ggplot(df_cv_res[avg>0], aes(it, avg)) + geom_line() + geom_ribbon(aes(it, ymin 
 
 
 null_rms = rms(df$target[train_index], mean(df$target[train_index]))
-var_list = list('pvars'= p_vars, 'pvars+onehot' = c(p_vars, names(dt_one_hot)), 'con+onehot' = c(con_vars, names(dt_one_hot)) )
+var_list = list('pvars'= p_vars, 'qvars'= q_vars, 'pvars+onehot' = c(p_vars, names(dt_one_hot)), 'con+onehot' = c(con_vars, names(dt_one_hot)) )
 
 #runs cv boost cases - grid search for optimal params, linear/mquad, L2
-run_cases = expand.grid(nodes = c(1024*2), runs = c(20, 30), dist_fun = c('L1'), rbf_kernel = c('rbf_mquad_kernel'), kernel_scale = c(1), growth_rate = c(1.5, 2.0), 
-                        adaptive = c(FALSE, TRUE), var_set = c('pvars'), stringsAsFactors = FALSE )
+run_cases = expand.grid(nodes = c(1024), runs = c(20, 30), dist_fun = c('L1'), rbf_kernel = c('rbf_mquad_kernel','rbf_gauss_kernel'), kernel_scale = c(1, 2), growth_rate = c(1.5, 2.0), 
+                        adaptive = c(FALSE, TRUE), var_set = c('pvars', 'qvars'), stringsAsFactors = FALSE )
 cv_res = ldply(seq(nrow(run_cases)), function(run_id){
   
   start_time <- Sys.time()
@@ -294,8 +304,10 @@ ggplot(cv_res[cv_it == max(cv_it)], aes(kernel_fun , cv_error, group = tag, colo
 ```
 
 #Submit
+RBF:      0.84574
+LightGBM: 0.84310
 ```{r submit, echo=FALSE}
-  file = file.path(working_folder, "Playground/Feb2021/submit_v3.rbf.csv")
+  file = file.path(working_folder, "Playground/Feb2021/submit_v4.rbf.csv")
   fwrite(df[test_index, .(id, target=target_rbf)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)

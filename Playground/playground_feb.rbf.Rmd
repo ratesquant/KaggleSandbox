@@ -166,7 +166,7 @@ convert_to_prob <-function(x, train_index){
 
 convert_to_normal_prob <-function(x, train_index){
   if(is.character(x) )x = as.numeric(as.factor(x))
-  qnorm(ecdf(x[train_index])(x))
+  qnorm(pmin(1-1e-9,pmax(1e-9, ecdf(x[train_index])(x))) )
 }
 
 p_vars = stri_join('p_', all_vars)
@@ -189,33 +189,44 @@ train_index = !is.na(df$target) & df$target >= 4
 
 
 #RBF
-
+10it - 0.84593
 ```{r rbf, eval = FALSE}
 
 set.seed(132140937)
 
 rfb_vars = c(p_vars)
 
-my_index = sample( which(train_index), 1.0*sum(train_index))
+my_index = sample( which(train_index & df$target > 4), 1.0*sum(train_index))
 dfs = data.matrix(df[my_index,rfb_vars, with = FALSE])
 target = df$target[my_index]
 
 
-models_boost =  rbf_boost.create(dfs, target, 2, max_nodes = 1024*2, n_runs = 30, max_it = 20, growth_rate = 1.5, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1', adaptive =TRUE )
+models_boost =  rbf_boost.create(dfs, target, 16, max_nodes = 2080, n_runs = 20, max_it = 12, growth_rate = 1.5, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1', adaptive = FALSE )
 res = rbf_boost.predict(models_boost, df[,rfb_vars, with = FALSE], combine_boots = TRUE)
 setDT(res)
 df[, target_rbf := res[order(id)][model_id1 == max(model_id1), y_pred_cum]] 
 
-rmsqr(df$target[train_index], df$target_rbf[train_index] )
+rms(df$target[train_index], df$target_rbf[train_index] )
 
 #-- PLOTS ------------
 p_index = sample(which(train_index), 10000)
 ggplot(df[p_index, ], aes(target_rbf, target)) + geom_point(alpha = 0.2) + geom_abline(slope = 1, color = 'red')
 #ggplot(df[p_index, ], aes(p_cont3, target)) + geom_point(alpha = 0.5) + geom_smooth(se = FALSE)
 
+ggplot(df[train_index, ], aes(p_cont3)) + geom_density(adjust = 0.1)
+
 
 plot_profiles(df$target_rbf[train_index], df[train_index,])
 plot_profile(df$target_rbf[train_index], df$target[train_index], df$q_cont2[train_index])
+
+ggplot(df[train_index], aes(p_cont8, p_cont0, z = target - target_rbf)) + stat_summary_hex(fun = function(x) ifelse(length(x)>10, mean(x), NA), bins = 50) + scale_fill_gradient2()
+ggplot(df[train_index], aes(p_cont8, p_cont0, z = target)) + stat_summary_hex(fun = function(x) ifelse(length(x)>10, mean(x), NA), bins = 50)
+ggplot(df[train_index], aes(p_cont8, p_cont0, z = target_rbf)) + stat_summary_hex(fun = function(x) ifelse(length(x)>10, mean(x), NA), bins = 50)
+
+ggplot(df[train_index], aes(p_cont8, p_cont0, z = target_rbf)) + stat_summary_hex(fun = function(x) ifelse(length(x)>10, mean(x), NA), bins = 50)
+
+
+ggplot(df, aes(p_cont5, group = train_index, color = train_index)) + geom_density(adjust = 0.1)
 
 ```
 
@@ -258,8 +269,13 @@ null_rms = rms(df$target[train_index], mean(df$target[train_index]))
 var_list = list('pvars'= p_vars, 'qvars'= q_vars, 'pvars+onehot' = c(p_vars, names(dt_one_hot)), 'con+onehot' = c(con_vars, names(dt_one_hot)) )
 
 #runs cv boost cases - grid search for optimal params, linear/mquad, L2
-run_cases = expand.grid(nodes = c(1024), runs = c(20, 30), dist_fun = c('L1'), rbf_kernel = c('rbf_mquad_kernel','rbf_gauss_kernel'), kernel_scale = c(1, 2), growth_rate = c(1.5, 2.0), 
-                        adaptive = c(FALSE, TRUE), var_set = c('pvars', 'qvars'), stringsAsFactors = FALSE )
+run_cases = expand.grid(nodes = c(1024), runs = c(20, 30), dist_fun = c('L1'), rbf_kernel = c('rbf_mquad_kernel'), kernel_scale = c(1, 2), growth_rate = c(1.5, 2.0), 
+                        adaptive = c(FALSE, TRUE), var_set = c('qvars', 'pvars'), stringsAsFactors = FALSE )
+
+run_cases = expand.grid(nodes = c(2000), runs = c(20, 30, 50), dist_fun = c('L1'), rbf_kernel = c('rbf_mquad_kernel'), kernel_scale = c(1, 2), growth_rate = c(1.5), shrink_kernel = c(1.0), 
+                        adaptive = c(FALSE, TRUE), var_set = c('pvars'), stringsAsFactors = FALSE )
+
+
 cv_res = ldply(seq(nrow(run_cases)), function(run_id){
   
   start_time <- Sys.time()
@@ -273,7 +289,7 @@ cv_res = ldply(seq(nrow(run_cases)), function(run_id){
   kernel_scale = run_cases$kernel_scale[run_id]
   kernel_fun = function(x) rbf_kernels[[run_cases$rbf_kernel[run_id] ]](kernel_scale * x)
   
-  cv_res = rbf_boost.create_cv(dfs, target, 2, max_nodes = run_cases$nodes[run_id], n_runs = run_cases$runs[run_id], growth_rate = run_cases$growth_rate[run_id], nfolds = 5, kernel_fun = kernel_fun, dist_fun = run_cases$dist_fun[run_id], adaptive = run_cases$adaptive[run_id] )
+  cv_res = rbf_boost.create_cv(dfs, target, 16, max_nodes = run_cases$nodes[run_id], n_runs = run_cases$runs[run_id], growth_rate = run_cases$growth_rate[run_id], shrink_kernel = run_cases$shrink_kernel[run_id], nfolds = 5, kernel_fun = kernel_fun, dist_fun = run_cases$dist_fun[run_id], adaptive = run_cases$adaptive[run_id] )
   
   elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
    
@@ -285,17 +301,22 @@ cv_res = ldply(seq(nrow(run_cases)), function(run_id){
              adaptive = run_cases$adaptive[run_id],
              var_set = run_cases$var_set[run_id], 
              growth_rate = run_cases$growth_rate[run_id],
+             shrink_kernel = run_cases$shrink_kernel[run_id],
              kernel_scale = kernel_scale, elapsed)
 })
 setDT(cv_res)
 cv_res[order(cv_error)]
 cv_res[, tag:= stri_join(adaptive, ': ', n_runs) ]
 
-ggplot(cv_res, aes(factor(cv_it), cv_error, group = n_runs, color = factor(n_runs))) + geom_point() +  geom_line()  + facet_grid(growth_rate ~ kernel_fun + adaptive) + 
+ggplot(cv_res, aes(factor(cv_it), cv_error, group = n_runs, color = factor(n_runs))) + geom_point() +  geom_line()  + facet_grid(var_set + growth_rate ~ kernel_fun + adaptive + kernel_scale) + 
    geom_hline(yintercept = c(null_rms, 0.84310), color = 'red', linetype = 'dashed')
 
-ggplot(cv_res[cv_it>6], aes(factor(cv_it), cv_error, group = tag, color = tag )) + geom_point() +  geom_line()  + facet_grid(kernel_scale   ~ kernel_fun) + 
+ggplot(cv_res[cv_it>6 & dist_fun == 'L1'], aes(factor(cv_it), cv_error, group = n_runs, color = factor(n_runs) )) + geom_point() +  geom_line()  + facet_grid(adaptive ~ shrink_kernel) + 
    geom_hline(yintercept = c(0.84310), color = 'red', linetype = 'dashed')
+
+
+ggplot(cv_res, aes(factor(cv_it), cv_error, group = n_runs, color = factor(n_runs))) + geom_point() +  geom_line()  + facet_grid(var_set + growth_rate ~ kernel_fun + adaptive + kernel_scale) + 
+   geom_hline(yintercept = c(null_rms, 0.84310), color = 'red', linetype = 'dashed')
 
 
 ggplot(cv_res[cv_it == max(cv_it)], aes(kernel_fun , cv_error, group = tag, color = tag )) + geom_point() +  geom_line()  + facet_wrap(~var_set )
@@ -304,10 +325,10 @@ ggplot(cv_res[cv_it == max(cv_it)], aes(kernel_fun , cv_error, group = tag, colo
 ```
 
 #Submit
-RBF:      0.84574
+RBF:      0.84574, 0.84581, 0.84593
 LightGBM: 0.84310
 ```{r submit, echo=FALSE}
-  file = file.path(working_folder, "Playground/Feb2021/submit_v4.rbf.csv")
+  file = file.path(working_folder, "Playground/Feb2021/submit_v7.rbf.csv")
   fwrite(df[test_index, .(id, target=target_rbf)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)

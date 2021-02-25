@@ -347,10 +347,10 @@ model.lgb <- lgb.cv(
   monotone_constraints= var.monotone,
   monotone_constraints_method  = 'intermediate',
   
-  min_data = 974,
-  learning_rate = 0.0087,
+  min_data = 900,
+  learning_rate = 0.008,
   num_leaves = 15,
-  bagging_fraction = 0.9192,
+  bagging_fraction = 0.9,
   min_data_in_bin = 5,
   
   boost_from_average = TRUE,
@@ -392,7 +392,6 @@ p_index = sample(which(train_index), 10000)
 ggplot(df[p_index, ], aes(target_lgb, target)) + geom_point(alpha = 0.2) + geom_abline(slope = 1, color = 'red')
 #ggplot(df[p_index, ], aes(p_cont3, target)) + geom_point(alpha = 0.5) + geom_smooth(se = FALSE)
 ggplot(df[p_index, ], aes(sin(10*cont7), target)) + geom_point(alpha = 0.5) + geom_smooth(se = FALSE, span = 0.1)
-ggplot(df[p_index, ], aes(cont7, sin(10*cont7))) + geom_point(alpha = 0.5)
 
 #all y ~ x counts
 plots = llply(lgb_vars, function(vname){
@@ -415,6 +414,7 @@ ggplot(df[p_index, ], aes(target_lgb, sqrt((target - target_lgb)^2) )) + geom_po
 ggplot(df[p_index, ], aes(sample = (target - target_lgb) )) + stat_qq()
 
 
+ggplot(df[train_index, ], aes(target)) + geom_density(adjust  = 0.1)
 ggplot(df[train_index, ], aes(target)) + stat_ecdf()
 ggplot(df[train_index, ], aes(target_lgb - target)) + stat_ecdf()
 
@@ -440,6 +440,251 @@ plots = llply(lgb_vars %!in_set% cat_vars, function(vname){
 marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 
 ```
+
+#LightGBM: Binary
+target > 7.5
+p(target > 7.5) * E[target |  target > 7.5] + p(target <= 7.5) * E[target |  target <= 7.5]
+```{r light_gbm_binary, eval = FALSE}
+
+set.seed(132140937)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+lgb_vars = all_vars
+
+dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
+dfs = dfs[target >= 4]
+
+dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = as.numeric(dfs$target > 7.5), categorical_feature = cat_vars)
+params <- list(objective = "binary", metric = "binary_logloss")
+
+var.monotone = rep(0, length(lgb_vars))
+mon_inc_vars = c()
+mon_dec_vars = c()
+var.monotone[lgb_vars %in% mon_inc_vars]  =  1
+var.monotone[lgb_vars %in% mon_dec_vars]  = -1
+
+
+set.seed(140937345)
+
+model.lgb_bin <- lgb.cv(
+  params = params,
+  data = dtrain,
+  nrounds = 10000,
+  nfold = 10,
+  num_threads = 5, 
+  
+  monotone_constraints= var.monotone,
+  monotone_constraints_method  = 'intermediate',
+  
+  min_data = 900,
+  learning_rate = 0.008,
+  num_leaves = 15,
+  bagging_fraction = 0.9,
+  min_data_in_bin = 5,
+  
+  boost_from_average = TRUE,
+  eval_freq = 100,
+  early_stopping_rounds = 100,
+  force_col_wise=TRUE
+)
+
+#best.iter = model.lgb$best_iter #
+#model.lgb$best_score #0.6983437
+
+cv_error = as.numeric(model.lgb_bin$record_evals$valid$binary_logloss$eval_err)
+ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line()
+
+min(cv_error)
+
+dm_all = data.matrix(df[,lgb_vars, with = F])
+pred.lgb_bin_cvi = ldply(seq(length(model.lgb_bin$boosters)), function(i){ data.frame(cv = i, id = df$id, pred=  predict(model.lgb_bin$boosters[[i]], dm_all)$booster) } )
+setDT(pred.lgb_bin_cvi)
+
+pred.lgb_bin_cv_summary = pred.lgb_bin_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(cv)]
+pred.lgb_bin_cv         = pred.lgb_bin_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(id)]
+
+#var_imp   = lgb.importance(model.lgb$boosters[[1]][[1]], percentage = TRUE)
+#lgb.plot.importance(var_imp, top_n = 20, measure = "Gain")
+
+df[pred.lgb_bin_cv, target_lgb_bin :=  i.avg, on=.(id)]
+
+lgb_importance = lgb.importance(model.lgb_bin$boosters[[1]][[1]], percentage = TRUE)
+lgb.plot.interpretation(lgb_importance)
+
+plot_binmodel_predictions(as.numeric(df$target[train_index]>4.5), df$target_lgb_bin[train_index])
+
+plot_profile(df[train_index, target],  df[train_index, target_lgb], 
+             df[train_index,  cont8], bucket_count = 50, error_band = 'norm') 
+
+plot_profiles(df$target_lgb[train_index], df[train_index,])
+
+```
+
+#LightGBM: E[target | target > 7.5]
+```{r light_gbm_binary2, eval = FALSE}
+
+set.seed(132140937)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+lgb_vars = all_vars
+
+dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
+dfs = dfs[target > 7.5]
+
+dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target, categorical_feature = cat_vars)
+params <- list(objective = "regression", metric = "rmse")
+
+var.monotone = rep(0, length(lgb_vars))
+mon_inc_vars = c()
+mon_dec_vars = c()
+var.monotone[lgb_vars %in% mon_inc_vars]  =  1
+var.monotone[lgb_vars %in% mon_dec_vars]  = -1
+
+
+set.seed(140937345)
+
+model.lgb_2 <- lgb.cv(
+  params = params,
+  data = dtrain,
+  nrounds = 10000,
+  nfold = 10,
+  num_threads = 5, 
+  
+  monotone_constraints= var.monotone,
+  monotone_constraints_method  = 'intermediate',
+  
+  min_data = 900,
+  learning_rate = 0.008,
+  num_leaves = 15,
+  bagging_fraction = 0.9,
+  min_data_in_bin = 5,
+  
+  boost_from_average = TRUE,
+  eval_freq = 100,
+  early_stopping_rounds = 100,
+  force_col_wise=TRUE
+)
+
+#best.iter = model.lgb$best_iter #
+#model.lgb$best_score #0.6983437
+
+cv_error = as.numeric(model.lgb_2$record_evals$valid$rmse$eval)
+ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line()
+
+min(cv_error)
+
+dm_all = data.matrix(df[,lgb_vars, with = F])
+pred.lgb_2_cvi = ldply(seq(length(model.lgb_2$boosters)), function(i){ data.frame(cv = i, id = df$id, pred=  predict(model.lgb_2$boosters[[i]], dm_all)$booster) } )
+setDT(pred.lgb_2_cvi)
+
+pred.lgb_2_cv_summary = pred.lgb_2_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(cv)]
+pred.lgb_2_cv         = pred.lgb_2_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(id)]
+
+#var_imp   = lgb.importance(model.lgb$boosters[[1]][[1]], percentage = TRUE)
+#lgb.plot.importance(var_imp, top_n = 20, measure = "Gain")
+
+df[pred.lgb_2_cv, target_lgb_2 :=  i.avg, on=.(id)]
+
+plot_profile(df[train_index & target > 7.5, target],  df[train_index & target > 7.5, target_lgb_2], 
+             df[train_index & target > 7.5,  cont8], bucket_count = 50, error_band = 'norm') 
+
+ggplot(df[train_index & target > 7.5, ], aes(target_lgb_2 - target)) + stat_ecdf()
+```
+
+
+#LightGBM: E[target | target <= 7.5]
+```{r light_gbm_binary1, eval = FALSE}
+
+set.seed(132140937)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+lgb_vars = all_vars
+
+dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
+dfs = dfs[target <= 7.5]
+
+dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target, categorical_feature = cat_vars)
+params <- list(objective = "regression", metric = "rmse")
+
+var.monotone = rep(0, length(lgb_vars))
+mon_inc_vars = c()
+mon_dec_vars = c()
+var.monotone[lgb_vars %in% mon_inc_vars]  =  1
+var.monotone[lgb_vars %in% mon_dec_vars]  = -1
+
+
+set.seed(140937345)
+
+model.lgb_1 <- lgb.cv(
+  params = params,
+  data = dtrain,
+  nrounds = 10000,
+  nfold = 10,
+  num_threads = 5, 
+  
+  monotone_constraints= var.monotone,
+  monotone_constraints_method  = 'intermediate',
+  
+  min_data = 900,
+  learning_rate = 0.008,
+  num_leaves = 15,
+  bagging_fraction = 0.9,
+  min_data_in_bin = 5,
+  
+  boost_from_average = TRUE,
+  eval_freq = 100,
+  early_stopping_rounds = 100,
+  force_col_wise=TRUE
+)
+
+#best.iter = model.lgb$best_iter #
+#model.lgb$best_score #0.6983437
+
+cv_error = as.numeric(model.lgb_1$record_evals$valid$rmse$eval)
+ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line()
+
+min(cv_error)
+
+dm_all = data.matrix(df[,lgb_vars, with = F])
+pred.lgb_1_cvi = ldply(seq(length(model.lgb_2$boosters)), function(i){ data.frame(cv = i, id = df$id, pred=  predict(model.lgb_1$boosters[[i]], dm_all)$booster) } )
+setDT(pred.lgb_1_cvi)
+
+pred.lgb_1_cv_summary = pred.lgb_1_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(cv)]
+pred.lgb_1_cv         = pred.lgb_1_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(id)]
+
+#var_imp   = lgb.importance(model.lgb$boosters[[1]][[1]], percentage = TRUE)
+#lgb.plot.importance(var_imp, top_n = 20, measure = "Gain")
+
+df[pred.lgb_1_cv, target_lgb_1 :=  i.avg, on=.(id)]
+
+plot_profile(df[train_index & target <= 7.5, target],  df[train_index & target <= 7.5, target_lgb_1], 
+             df[train_index & target <= 7.5,  cont8], bucket_count = 50, error_band = 'norm') 
+
+df[, target_lgb_comb := target_lgb_bin  * target_lgb_2  + (1-target_lgb_bin ) * target_lgb_1 ]
+
+
+ggplot(df[train_index, ], aes(target)) + geom_density(adjust  = 0.1)
+ggplot(df[train_index, ], aes(target)) + stat_ecdf()
+ggplot(df[train_index, ], aes(target_lgb_comb - target)) + stat_ecdf()
+
+plot_profiles(df$target_lgb_comb[train_index], df[train_index,])
+
+p_index = sample(which(train_index), 10000)
+ggplot(df[p_index, ], aes(target_lgb_bin , target)) + geom_point(alpha = 0.2)
+ggplot(df[p_index, ], aes(target_lgb_1, target)) + geom_point(alpha = 0.2) + geom_abline(slope = 1, color = 'red')
+ggplot(df[p_index, ], aes(target_lgb_2, target)) + geom_point(alpha = 0.2) + geom_abline(slope = 1, color = 'red')
+
+ggplot(df[p_index, ]) + geom_point(aes(target_lgb_2, target), alpha = 0.2) + geom_point(aes(target_lgb_1, target), alpha = 0.2) + geom_abline(slope = 1, color = 'red')
+ggplot(df[p_index, ], aes(target_lgb_comb, target)) + geom_point(alpha = 0.2) + geom_abline(slope = 1, color = 'red')
+
+```
+
 
 #LightGBM: Bagging
 
@@ -1070,12 +1315,14 @@ v4: 0.84327
 v5: 0.84317
 v6: 0.84309
 v7: 0.84398
-    0.84309
+v8: 0.84317
+v9: 0.84329 - combined p*A + (1-p) * B
 ```{r submit, echo=FALSE}
-  #fwrite(df, file.path(working_folder,'Playground/Feb2021/data/df.csv'))
+  #fwrite(df, file.path(working_folder,'Playground/Feb2021/data/df_lgb.csv'))
  
-  file = file.path(working_folder, "Playground/Feb2021/submit_v7.lgb.csv")
-  fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
+  file = file.path(working_folder, "Playground/Feb2021/submit_v9.lgb.csv")
+  #fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
+  fwrite(df[test_index, .(id, target=target_lgb_comb)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)
 

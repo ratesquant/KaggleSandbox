@@ -11,19 +11,19 @@ knitr::opts_chunk$set(echo = TRUE)
 
 library(data.table)
 library(stringi)
-library(gbm)
+#library(gbm)
 library(ggplot2)
 library(gridExtra)
 #library(dplyr)
 library(plyr)
 library(corrplot)
-library(xgboost)
+#library(xgboost)
 #library(zip)
-library(caret)
+#library(caret)
 library(lightgbm)
 library(forcats)
-library(rBayesianOptimization)
-library(tune) #https://datascienceplus.com/grid-search-and-bayesian-hyperparameter-optimization-using-tune-and-caret-packages/
+#library(rBayesianOptimization)
+#library(tune) #https://datascienceplus.com/grid-search-and-bayesian-hyperparameter-optimization-using-tune-and-caret-packages/
 
 
 working_folder = 'D:/Github/KaggleSandbox'
@@ -44,7 +44,6 @@ load_existing = FALSE
 
 if (load_existing) {
   df <- fread(file.path(working_folder,'Playground/Feb2021/data/df.csv'), check.names = TRUE)
-  
 } else{
   train <- fread(file.path(working_folder,'Playground/Feb2021/data/train.csv'), check.names = TRUE)
   test  <- fread(file.path(working_folder,'Playground/Feb2021/data/test.csv'),  check.names = TRUE) # 1459   80
@@ -340,21 +339,21 @@ set.seed(140937345)
 model.lgb <- lgb.cv(
   params = params,
   data = dtrain,
-  nrounds = 10000,
+  nrounds = 20000,
   nfold = 10,
   num_threads = 5, 
   
-  monotone_constraints= var.monotone,
-  monotone_constraints_method  = 'intermediate',
+  #monotone_constraints= var.monotone,
+  #monotone_constraints_method  = 'intermediate',
   
   min_data = 900,
-  learning_rate = 0.008,
+  learning_rate = 0.005,
   num_leaves = 15,
   bagging_fraction = 0.9,
   min_data_in_bin = 5,
   
   boost_from_average = TRUE,
-  eval_freq = 100,
+  eval_freq = 500,
   early_stopping_rounds = 100,
   force_col_wise=TRUE
 )
@@ -368,7 +367,7 @@ ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + ge
 min(cv_error)
 
 dm_all = data.matrix(df[,lgb_vars, with = F])
-pred.lgb_cvi = ldply(seq(length(model.lgb$boosters)), function(i){ data.frame(cv = i, id = df$id, pred=  predict(model.lgb$boosters[[i]], dm_all)$booster) } )
+pred.lgb_cvi = ldply(seq(length(model.lgb$boosters)), function(i){ data.frame(cv = i, id = df$id, pred=  predict(model.lgb$boosters[[i]]$booster, dm_all)) } )
 setDT(pred.lgb_cvi)
 
 pred.lgb_cv_summary = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(cv)]
@@ -1320,9 +1319,9 @@ v9: 0.84329 - combined p*A + (1-p) * B
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Feb2021/data/df_lgb.csv'))
  
-  file = file.path(working_folder, "Playground/Feb2021/submit_v9.lgb.csv")
+  file = file.path(working_folder, "Playground/Feb2021/submit_v10.lgb.csv")
   #fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
-  fwrite(df[test_index, .(id, target=target_lgb_comb)], file = file, row.names = FALSE)
+  fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)
 

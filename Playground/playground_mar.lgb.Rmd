@@ -51,9 +51,11 @@ all_vars = names(df) %!in_set% c('id', obj_var) #14 variables
 all_vars = all_vars[grep('^(cont|cat)', all_vars)]
 cat_vars = all_vars[grep('^(cat)', all_vars)]
 con_vars = all_vars[grep('^(cont)', all_vars)]
+cat_vars_ex = stri_join(cat_vars, '_ex')
 
-df[, (cat_vars):=lapply(.SD, function(x) fct_infreq(fct_lump_prop(x, 0.01, other_level = "OT"))), .SDcols = cat_vars]
+df[, (cat_vars_ex):=lapply(.SD, function(x) fct_infreq(fct_lump_prop(x, 0.006, other_level = "OT"))), .SDcols = cat_vars]
 
+all_vars = c(cat_vars_ex, con_vars)
 ```
 
 ## Plots
@@ -100,7 +102,7 @@ model.lgb <- lgb.cv(
   nfold = 10,
   num_threads = 5, 
   
-  min_data = 900,
+  min_data = 700,
   learning_rate = 0.0065,
   num_leaves = 42,
   bagging_fraction = 0.95,
@@ -144,12 +146,13 @@ plot_binmodel_roc(df$target[train_index], df$target_lgb[train_index])
 #lgb.plot.interpretation(lgb_importance)
 
 ```
+
 ##Submit 
 v1 - 0.88038 baseline (no optimization, not pre-processing)
 v2 - 0.88968 (combine rare cat levels to OT 1%)
 v3 - 0.88893 (combine rare cat levels to OT 2% - a bit less effective)
 v4 - 0.88960 (use AUC as objective)
-v5 - 0.89042 (tuned)
+v5 - 0.89038 (min_data = 900)
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Mar2021/data/df_lgb.csv'))
  
@@ -200,7 +203,7 @@ param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   params = params,
   data = dtrain,
   
-  nfold = 10,
+  nfold = 5,
   num_threads = 5, 
   verbose = 0,
   
@@ -268,5 +271,70 @@ plot_gbminfluence(var_inf)
 
 plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var), output_type = 'link' )
 marrangeGrob(plots, nrow = 2, ncol = 3, top = NULL)
+
+```
+
+## LightGBM: preprocessing tuning
+
+```{r pre_processing_tuning, echo=FALSE}
+
+winsoraze<-function(x, xt, alpha = 0.05) {
+  q_bounds = quantile(xt, c(alpha/2, 1- alpha/2))
+  x = pmax(pmin(x, q_bounds[2]), q_bounds[1])
+  return (x)
+}
+
+my_params = data.table(lump_prop = c(0.005, 0.006, 0.007, 0.01, 0.02, 0.03, 0.04, 0.05))
+
+param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
+  #run_index = 1
+  print(run_index)
+  print(my_params[run_index,])
+  
+  my_params$lump_prop[run_index]
+  
+set.seed(1321)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+   lgb_vars = c(cat_vars_ex, w_vars)
+   
+   
+  w_vars = stri_join('w_', con_vars)
+  df[, (w_vars):=lapply(.SD, function(x) winsoraze(x, x[train_index], my_params$lump_prop[run_index]) ), .SDcols = con_vars]
+  
+  #df[, (cat_vars_ex):=lapply(.SD, function(x) fct_infreq(fct_lump_prop(x, my_params$lump_prop[run_index], other_level = "OT"))), .SDcols = cat_vars]
+  dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
+  
+  
+  dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target, categorical_feature = cat_vars_ex)
+  #params <- list(objective = "binary", metric = "binary_logloss")
+  params <- list(objective = "binary", metric = "auc")
+  
+  model.lgb <- lgb.cv(
+    params = params,
+    data = dtrain,
+    nrounds = 15000,
+    nfold = 10,
+    num_threads = 5, 
+    
+    min_data = 700,
+    learning_rate = 0.0065,
+    num_leaves = 42,
+    bagging_fraction = 0.95,
+    min_data_in_bin = 5,
+    boost_from_average = TRUE,
+    eval_freq = 100,
+    early_stopping_rounds = 100,
+    force_row_wise=TRUE,
+  )
+  
+    return ( data.frame(lump_prop = my_params$lump_prop[run_index], best_it = model.lgb$best_iter, best_score = model.lgb$best_score, max_auc = max(as.numeric(model.lgb$record_evals$valid$auc$eval)) ) ) 
+})
+setDT(param_res_raw)
+param_res_raw[order(max_auc)]
+
+ggplot(param_res_raw, aes(lump_prop, max_auc)) + geom_line() + geom_point()
 
 ```

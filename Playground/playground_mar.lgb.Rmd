@@ -25,6 +25,11 @@ working_folder = 'D:/Github/KaggleSandbox'
 
 source(file.path(working_folder, 'Utils/common.R'))
 
+winsoraze<-function(x, xt, alpha = 0.05) {
+  q_bounds = quantile(xt, c(alpha/2, 1- alpha/2))
+  x = pmax(pmin(x, q_bounds[2]), q_bounds[1])
+  return (x)
+}
 ```
 
 ## Load Data
@@ -51,11 +56,17 @@ all_vars = names(df) %!in_set% c('id', obj_var) #14 variables
 all_vars = all_vars[grep('^(cont|cat)', all_vars)]
 cat_vars = all_vars[grep('^(cat)', all_vars)]
 con_vars = all_vars[grep('^(cont)', all_vars)]
-cat_vars_ex = stri_join(cat_vars, '_ex')
 
+#pre-preprocess
+
+cat_vars_ex = stri_join(cat_vars, '_ex')
 df[, (cat_vars_ex):=lapply(.SD, function(x) fct_infreq(fct_lump_prop(x, 0.006, other_level = "OT"))), .SDcols = cat_vars]
 
-all_vars = c(cat_vars_ex, con_vars)
+con_vars_w = stri_join('w_', con_vars)
+df[, (con_vars_w):=lapply(.SD, function(x) winsoraze(x, x[train_index], 0.001) ), .SDcols = con_vars]
+  
+
+all_vars = c(cat_vars_ex, con_vars_w)
 ```
 
 ## Plots
@@ -91,7 +102,7 @@ lgb_vars = all_vars
 
 dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
 
-dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target, categorical_feature = cat_vars)
+dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target, categorical_feature = cat_vars_ex)
 #params <- list(objective = "binary", metric = "binary_logloss")
 params <- list(objective = "binary", metric = "auc")
 
@@ -102,8 +113,8 @@ model.lgb <- lgb.cv(
   nfold = 10,
   num_threads = 5, 
   
-  min_data = 700,
-  learning_rate = 0.0065,
+  min_data = 1100,
+  learning_rate = 0.005,
   num_leaves = 42,
   bagging_fraction = 0.95,
   min_data_in_bin = 5,
@@ -153,10 +164,12 @@ v2 - 0.88968 (combine rare cat levels to OT 1%)
 v3 - 0.88893 (combine rare cat levels to OT 2% - a bit less effective)
 v4 - 0.88960 (use AUC as objective)
 v5 - 0.89038 (min_data = 900)
+v6 - 0.89063  (+winzoring)
+v7 - 0.89070  (min_data = 1100, learning_rate = 0.005 )
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Mar2021/data/df_lgb.csv'))
  
-  file = file.path(working_folder, "Playground/Mar2021/submit_v5.lgb.csv")
+  file = file.path(working_folder, "Playground/Mar2021/submit_v7.lgb.csv")
   #fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
   fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
@@ -182,7 +195,7 @@ dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
 
 params <- list(objective = "binary", metric = "auc")
 
-n_runs = 10 # 10 runs per hour
+n_runs = 20 # 10 runs per hour
 my_params = data.table(
                        learning_rate = runif(n_runs, 0.005, 0.01), 
                        bagging_fraction = runif(n_runs, 0.9, 1.0), 
@@ -190,20 +203,28 @@ my_params = data.table(
                        min_data_in_bin = sample(seq(3, 7),n_runs, TRUE), #default = 3
                        num_leaves = sample(seq(20, 100),n_runs, TRUE)) #default = 31
 
+my_params = data.table(expand.grid(
+                       learning_rate = c(0.005), 
+                       bagging_fraction = c(0.9, 0.95, 0.99, 1.0), 
+                       min_data =c(1100), #default = 20
+                       min_data_in_bin = c(5), #default = 3
+                       num_leaves = c(42))) #default = 31
+
 param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
+  set.seed(1321)
   #run_index = 1
   print(run_index)
   print(my_params[run_index,])
   
   start_time <- Sys.time()
   
-  dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target, categorical_feature = cat_vars)
+  dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target, categorical_feature = cat_vars_ex)
   
   model.lgb <- lgb.cv(
   params = params,
   data = dtrain,
   
-  nfold = 5,
+  nfold = 10,
   num_threads = 5, 
   verbose = 0,
   
@@ -242,9 +263,11 @@ ggplot(param_res, aes(best_it, elapsed)) + geom_point()
 ggplot(param_res, aes(best_it, learning_rate)) + geom_point()
 ggplot(param_res, aes(learning_rate, best_score)) + geom_point() + geom_smooth()
 ggplot(param_res, aes(bagging_fraction, best_score)) + geom_point() + geom_smooth()
-ggplot(param_res, aes(min_data, best_score)) + geom_point()+ geom_smooth() #500
+ggplot(param_res, aes(min_data, best_score)) + geom_point()
 ggplot(param_res, aes(min_data_in_bin, best_score)) + geom_point() + geom_smooth(span  = 0.5)
 ggplot(param_res, aes(num_leaves, best_score)) + geom_point()  + geom_smooth(span  = 0.5)
+
+ggplot(param_res, aes(num_leaves, best_score, color = factor(min_data_in_bin ), group = min_data_in_bin )) + geom_line() + geom_point()
 
 
 #get GBM model 
@@ -257,7 +280,7 @@ model.gbm = gbm(formula.gbm,
                 distribution = 'gaussian',
                 n.trees = 1000,
                 shrinkage = 0.005,#0.005
-                bag.fraction = 0.5,
+                bag.fraction = 1.0,
                 interaction.depth = 1,
                 cv.folds = 10,
                 n.cores = 6,
@@ -278,13 +301,8 @@ marrangeGrob(plots, nrow = 2, ncol = 3, top = NULL)
 
 ```{r pre_processing_tuning, echo=FALSE}
 
-winsoraze<-function(x, xt, alpha = 0.05) {
-  q_bounds = quantile(xt, c(alpha/2, 1- alpha/2))
-  x = pmax(pmin(x, q_bounds[2]), q_bounds[1])
-  return (x)
-}
 
-my_params = data.table(lump_prop = c(0.005, 0.006, 0.007, 0.01, 0.02, 0.03, 0.04, 0.05))
+my_params = data.table(lump_prop = c(0, 0.001, 0.002, 0.005, 0.007, 0.008))
 
 param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   #run_index = 1
@@ -295,14 +313,13 @@ param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   
 set.seed(1321)
 
-t_index_v = which(train_index)
-t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
-
-   lgb_vars = c(cat_vars_ex, w_vars)
-   
+ t_index_v = which(train_index)
+ t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
    
   w_vars = stri_join('w_', con_vars)
   df[, (w_vars):=lapply(.SD, function(x) winsoraze(x, x[train_index], my_params$lump_prop[run_index]) ), .SDcols = con_vars]
+  
+  lgb_vars = c(cat_vars_ex, w_vars)
   
   #df[, (cat_vars_ex):=lapply(.SD, function(x) fct_infreq(fct_lump_prop(x, my_params$lump_prop[run_index], other_level = "OT"))), .SDcols = cat_vars]
   dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]

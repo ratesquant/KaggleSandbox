@@ -9,9 +9,13 @@ rms_log <-function(y, x) {
   return ( sqrt( mean ( (log(y+1) - log(x+1))^2 )))
 } 
 
-logit <- function(x){
+logistic <- function(x){
   return (1.0 / (1.0 + exp(-x)))
 }
+logit <- function(x){
+  return ( log(x/(1-x)))
+}
+
 
 # expand_dublicates - the same x values will produce different y values 
 ecdf_norm<-function(x, normal = TRUE, expand_dublicates = FALSE) {

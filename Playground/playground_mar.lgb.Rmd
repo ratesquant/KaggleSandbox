@@ -64,7 +64,19 @@ df[, (cat_vars_ex):=lapply(.SD, function(x) fct_infreq(fct_lump_prop(x, 0.006, o
 
 con_vars_w = stri_join('w_', con_vars)
 df[, (con_vars_w):=lapply(.SD, function(x) winsoraze(x, x[train_index], 0.001) ), .SDcols = con_vars]
-  
+
+df[, cat_11_2_ex  := fct_infreq(fct_lump_prop(stri_join(cat11, cat2),  0.006, other_level = "OT")) ]
+df[, cat_16_15_ex := fct_infreq(fct_lump_prop(stri_join(cat16, cat15), 0.006, other_level = "OT")) ]
+
+# df[, con_10m0 := cont10 - cont0 ]
+# df[, con_10p0 := cont10 + cont0 ]
+# df[, w_con_10m0 := winsoraze(con_10m0, con_10m0[train_index], 0.001) ]
+# df[, w_con_10p0 := winsoraze(con_10p0, con_10p0[train_index], 0.001) ]
+# 
+# df[, con_2m1 := cont2 - cont1 ]
+# df[, con_2p1 := cont2 + cont1 ]
+# df[, w_con_2m1 := winsoraze(con_2m1, con_2m1[train_index], 0.001) ]
+# df[, w_con_2p1 := winsoraze(con_2p1, con_2p1[train_index], 0.001) ]
 
 all_vars = c(cat_vars_ex, con_vars_w)
 ```
@@ -82,10 +94,24 @@ marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
 
 #df[, .(.N, mean(target)), by = .(cat1, is.na(target))]
 plots = llply(all_vars, function(var_name){
-  ggplot(df[train_index,], aes_string(var_name, 'factor(target)')) +  stat_bin_2d(bins = 10) + ggtitle(var_name)
+  ggplot(df[train_index,], aes_string(var_name, 'factor(target)')) +  stat_bin_2d(bins = 100) + ggtitle(var_name) + theme(legend.position = 'None')
   })
 marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
 
+plots = llply(all_vars, function(var_name){
+  ggplot(df[train_index, ], aes_string(var_name, 'is.na(target)', z = 'target')) + stat_summary_2d(fun = function(x) mean(x, na.rm = TRUE), bins = 100) + scale_fill_gradient2() + ggtitle(var_name) + theme(legend.position = 'None')
+  })
+marrangeGrob(plots, nrow = 5, ncol = 6, top = NULL)
+
+
+ corr_matrix = cor(data.matrix(df[train_index,c(cat_vars_ex, con_vars_w), with = FALSE]), use="pairwise.complete.obs")
+ #corrplot(corr_matrix, method="number", number.cex = 0.8)
+  ggplot( reshape2::melt(corr_matrix), aes(Var1, Var2, fill = value, alpha = abs(value), label = ifelse(abs(value)>0.1, sprintf('%.2f', value), ''))) + geom_tile() + scale_fill_custom('jet', discrete = FALSE) + 
+ theme(axis.text.x  = element_text(angle = 45, hjust = 1, size = 8), axis.text.y  = element_text(size = 8), axis.title.x = element_blank(), axis.title.y = element_blank()) + geom_text(size = 2)
+
+  #cat16-15, 11-2
+#  table(df[train_index, .(cat16_ex, cat15_ex)])
+#  table(df[train_index, .(cat11_ex, cat2_ex)])
 ```
 
 
@@ -99,6 +125,7 @@ t_index_v = which(train_index)
 t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
 
 lgb_vars = all_vars
+lgb_vars = c(all_vars, 'cat_11_2_ex', 'cat_16_15_ex' ) 
 
 dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
 
@@ -156,9 +183,17 @@ plot_binmodel_roc(df$target[train_index], df$target_lgb[train_index])
 #lgb_importance = lgb.importance(model.lgb$boosters[[1]][[1]], percentage = TRUE)
 #lgb.plot.interpretation(lgb_importance)
 
+plot_profile(df$target_lgb[train_index], df$target[train_index], df$cat_11_2_ex[train_index])
+plot_profile(df$target_lgb[train_index], df$target[train_index], df$cat_16_15_ex[train_index])
+plot_profile(df$target_lgb[train_index], df$target[train_index], df$cat16_ex[train_index])
+plot_profile(df$target_lgb[train_index], df$target[train_index], df$w_cont1[train_index])
+plot_profile(df$target_lgb[train_index], df$target[train_index], df$w_cont2[train_index])
+plot_profile(df$target_lgb[train_index], df$target[train_index], df$w_con_10p0[train_index], bucket_count = 20)
+
 ```
 
 ##Submit 
+#0.89329
 v1 - 0.88038 baseline (no optimization, not pre-processing)
 v2 - 0.88968 (combine rare cat levels to OT 1%)
 v3 - 0.88893 (combine rare cat levels to OT 2% - a bit less effective)
@@ -166,10 +201,12 @@ v4 - 0.88960 (use AUC as objective)
 v5 - 0.89038 (min_data = 900)
 v6 - 0.89063  (+winzoring)
 v7 - 0.89070  (min_data = 1100, learning_rate = 0.005 )
+v8 - 0.89076 (+cat_11_2_ex, cat_16_15_ex )
+v9 - 0.89076 (+ w_con_2m1 w_con_2p1) - not helpful
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Mar2021/data/df_lgb.csv'))
  
-  file = file.path(working_folder, "Playground/Mar2021/submit_v7.lgb.csv")
+  file = file.path(working_folder, "Playground/Mar2021/submit_v9.lgb.csv")
   #fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
   fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
@@ -204,11 +241,12 @@ my_params = data.table(
                        num_leaves = sample(seq(20, 100),n_runs, TRUE)) #default = 31
 
 my_params = data.table(expand.grid(
-                       learning_rate = c(0.005), 
-                       bagging_fraction = c(0.9, 0.95, 0.99, 1.0), 
+                       learning_rate = c(0.003,0.004,0.005), 
+                       bagging_fraction = c(0.95), 
                        min_data =c(1100), #default = 20
                        min_data_in_bin = c(5), #default = 3
-                       num_leaves = c(42))) #default = 31
+                       num_leaves = c(42),
+                       max_depth = c(-1, 5) )) #default = 31
 
 param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   set.seed(1321)
@@ -233,6 +271,8 @@ param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   min_data = my_params$min_data[run_index],
   num_leaves = my_params$num_leaves[run_index],
   min_data_in_bin = my_params$min_data_in_bin[run_index],
+  max_depth = my_params$max_depth[run_index],
+  
   
   nrounds = 20000,
   boost_from_average = TRUE,
@@ -268,6 +308,7 @@ ggplot(param_res, aes(min_data_in_bin, best_score)) + geom_point() + geom_smooth
 ggplot(param_res, aes(num_leaves, best_score)) + geom_point()  + geom_smooth(span  = 0.5)
 
 ggplot(param_res, aes(num_leaves, best_score, color = factor(min_data_in_bin ), group = min_data_in_bin )) + geom_line() + geom_point()
+ggplot(param_res, aes(bagging_fraction, best_score, color = factor(min_data_in_bin ), group = min_data_in_bin )) + geom_line() + geom_point()
 
 
 #get GBM model 

@@ -37,146 +37,84 @@ winsoraze<-function(x, xt, alpha = 0.05) {
 load_existing = FALSE
 
 if (load_existing) {
-  df <- fread(file.path(working_folder,'Playground/Mar2021/data/df.csv'), check.names = TRUE)
+  df <- fread(file.path(working_folder,'Playground/Apr2021/data/df.csv'), check.names = TRUE)
 } else{
-  train <- fread(file.path(working_folder,'Playground/Mar2021/data/train.csv'), check.names = TRUE)
-  test  <- fread(file.path(working_folder,'Playground/Mar2021/data/test.csv'),  check.names = TRUE) # 1459   80
-  test[, target:=NA]
+  train <- fread(file.path(working_folder,'Playground/Apr2021/data/train.csv'), check.names = TRUE)
+  test  <- fread(file.path(working_folder,'Playground/Apr2021/data/test.csv'),  check.names = TRUE) # 1459   80
+  test[, Survived :=NA]
   df = rbind(train, test)
+  
+  setnames(df, c('PassengerId'),c('id'))
   
   gc(reset=TRUE)
 }
   
 
-test_index = is.na(df$target)
+test_index = is.na(df$Survived)
 train_index = !test_index
 
-obj_var = 'target'
-all_vars = names(df) %!in_set% c('id', obj_var) #14 variables
-all_vars = all_vars[grep('^(cont|cat)', all_vars)]
-cat_vars = all_vars[grep('^(cat)', all_vars)]
-con_vars = all_vars[grep('^(cont)', all_vars)]
+obj_var = 'Survived'
+all_vars = names(df) %!in_set% c('id', obj_var) #10 variables
+cat_vars = names(which(sapply(df[,all_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
+con_vars = names(which(sapply(df[,all_vars, with = FALSE], function(x) is.numeric(x)  )))
 
-df[, is_test:= is.na(target)]
+df[, is_test:= is.na(Survived)]
+
+df[, cabin_prefix := stri_sub(Cabin, 1, 1)]
+df[, cabin_length := stri_length(Cabin)]
+df[, cabin_number := as.numeric(stri_sub(Cabin, 2, -1)) ]
+df[, cabin_number_1 := as.numeric(stri_sub(Cabin, 2, 2)) ]
+df[, cabin_number_2 := as.numeric(stri_sub(Cabin, 3, 3)) ]
+df[, cabin_number_3 := as.numeric(stri_sub(Cabin, 4, 4)) ]
+df[, cabin_number_4 := as.numeric(stri_sub(Cabin, 5, 5)) ]
+df[, cabin_number_5 := as.numeric(stri_sub(Cabin, 6, 6)) ]
+
+df_cab = df[train_index & Cabin!='', .(.N, survived_pct = mean(Survived, na.rm = TRUE)), by = .(Cabin) ]
+df[df_cab, cabin_size:=i.N, on =.(Cabin)]
+df[df_cab, cabin_pct:=i.survived_pct, on =.(Cabin)]
+
+df[, is_ticket_long := as.numeric(grepl(' ', Ticket)) ]
+
+df[is_ticket_long == 1, ticket_prefix := tstrsplit(Ticket, " ", fixed=TRUE, keep = 1L)]
+
+df[, ticket_prefix_ex :=fct_lump_min(ticket_prefix, min = 50)]
+
+df[, c('name_1','name_2')  := tstrsplit(Name, ",", fixed=TRUE)]
+
+table(df[, .(ticket_prefix, is_test)])
+table(df[, .(ticket_prefix_ex, is_test)])
 
 #pre-preprocess
-df[, cat8_1  := stri_sub(cat8,1,1) ]
-df[, cat8_2  := stri_sub(cat8,2,2) ]
- 
-df[, cat7_1  := stri_sub(cat7,1,1) ]
-df[, cat7_2  := stri_sub(cat7,2,2) ]
+#df[, cat10_1_ex  :=  fct_infreq(fct_lump_prop(stri_sub(cat10,1,1), 0.005, other_level = "OT")) ]
+#df[, cat10_2_ex  :=  fct_infreq(fct_lump_prop(stri_sub(cat10,2,2), 0.005, other_level = "OT")) ]
 
-df[, cat5_1  := stri_sub(cat5,1,1) ]
-df[, cat5_2  := stri_sub(cat5,2,2) ]
- 
-df[, cat10_1_ex  :=  fct_infreq(fct_lump_prop(stri_sub(cat10,1,1), 0.005, other_level = "OT")) ]
-df[, cat10_2_ex  :=  fct_infreq(fct_lump_prop(stri_sub(cat10,2,2), 0.005, other_level = "OT")) ]
-
-cat_vars_ex = stri_join(cat_vars, '_ex')
-df[, (cat_vars_ex):=lapply(.SD, function(x) fct_infreq(fct_lump_prop(x, 0.005, other_level = "OT"))), .SDcols = cat_vars]
-
-con_vars_w = stri_join('w_', con_vars)
-df[, (con_vars_w):=lapply(.SD, function(x) winsoraze(x, x[train_index], 0.001) ), .SDcols = con_vars]
-
-con_vars_p = stri_join('p_', con_vars)
-df[, (con_vars_p):=lapply(.SD, function(x) ecdf(x[train_index])(x) ), .SDcols = con_vars]
-
-special_cat10_1 = c('JL','L','GM','GW','AL','Y','JB','MV','EE','LE','Q','DE','KH','F','JV','AK','BB', 'DY','ID')
-special_cat10_2 = c('EC','GL','FE','EA','CI','CY','KJ','BQ','M','FM','IC','EP','DD','K','IT','GT','KR','JJ','EW','CL','CP','HR','FV', 'FL','LX')
-
-df[, cat10_spec1:=as.numeric(cat10 %in% special_cat10_1)  ]
-df[, cat10_spec2:=as.numeric(cat10 %in% special_cat10_2)  ]
-
-df[, .(.N), by =.(is_test,cat10_spec1 )]
-df[, .(.N), by =.(is_test,cat10_spec2 )]
-
-# 
-# extra_cat_vars = c('cat8_1', 'cat8_2', 'cat7_1', 'cat7_2', 'cat10_1', 'cat10_2')
-# extra_cat_vars_ex = stri_join(extra_cat_vars,'_ex')
-# df[, (extra_cat_vars_ex):=lapply(.SD, function(x) fct_infreq(fct_lump_prop(x, 0.006, other_level = "OT"))), .SDcols = extra_cat_vars]
-
-# df[, con_10m0 := cont10 - cont0 ]
-# df[, con_10p0 := cont10 + cont0 ]
-# df[, w_con_10m0 := winsoraze(con_10m0, con_10m0[train_index], 0.001) ]
-# df[, w_con_10p0 := winsoraze(con_10p0, con_10p0[train_index], 0.001) ]
-# 
-# df[, con_2m1 := cont2 - cont1 ]
-# df[, con_2p1 := cont2 + cont1 ]
-# df[, w_con_2m1 := winsoraze(con_2m1, con_2m1[train_index], 0.001) ]
-# df[, w_con_2p1 := winsoraze(con_2p1, con_2p1[train_index], 0.001) ]
-
-for(my_char in LETTERS[1:7]){
-  df[, stri_join('count_', my_char) := apply(.SD, 1, function(x) sum(as.numeric(x == my_char)) ), .SDcols = cat_vars]
-}
-
-df[, count_unique := apply(.SD, 1, function(x) length(unique(x))), .SDcols = cat_vars]
-df[, count_pairs := apply(.SD, 1, function(x) sum(choose(table(x), 2))), .SDcols = cat_vars]
-
-plot_profile(df$target_lgb[train_index], df$target[train_index], factor(df$count_unique[train_index]) )
-
-all_vars = c(cat_vars_ex, con_vars_w)
-
-#for(my_var in cat_vars_ex){
-#  print( table( df[,c(my_var, 'is_test'), with = FALSE] ) )
-#}
-#log-odds
-for(my_var in cat_vars_ex){
-  glm.formula = as.formula(stri_join('target ~ ', my_var))
-  glm.model = glm(glm.formula, data = df[train_index,c('target', my_var), with = FALSE], family = binomial(link = "logit"))
-  #summary(glm.model)
-  df[, stri_join(my_var, '_odds') := predict(glm.model, .SD)]
-}
-
-#read clustering results
-clust_res = fread(file.path(working_folder,'Playground/Mar2021/data/clust_res.csv'))
-
-for(my_var in unique(clust_res$var_name) ){
-  lut = clust_res[var_name == my_var, .(name,group)]
-  setnames(lut, 'name', my_var)
-  df[lut,  stri_join(my_var,'_cluster') := i.group, on =c(my_var)]
-}
-#df[clust_res[var_name == 'cat10'], cat10_cluster :=i.group, on =.(cat10 = name)]
-#df[clust_res[var_name == 'cat7'],  cat7_cluster := i.group, on =.(cat7 = name)]
-#df[clust_res[var_name == 'cat8'],  cat8_cluster := i.group, on =.(cat8 = name)]
-#table(df$cat10_cluster, df$is_test)
-#ldply(cat_vars_ex, function(x) data.frame(x, length(unique(df[[x]]))) )
+df[cabin_length  == 6]
 ```
 
 ## Plots
 
 ```{r plots, echo=FALSE}
 s_index = sample.int(nrow(df), nrow(df))
-plots = llply(all_vars, function(var_name){
-  ggplot(df[s_index ], aes_string(var_name, group = 'is.na(target)', color = 'is.na(target)')) + geom_density(adjust = 0.1) + ggtitle(var_name)
+plots = llply(all_vars %!in_set% c('Name', 'Ticket', 'Cabin'), function(var_name){
+  ggplot(df[s_index ], aes_string(var_name, group = 'is.na(Survived)', color = 'is.na(Survived)')) + geom_density(adjust = 0.1) + ggtitle(var_name)
   })
-marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
-
-#cat16, cat1, cat15, cat8, cont5
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 
 #df[, .(.N, mean(target)), by = .(cat1, is.na(target))]
-plots = llply(all_vars, function(var_name){
-  ggplot(df[train_index,], aes_string(var_name, 'factor(target)')) +  stat_bin_2d(bins = 100) + ggtitle(var_name) + theme(legend.position = 'None')
+plots = llply(all_vars %!in_set% c('Name', 'Ticket', 'Cabin'), function(var_name){
+  ggplot(df[train_index,], aes_string(var_name, 'factor(Survived)')) +  stat_bin_2d(bins = 100) + ggtitle(var_name) + theme(legend.position = 'None')
   })
-marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 
 plots = llply(all_vars, function(var_name){
   ggplot(df[train_index, ], aes_string(var_name, 'is.na(target)', z = 'target')) + stat_summary_2d(fun = function(x) mean(x, na.rm = TRUE), bins = 100) + scale_fill_gradient2() + ggtitle(var_name) + theme(legend.position = 'None')
   })
 marrangeGrob(plots, nrow = 5, ncol = 6, top = NULL)
 
-
- corr_matrix = cor(data.matrix(df[train_index,c(cat_vars_ex, con_vars_w), with = FALSE]), use="pairwise.complete.obs")
- #corrplot(corr_matrix, method="number", number.cex = 0.8)
-  ggplot( reshape2::melt(corr_matrix), aes(Var1, Var2, fill = value, alpha = abs(value), label = ifelse(abs(value)>0.1, sprintf('%.2f', value), ''))) + geom_tile() + scale_fill_custom('jet', discrete = FALSE) + 
- theme(axis.text.x  = element_text(angle = 45, hjust = 1, size = 8), axis.text.y  = element_text(size = 8), axis.title.x = element_blank(), axis.title.y = element_blank()) + geom_text(size = 2)
-
-  #cat16-15, 11-2
-#  table(df[train_index, .(cat16_ex, cat15_ex)])
-#  table(df[train_index, .(cat11_ex, cat2_ex)])
-  
-  table(df[train_index, .(cat7_ex)])
-  table(df[train_index, .(cat8_ex)])
-  table(df[train_index, .(cat10_ex)])
+table(df[train_index, .(Name)])
+table(df[train_index, .(Ticket)])
+table(df[train_index, .(Cabin)])
+table(df[train_index, .(ticket_prefix)])
  
 
 ```
@@ -191,49 +129,42 @@ set.seed(1321)
 t_index_v = which(train_index)
 t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
 
-lgb_vars = all_vars
-lgb_vars = c(all_vars, 'cat_11_2_ex', 'cat_16_15_ex' ) 
-lgb_vars = c(all_vars, stri_join('count_', LETTERS[1:5]), stri_join(cat_vars_ex, '_odds'), 'cat5_1', 'cat5_2','cat8_1', 'cat8_2',  'cat7_1', 'cat7_2', 'cat10_1_ex', 'cat10_2_ex','cat16_ex', 'cat15_ex', 'count_unique', 'cat10_spec1', 'cat10_spec2', 'con_tsne1', 'con_tsne2') %!in_set% c(cat_vars_ex, 'cat5_ex_odds')
-#lgb_vars = c("cat16_ex", "cat8_ex",	"cat1_ex", "cat7_ex","cat10_ex", "w_cont5", "cat_16_15_ex","cat15_ex", "cat18_ex","cat0_ex", "cat4_ex","cat14_ex","w_cont6","cat2_ex","w_cont2",	"w_cont1",	"w_cont4",	"w_cont8",
-#             'w_cont3', 'cat3_ex_odds', 'cat17_ex', 'count_A','count_B', 
-#             'cat9_ex_odds', 'cat5_ex_odds', 'cat11_ex_odds', 'cat13_ex_odds')	
+lgb_vars = c('cabin_prefix', 'cabin_number_1', 'cabin_number_2', 'ticket_prefix', 'cabin_size', all_vars) %!in_set% c('Name', 'Ticket', 'Cabin')
 
 my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
 
-dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
+dfs = df[t_index_v1, c(obj_var,lgb_vars), with = FALSE]
 
-dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target, categorical_feature = my_cat_vars)
-params <- list(objective = "binary", metric = "auc")
+dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
+params <- list(objective = "binary", metric = "binary_error")
 
 model.lgb <- lgb.cv(
   params = params,
   data = dtrain,
-  nrounds = 20000,
+  nrounds = 2000,
   nfold = 10,
   num_threads = 5, 
   
-  min_data = 1100,
-  learning_rate = 0.004,
-  num_leaves = 60,
+  min_data = 26, #default = 20
+  learning_rate = 0.006,
+  num_leaves = 52,
   bagging_fraction = 0.95,
   min_data_in_bin = 5,
   boost_from_average = TRUE,
   eval_freq = 100,
-  early_stopping_rounds = 100
+  early_stopping_rounds = 100,
+  force_row_wise=TRUE
 )
 
-#best.iter = model.lgb$best_iter #
-#model.lgb$best_score #0.6983437
-
 #cv_error = as.numeric(model.lgb$record_evals$valid$binary_logloss$eval)
-cv_error = as.numeric(model.lgb$record_evals$valid$auc$eval)
+cv_error = as.numeric(model.lgb$record_evals$valid$binary_error$eval)
 ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line()
 
 min(cv_error)
-max(cv_error) #0.8950866
+max(cv_error) #0.78687
 
 dm_all = data.matrix(df[,lgb_vars, with = F])
-pred.lgb_cvi = ldply(seq(length(model.lgb$boosters)), function(i){ data.frame(cv = i, id = df$id, pred=  predict(model.lgb$boosters[[i]]$booster, dm_all)) } )
+pred.lgb_cvi = ldply(seq(length(model.lgb$boosters)), function(i){ data.frame(cv = i, id = df$id, pred= predict(model.lgb$boosters[[i]]$booster, dm_all)) } )
 setDT(pred.lgb_cvi)
 
 #pred.lgb_cv_summary = pred.lgb_cvi[, .(.N, avg=logistic(mean(logit(pred))), sigma = sd(pred)), by =.(cv)]
@@ -242,148 +173,60 @@ setDT(pred.lgb_cvi)
 pred.lgb_cv_summary = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(cv)]
 pred.lgb_cv         = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(id)]
 
-
 #%% Plot -----
 #plot_profiles(df$target_lgb[train_index], df[train_index,])
 #plot_profiles_2d(df$target_lgb[p_index], df[p_index,])
 
 df[pred.lgb_cv, target_lgb :=  i.avg, on=.(id)]
 
-plot_binmodel_roc(df$target[train_index], df$target_lgb[train_index])
-plot_binmodel_predictions(df$target[train_index], df$target_lgb[train_index])
+#df[train_index, sum(abs(Survived - (target_lgb > 0.5)))/.N  ]
+
+plot_binmodel_roc(df$Survived[train_index], df$target_lgb[train_index])
+plot_binmodel_predictions(df$Survived[train_index], df$target_lgb[train_index])
 
 lgb_importance = lgb.importance(model.lgb$boosters[[1]][[1]], percentage = TRUE)
 ggplot(lgb_importance, aes(fct_reorder(Feature,Gain), Gain)) + geom_bar(stat = 'identity') + coord_flip()
 #lgb.plot.interpretation(lgb_importance)
 
-df_cat10_levels = df[train_index, .(.N, model = mean(target_lgb),  actual = mean(target)), by =.(cat10)][order(abs(model - actual) )]
-
-#df[cat10 == 'MV',.(.N), by = .(is_test)]
-
-my_index = train_index & df$cat16 == 'C'
-plot_profile(df$target_lgb[my_index], df$target[my_index], df$w_cont5[my_index])
-
-plot_profile(df$target_lgb[train_index], df$target[train_index], df$cat10[train_index])
-
-plot_profile(df$target_lgb[train_index], df$target[train_index], df$count_BB[train_index])
-plot_profile(df$target_lgb[train_index], df$target[train_index], df$cat15[train_index])
-plot_profile(df$target_lgb[train_index], df$target[train_index], df$cat7[train_index])
-plot_profile(df$target_lgb[train_index], df$target[train_index], df$cat8[train_index])
-plot_profile(df$target_lgb[train_index], df$target[train_index], df$cat5[train_index])
-
-plot_profile(df$target_lgb[train_index], df$target[train_index], df$cat9[train_index])
-
-plot_profile(df$target_lgb[train_index], df$target[train_index], df$cat10_1[train_index])
-plot_profile(df$target_lgb[train_index], df$target[train_index], df$cat10_2[train_index])
-
-plot_profile(df$target_lgb[train_index], df$target[train_index], df$cat_16_15_ex[train_index])
-plot_profile(df$target_lgb[train_index], df$target[train_index], df$cat16_ex[train_index])
-plot_profile(df$target_lgb[train_index], df$target[train_index], df$w_cont1[train_index])
-plot_profile(df$target_lgb[train_index], df$target[train_index], df$w_cont2[train_index])
-plot_profile(df$target_lgb[train_index], df$target[train_index], df$w_con_10p0[train_index], bucket_count = 20)
-plot_profile(df$target_lgb[train_index], df$target[train_index], factor(df$count_pairs[train_index]), bucket_count = 50)
-
- plots = llply(names(df) %!in_set% c('id', 'target'), function(var_name) { #lgb_vars
-    p = plot_profile(df$target_lgb[train_index],  df$target[train_index], df[[var_name]][train_index], bucket_count = 50, error_band = 'binom') +
+ plots = llply( lgb_vars %!in_set% c('Name', 'Ticket', 'Cabin'), function(var_name) { #lgb_vars
+    p = plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[[var_name]][train_index], bucket_count = 50, error_band = 'binom') +
       ggtitle(var_name) +  theme(title =element_text(size=8))
     return( ggplotGrob(p) )
   })
-  #marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
- ggsave(filename = file.path(working_folder,"Playground/Mar2021/profiles.pdf"), plot = marrangeGrob(plots, nrow=4, ncol=4), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+  marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+ #ggsave(filename = file.path(working_folder,"Playground/Apr2021/profiles.pdf"), plot = marrangeGrob(plots, nrow=4, ncol=4), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+  
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['cabin_prefix']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['cabin_number_1']][train_index]), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['cabin_number_2']][train_index]), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['cabin_number_3']][train_index]), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['cabin_number_4']][train_index]), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['cabin_number_5']][train_index]), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['cabin_number']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['cabin_length']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['ticket_prefix']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['is_ticket_long']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['cabin_size']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['cabin_pct']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
 ```
 
 ##Submit 
-#0.89329
-v1  - 0.88038 baseline (no optimization, not pre-processing)
-v2  - 0.88968 (combine rare cat levels to OT 1%)
-v3  - 0.88893 (combine rare cat levels to OT 2% - a bit less effective)
-v4  - 0.88960 (use AUC as objective)
-v5  - 0.89038 (min_data = 900)
-v6  - 0.89063  (+winzoring)
-v7  - 0.89070  (min_data = 1100, learning_rate = 0.005 )
-v8  - 0.89076 (+cat_11_2_ex, cat_16_15_ex )
-v9  - 0.89076 (+ w_con_2m1 w_con_2p1) - not helpful
-v10 - 0.89065
-v11 - 0.89076 (no improvement)
-v12 - 0.89073  (change cat variables - no improvement)
-v13 - 0.89069
-v14 - 0.89083 (+cat vars)
-v15 - 0.89077 (+cat vars) 
-v15 - 0.89074 (logg-ods for catvars)
-v17 - 0.89074 (count - unique)
-v18 - 0.89011, 0.89001 reduced variable set ()
+#0.79300
+v1  - 0.79300 baseline (no optimization, no pre-processing)
+v2  - 0.80314  c('cabin_prefix', 'cabin_number_1', 'cabin_number_2','is_ticket_long', 'ticket_prefix', all_vars) %!in_set% c('Name', 'Ticket', 'Cabin')
+v3  - 0.80386  c('cabin_prefix', 'cabin_number_1', 'cabin_number_2', 'ticket_prefix', 'cabin_size', all_vars) %!in_set% c('Name', 'Ticket', 'Cabin')
+v4  - 0.80406  c('cabin_prefix', 'cabin_number_1', 'cabin_number_2', 'ticket_prefix', 'cabin_size', all_vars) %!in_set% c('Name', 'Ticket', 'Cabin')
 ```{r submit, echo=FALSE}
-  #fwrite(df, file.path(working_folder,'Playground/Mar2021/data/df_lgb.csv'))
+  #fwrite(df, file.path(working_folder,'Playground/Apr2021/data/df.csv'))
  
-  file = file.path(working_folder, "Playground/Mar2021/submit_v18.lgb.csv")
+  file = file.path(working_folder, "Playground/Apr2021/submit_v5.lgb.csv")
   #fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
-  fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
+  fwrite(df[test_index, .(PassengerId=id, Survived =ifelse(target_lgb>0.5, 1, 0))], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)
 
 ```
 
-
-## Full Clustering
-
-```{r full_clustering, echo=FALSE}
-
-library(Rtsne)
-
-set.seed(132140937)
-
-c_index = sample(which(train_index), 50000)
-
-tsne <- Rtsne(df[c_index, con_vars, with = FALSE], perplexity = 30, num_threads = 5, verbose = 1, theta=0.5, max_iter = 1000)
-
-ggplot(data.frame(tsne$Y, label = factor(df[c_index, target]) ), aes(X1, X2, group = label, color = label)) + geom_point(size = 1.0) + scale_color_manual(values = c('black', 'red'))
-
-#runall
-tsne <- Rtsne(df[, con_vars, with = FALSE], perplexity = 30, num_threads = 5, verbose = 1, theta=0.5, max_iter = 1000)
-df[, con_tsne1 := tsne$Y[,1]]
-df[, con_tsne2 := tsne$Y[,2]]
-
-
-# ----------- UMAP    -------------------
-library(umap)
-m_data = df[c_index, con_vars, with = FALSE]
- 
-data_map = umap(m_data)
-  
-ggplot(data.frame(data_map$layout, label = factor( df[c_index, target] )), aes(X1, X2, group = label, color = label)) + 
-    geom_point(size = 0.1) + scale_color_manual(values = c('black', 'red'))
-
-umap_all = predict(data_map, df[, con_vars, with = FALSE])
-
-df[, con_umap1 := umap_all[,1]]
-df[, con_umap2 := umap_all[,2]]
-
-```
-
-## Cluster cat variables
-
-```{r cluster_cat, echo=FALSE}
-#"cat5"  "cat7"  "cat8"  "cat10"
-my_cat_vars =  names(which(sapply(df[,cat_vars, with = FALSE], function(x) length(unique(x)) ) > 20)  )
-
-cat_var_cluster = "cat10"  
-
-clust_res = ldply(my_cat_vars, function(cat_var_cluster){
-  
-  avg_res = df[train_index, .(.N, res = mean(target, na.rm = TRUE) - mean(target_lgb, na.rm = TRUE) ), by =c(cat_var_cluster)]
-  avg_res[, res := actual - model]
-  
-  d = dist(avg_res$res)
-  
-  hc = hclust(d, method = "ward.D")
-  #plot(hc)
-  group = cutree(hc, k = 3)
-  data.frame(var_name = cat_var_cluster, name =avg_res[[cat_var_cluster]], group)
-})
-setDT(clust_res)
-
-fwrite(clust_res, file.path(working_folder,'Playground/Mar2021/data/clust_res.csv'))
-```
 
 ## LightGBM Grid Tune
 
@@ -391,35 +234,33 @@ fwrite(clust_res, file.path(working_folder,'Playground/Mar2021/data/clust_res.cs
 
 set.seed(1321)
 
-#lgb_vars = all_vars
-lgb_vars = c(all_vars, 'cat_11_2_ex', 'cat_16_15_ex' ) 
-#lgb_vars = stri_join('w_', all_vars)
-#lgb_vars = c(all_vars, 'target_knn')
-
 t_index_v = which(train_index)
 t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
 
-dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
+lgb_vars = c('cabin_prefix', 'cabin_number_1', 'cabin_number_2', 'ticket_prefix', 'cabin_size', all_vars) %!in_set% c('Name', 'Ticket', 'Cabin')
 
-params <- list(objective = "binary", metric = "auc")
+my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
 
+dfs = df[t_index_v1, c(obj_var,lgb_vars), with = FALSE]
 
-n_runs = 40 # 10 runs per hour
-my_params = data.table(
-                       learning_rate = runif(n_runs, 0.004, 0.007), 
-                       bagging_fraction = runif(n_runs, 0.9, 1.0), 
-                       min_data = sample(seq(from = 600, to = 1400),n_runs, TRUE), #default = 20
-                       min_data_in_bin = sample(seq(3, 7),n_runs, TRUE), #default = 3
-                       num_leaves = sample(seq(20, 100),n_runs, TRUE), 
-                       max_depth = c(-1)) #default = 31
+dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
+params <- list(objective = "binary", metric = "binary_error")
 
 my_params = data.table(expand.grid(
                        learning_rate = c(0.005), 
                        bagging_fraction = c(0.95), 
                        min_data =c(1100, 1200), #default = 20
                        min_data_in_bin = c(5), #default = 3
-                       num_leaves = c(42, 50, 60),
-                       max_depth = c(-1) )) #default = 31
+                       num_leaves = c(42, 50, 60) )) #default = 31
+
+
+n_runs = 100 # 10 runs per hour
+my_params = data.table(
+                       learning_rate = runif(n_runs, 0.005, 0.01), 
+                       bagging_fraction = runif(n_runs, 0.9, 1.0), 
+                       min_data = sample(seq(from = 20, to = 1400),n_runs, TRUE), #default = 20
+                       min_data_in_bin = sample(seq(3, 7),n_runs, TRUE), #default = 3
+                       num_leaves = sample(seq(20, 100),n_runs, TRUE)) #default = 31
 
 param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   set.seed(1321)
@@ -429,7 +270,7 @@ param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   
   start_time <- Sys.time()
   
-  dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target, categorical_feature = cat_vars_ex)
+  dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
   
   model.lgb <- lgb.cv(
   params = params,
@@ -444,7 +285,6 @@ param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   min_data = my_params$min_data[run_index],
   num_leaves = my_params$num_leaves[run_index],
   min_data_in_bin = my_params$min_data_in_bin[run_index],
-  max_depth = my_params$max_depth[run_index],
   
   
   nrounds = 20000,
@@ -464,25 +304,19 @@ param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
 param_res = cbind(param_res_raw, my_params)
 setDT(param_res)
 setorder(param_res, best_score)
-param_res[, rank:=seq(nrow(param_res))]
-param_res[best_score  == max(best_score)]
+param_res[best_score  == min(best_score)]
 
-#  best_it best_score  elapsed learning_rate bagging_fraction min_data min_data_in_bin num_leaves max_depth rank
-#1:    3411  0.8951614 13.95499   0.005769209        0.9509845     1349               6         91        -1   40
+#  best_it best_score  elapsed learning_rate bagging_fraction min_data min_data_in_bin num_leaves
+#1:     601  0.2170299 1.141573   0.006150851        0.9463479       26               4         52
 
-#learning_rate = 0.008, bagging_fraction=0.95, min_data = 950, min_data_in_bin = 6
-#1k per 1m
 ggplot(param_res, aes(best_it, elapsed)) + geom_point()
 ggplot(param_res, aes(best_it, learning_rate)) + geom_point()
+
 ggplot(param_res, aes(learning_rate, best_score)) + geom_point()
 ggplot(param_res, aes(bagging_fraction, best_score)) + geom_point()
 ggplot(param_res, aes(min_data, best_score)) + geom_point()
 ggplot(param_res, aes(min_data_in_bin, best_score)) + geom_point()
 ggplot(param_res, aes(num_leaves, best_score)) + geom_point()
-
-ggplot(param_res, aes(num_leaves, best_score, color = factor(min_data  ), group = min_data  )) + geom_line() + geom_point() + facet_grid(~bagging_fraction )
-ggplot(param_res, aes(bagging_fraction, best_score, color = factor(min_data_in_bin ), group = min_data_in_bin )) + geom_line() + geom_point()
-
 ggplot(param_res, aes(max_depth  , best_score)) + geom_line() + geom_point()
 
 
@@ -514,103 +348,3 @@ marrangeGrob(plots, nrow = 2, ncol = 3, top = NULL)
 
 ```
 
-## LightGBM: preprocessing tuning
-
-```{r pre_processing_tuning, echo=FALSE}
-
-
-my_params = data.table(lump_prop = c(0, 0.001, 0.002, 0.005, 0.007, 0.008))
-
-param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
-  #run_index = 1
-  print(run_index)
-  print(my_params[run_index,])
-  
-  my_params$lump_prop[run_index]
-  
-set.seed(1321)
-
- t_index_v = which(train_index)
- t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
-   
-  w_vars = stri_join('w_', con_vars)
-  df[, (w_vars):=lapply(.SD, function(x) winsoraze(x, x[train_index], my_params$lump_prop[run_index]) ), .SDcols = con_vars]
-  
-  lgb_vars = c(cat_vars_ex, w_vars)
-  
-  #df[, (cat_vars_ex):=lapply(.SD, function(x) fct_infreq(fct_lump_prop(x, my_params$lump_prop[run_index], other_level = "OT"))), .SDcols = cat_vars]
-  dfs = df[t_index_v1, c('target',lgb_vars), with = FALSE]
-  
-  
-  dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$target, categorical_feature = cat_vars_ex)
-  #params <- list(objective = "binary", metric = "binary_logloss")
-  params <- list(objective = "binary", metric = "auc")
-  
-  model.lgb <- lgb.cv(
-    params = params,
-    data = dtrain,
-    nrounds = 15000,
-    nfold = 10,
-    num_threads = 5, 
-    
-    min_data = 700,
-    learning_rate = 0.0065,
-    num_leaves = 42,
-    bagging_fraction = 0.95,
-    min_data_in_bin = 5,
-    boost_from_average = TRUE,
-    eval_freq = 100,
-    early_stopping_rounds = 100,
-    force_row_wise=TRUE,
-  )
-  
-    return ( data.frame(lump_prop = my_params$lump_prop[run_index], best_it = model.lgb$best_iter, best_score = model.lgb$best_score, max_auc = max(as.numeric(model.lgb$record_evals$valid$auc$eval)) ) ) 
-})
-setDT(param_res_raw)
-param_res_raw[order(max_auc)]
-
-ggplot(param_res_raw, aes(lump_prop, max_auc)) + geom_line() + geom_point()
-
-```
-
-
-## LightGBM: Difference between train and test
-
-```{r train_test_difference, echo=FALSE}
-
-set.seed(1321)
-
-df[,is_test := as.numeric(is_test)]
-
-lgb_vars = c(all_vars, 'cat_11_2_ex', 'cat_16_15_ex', stri_join('count_', LETTERS[1:7]), stri_join(cat_vars_ex, '_odds'), 'cat8_1', 'cat8_2',  'cat7_1', 'cat7_2', 'cat10_1', 'cat10_2', 'count_unique')
-
-my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
-
-dfs = df[, c('is_test',lgb_vars), with = FALSE]
-
-dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs$is_test, categorical_feature = my_cat_vars)
-params <- list(objective = "binary", metric = "auc")
-
-model_tt_diff.lgb <- lgb.cv(
-  params = params,
-  data = dtrain,
-  nrounds = 10000,
-  nfold = 10,
-  num_threads = 5, 
-  
-  learning_rate = 0.01,
-  boost_from_average = TRUE,
-  eval_freq = 200,
-  early_stopping_rounds = 200
-)
-
-cv_error = as.numeric(model_tt_diff.lgb$record_evals$valid$auc$eval)
-ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line()
-
-min(cv_error)
-max(cv_error)
-
-lgb_importance = lgb.importance(model_tt_diff.lgb$boosters[[1]][[1]], percentage = TRUE)
-lgb.plot.interpretation(lgb_importance)
-
-```

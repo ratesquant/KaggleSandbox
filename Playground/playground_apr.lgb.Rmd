@@ -30,6 +30,62 @@ winsoraze<-function(x, xt, alpha = 0.05) {
   x = pmax(pmin(x, q_bounds[2]), q_bounds[1])
   return (x)
 }
+
+partialPlot <- function(obj, pred.data, xname, n.pt = 19, discrete.x = FALSE, 
+                        subsample = pmin(1, n.pt * 100 / nrow(pred.data)), which.class = NULL,
+                        xlab = deparse(substitute(xname)), ylab = "", type = if (discrete.x) "p" else "b",
+                        main = "", rug = TRUE, seed = NULL, ...) {
+  stopifnot(dim(pred.data) >= 1)
+  
+  if (subsample < 1) {
+    if (!is.null(seed)) {
+      set.seed(seed)
+    } 
+    n <- nrow(pred.data)
+    picked <- sample(n, trunc(subsample * n))
+    pred.data <- pred.data[picked, , drop = FALSE]
+  }
+  xv <- pred.data[, xname]
+  
+  if (discrete.x) {
+    x <- unique(xv)
+  } else {
+    x <- quantile(xv, seq(0.03, 0.97, length.out = n.pt), names = FALSE, na.rm = TRUE)
+  }
+  y <- numeric(length(x))
+  
+  isRanger <- inherits(obj, "ranger")
+  isLm <- inherits(obj, "lm") | inherits(obj, "lmrob") | inherits(obj, "lmerMod")
+
+  for (i in seq_along(x)) {
+   pred.data[, xname] <- x[i]
+
+    if (isRanger) {
+      if (!is.null(which.class)) {
+        if (obj$treetype != "Probability estimation") {
+          stop("Choose probability = TRUE when fitting ranger multiclass model") 
+        }
+        preds <- predict(obj, pred.data)$predictions[, which.class]
+      }
+      else {
+        preds <- predict(obj, pred.data)$predictions
+      }
+    } else if (isLm) {
+      preds <- predict(obj, pred.data) 
+    } else {
+      if (!is.null(which.class)) {
+        preds <- predict(obj, pred.data, reshape = TRUE)[, which.class + 1] 
+      } else {
+        preds <- predict(obj, pred.data)
+      }
+    }
+    
+    y[i] <- mean(preds)
+  }
+  
+  #plot(x, y, xlab = xlab, ylab = ylab, main = main, type = type, ...)
+  data.frame(x = x, y = y)
+}
 ```
 
 ## Load Data
@@ -68,16 +124,19 @@ df[, cabin_number_2 := as.numeric(stri_sub(Cabin, 3, 3)) ]
 df[, cabin_number_3 := as.numeric(stri_sub(Cabin, 4, 4)) ]
 df[, cabin_number_4 := as.numeric(stri_sub(Cabin, 5, 5)) ]
 df[, cabin_number_5 := as.numeric(stri_sub(Cabin, 6, 6)) ]
+df[, cabin_number_1_mod2 := cabin_number_1 %% 2 ]
+df[, cabin_number_5_mod2 := cabin_number_5 %% 2 ]
 
-df_cab = df[train_index & Cabin!='', .(.N, survived_pct = mean(Survived, na.rm = TRUE)), by = .(Cabin) ]
+df[, age_ := pmin(60, Age) ]
+
+df_cab = df[train_index & Cabin!='', .(.N), by = .(Cabin) ]
 df[df_cab, cabin_size:=i.N, on =.(Cabin)]
-df[df_cab, cabin_pct:=i.survived_pct, on =.(Cabin)]
 
 df[, is_ticket_long := as.numeric(grepl(' ', Ticket)) ]
 
 df[is_ticket_long == 1, ticket_prefix := tstrsplit(Ticket, " ", fixed=TRUE, keep = 1L)]
 
-df[, ticket_prefix_ex :=fct_lump_min(ticket_prefix, min = 50)]
+df[, ticket_prefix_ex :=fct_lump_min(ticket_prefix, min = 40)]
 
 df[, c('name_1','name_2')  := tstrsplit(Name, ",", fixed=TRUE)]
 
@@ -116,6 +175,9 @@ table(df[train_index, .(Ticket)])
 table(df[train_index, .(Cabin)])
 table(df[train_index, .(ticket_prefix)])
  
+ggplot(df, aes(Fare, group = is_test, color = is_test )) + geom_density()
+ggplot(df, aes(Age, group = is_test, color = is_test )) + geom_density(adjust = 0.4)
+ggplot(df, aes(age_, group = is_test, color = is_test )) + geom_density(adjust = 0.4)
 
 ```
 
@@ -129,7 +191,7 @@ set.seed(1321)
 t_index_v = which(train_index)
 t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
 
-lgb_vars = c('cabin_prefix', 'cabin_number_1', 'cabin_number_2', 'ticket_prefix', 'cabin_size', all_vars) %!in_set% c('Name', 'Ticket', 'Cabin')
+lgb_vars = c('cabin_prefix', 'cabin_number_1', 'cabin_number_2', 'ticket_prefix_ex', 'cabin_size', all_vars) %!in_set% c('Name', 'Ticket', 'Cabin')
 
 my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
 
@@ -138,6 +200,12 @@ dfs = df[t_index_v1, c(obj_var,lgb_vars), with = FALSE]
 dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
 params <- list(objective = "binary", metric = "binary_error")
 
+var.monotone = rep(0, length(lgb_vars))
+mon_inc_vars = c('Fare')
+mon_dec_vars = c()
+var.monotone[lgb_vars %in% mon_inc_vars]  =  1
+var.monotone[lgb_vars %in% mon_dec_vars]  = -1
+
 model.lgb <- lgb.cv(
   params = params,
   data = dtrain,
@@ -145,16 +213,23 @@ model.lgb <- lgb.cv(
   nfold = 10,
   num_threads = 5, 
   
+  monotone_constraints= var.monotone,
+  monotone_constraints_method  = 'intermediate',
+  
   min_data = 26, #default = 20
   learning_rate = 0.006,
   num_leaves = 52,
   bagging_fraction = 0.95,
   min_data_in_bin = 5,
+
   boost_from_average = TRUE,
   eval_freq = 100,
   early_stopping_rounds = 100,
   force_row_wise=TRUE
 )
+
+#   best_it best_score  elapsed learning_rate bagging_fraction min_data min_data_in_bin num_leaves
+#1:     500  0.2174599 1.047372   0.009686582        0.9003351       27               7         54
 
 #cv_error = as.numeric(model.lgb$record_evals$valid$binary_logloss$eval)
 cv_error = as.numeric(model.lgb$record_evals$valid$binary_error$eval)
@@ -194,9 +269,10 @@ ggplot(lgb_importance, aes(fct_reorder(Feature,Gain), Gain)) + geom_bar(stat = '
     return( ggplotGrob(p) )
   })
   marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
- #ggsave(filename = file.path(working_folder,"Playground/Apr2021/profiles.pdf"), plot = marrangeGrob(plots, nrow=4, ncol=4), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+ ggsave(filename = file.path(working_folder,"Playground/Apr2021/profiles.pdf"), plot = marrangeGrob(plots, nrow=4, ncol=4), device = 'pdf', width = 14, height = 8.5, dpi = 360)
   
-  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['cabin_prefix']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['Age']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['Embarked']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
   plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['cabin_number_1']][train_index]), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
   plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['cabin_number_2']][train_index]), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
   plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['cabin_number_3']][train_index]), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
@@ -207,7 +283,19 @@ ggplot(lgb_importance, aes(fct_reorder(Feature,Gain), Gain)) + geom_bar(stat = '
   plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['ticket_prefix']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
   plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['is_ticket_long']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
   plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['cabin_size']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
-  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['cabin_pct']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['name_2']][train_index]), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['cabin_number_5']][train_index]), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['cabin_number_5']][train_index] %% 2), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['cabin_number_1_mod2']][train_index]), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  
+  #partial plots
+  pdp_index = sample(which(train_index), 10000)
+  my_model = model.lgb$boosters[[1]][[1]]
+df_plot = partialPlot(my_model, data.matrix(df[pdp_index,lgb_vars, with = FALSE]), xname = "Age", n.pt = 100)
+ggplot(df_plot, aes(x, y)) + geom_line()
+
 ```
 
 ##Submit 
@@ -216,10 +304,12 @@ v1  - 0.79300 baseline (no optimization, no pre-processing)
 v2  - 0.80314  c('cabin_prefix', 'cabin_number_1', 'cabin_number_2','is_ticket_long', 'ticket_prefix', all_vars) %!in_set% c('Name', 'Ticket', 'Cabin')
 v3  - 0.80386  c('cabin_prefix', 'cabin_number_1', 'cabin_number_2', 'ticket_prefix', 'cabin_size', all_vars) %!in_set% c('Name', 'Ticket', 'Cabin')
 v4  - 0.80406  c('cabin_prefix', 'cabin_number_1', 'cabin_number_2', 'ticket_prefix', 'cabin_size', all_vars) %!in_set% c('Name', 'Ticket', 'Cabin')
+v5  - 0.80519  c('cabin_prefix', 'cabin_number_1', 'cabin_number_2', 'ticket_prefix', 'cabin_size', all_vars),  Fare - increasing
+
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Apr2021/data/df.csv'))
  
-  file = file.path(working_folder, "Playground/Apr2021/submit_v5.lgb.csv")
+  file = file.path(working_folder, "Playground/Apr2021/submit_v6.lgb.csv")
   #fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
   fwrite(df[test_index, .(PassengerId=id, Survived =ifelse(target_lgb>0.5, 1, 0))], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
@@ -258,7 +348,7 @@ n_runs = 100 # 10 runs per hour
 my_params = data.table(
                        learning_rate = runif(n_runs, 0.005, 0.01), 
                        bagging_fraction = runif(n_runs, 0.9, 1.0), 
-                       min_data = sample(seq(from = 20, to = 1400),n_runs, TRUE), #default = 20
+                       min_data = sample(seq(from = 20, to = 200),n_runs, TRUE), #default = 20
                        min_data_in_bin = sample(seq(3, 7),n_runs, TRUE), #default = 3
                        num_leaves = sample(seq(20, 100),n_runs, TRUE)) #default = 31
 
@@ -271,6 +361,13 @@ param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   start_time <- Sys.time()
   
   dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
+  
+  var.monotone = rep(0, length(lgb_vars))
+mon_inc_vars = c('Fare')
+mon_dec_vars = c()
+var.monotone[lgb_vars %in% mon_inc_vars]  =  1
+var.monotone[lgb_vars %in% mon_dec_vars]  = -1
+
   
   model.lgb <- lgb.cv(
   params = params,
@@ -286,6 +383,8 @@ param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   num_leaves = my_params$num_leaves[run_index],
   min_data_in_bin = my_params$min_data_in_bin[run_index],
   
+  monotone_constraints= var.monotone,
+  monotone_constraints_method  = 'intermediate',
   
   nrounds = 20000,
   boost_from_average = TRUE,
@@ -306,8 +405,8 @@ setDT(param_res)
 setorder(param_res, best_score)
 param_res[best_score  == min(best_score)]
 
-#  best_it best_score  elapsed learning_rate bagging_fraction min_data min_data_in_bin num_leaves
-#1:     601  0.2170299 1.141573   0.006150851        0.9463479       26               4         52
+#   best_it best_score  elapsed learning_rate bagging_fraction min_data min_data_in_bin num_leaves
+#1:     500  0.2174599 1.047372   0.009686582        0.9003351       27               7         54
 
 ggplot(param_res, aes(best_it, elapsed)) + geom_point()
 ggplot(param_res, aes(best_it, learning_rate)) + geom_point()
@@ -318,8 +417,6 @@ ggplot(param_res, aes(min_data, best_score)) + geom_point()
 ggplot(param_res, aes(min_data_in_bin, best_score)) + geom_point()
 ggplot(param_res, aes(num_leaves, best_score)) + geom_point()
 ggplot(param_res, aes(max_depth  , best_score)) + geom_line() + geom_point()
-
-
 
 #get GBM model 
 library(gbm)
@@ -345,6 +442,89 @@ plot_gbminfluence(var_inf)
 
 plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var), output_type = 'link' )
 marrangeGrob(plots, nrow = 2, ncol = 3, top = NULL)
+
+```
+
+## LightGBM 1D Grid Tune
+
+```{r grid_1d_tune, echo=FALSE}
+
+set.seed(1321)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+my_params = data.table(ticket_levels = seq(2, 50)) #default = 31
+
+param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
+  
+  df[, ticket_prefix_ex :=fct_lump_min(ticket_prefix, min = my_params$ticket_levels[run_index])]
+  
+  lgb_vars = c('cabin_prefix', 'cabin_number_1', 'cabin_number_2', 'ticket_prefix_ex', 'cabin_size', all_vars) %!in_set% c('Name', 'Ticket', 'Cabin')
+  my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
+  dfs = df[t_index_v1, c(obj_var,lgb_vars), with = FALSE]
+  dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
+  params <- list(objective = "binary", metric = "binary_error")
+
+  set.seed(1321)
+  #run_index = 1
+  print(run_index)
+  print(my_params[run_index,])
+  
+  start_time <- Sys.time()
+  
+  dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
+  
+  var.monotone = rep(0, length(lgb_vars))
+  mon_inc_vars = c('Fare')
+  mon_dec_vars = c()
+  var.monotone[lgb_vars %in% mon_inc_vars]  =  1
+  var.monotone[lgb_vars %in% mon_dec_vars]  = -1
+
+  
+  model.lgb <- lgb.cv(
+  params = params,
+  data = dtrain,
+  
+  nfold = 10,
+  num_threads = 5, 
+  verbose = -1,
+  
+  learning_rate = 0.006,
+  bagging_fraction = 0.95,
+  min_data = 26,
+  num_leaves = 52,
+  min_data_in_bin = 5,
+  
+  monotone_constraints= var.monotone,
+  monotone_constraints_method  = 'intermediate',
+  
+  nrounds = 20000,
+  boost_from_average = TRUE,
+  eval_freq = 100,
+  early_stopping_rounds = 100,
+  force_row_wise = TRUE,
+  )
+  
+  print(model.lgb$best_score)
+  
+  gc(reset = TRUE)
+  elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
+  return ( data.frame(best_it = model.lgb$best_iter, best_score = model.lgb$best_score, elapsed = elapsed ) ) 
+})
+
+param_res = cbind(param_res_raw, my_params)
+setDT(param_res)
+setorder(param_res, best_score)
+param_res[best_score  == min(best_score)]
+
+#   best_it best_score  elapsed learning_rate bagging_fraction min_data min_data_in_bin num_leaves
+#1:     500  0.2174599 1.047372   0.009686582        0.9003351       27               7         54
+
+ggplot(param_res, aes(best_it, elapsed)) + geom_point()
+ggplot(param_res, aes(best_it, learning_rate)) + geom_point()
+
+ggplot(param_res, aes(ticket_levels, best_score)) + geom_point()
 
 ```
 

@@ -251,21 +251,21 @@ ggplot(df_res[, .(error = rms(y_pred_cum,y) ), by =.(model_id1, my_kernel)], aes
 x = seq(0, 1, by = 0.001)
 y = 0.2 + 0.4 * x * x + 0.3 *x * sin(15 * x) + 0.05 * cos(50 * x)
 y = as.numeric(x>0.5)
-df = data.table(x, yt = y, y = y + 0.01*rnorm(length(y)))
+df = data.table(x, yt = y, y = y + 0.05*rnorm(length(y)))
 df[, id:=seq(nrow(df))]
 
 ggplot(df, aes(x, y)) + geom_point() + geom_line(aes(x, yt), color = 'red', size = 1)
 
 # CV
-cv_res = rbf_boost.create_cv(df[,.(x)],  df$y, max_nodes = 100, n_runs = 30, max_it = 20, growth_rate = 2.0, nfolds = 10, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' )
+cv_res = rbf_boost.create_cv(df[,.(x)],  df$y, 1, max_nodes = 64, n_runs = 30, max_it = 20, growth_rate = 2.0, shrink_kernel = 0.5, nfolds = 10, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1' )
 df_cv_res = data.table(it = seq(nrow(cv_res)), avg = apply(cv_res, 1, mean ), sigma = apply(cv_res, 1, sd ), cv_res )
 ggplot(df_cv_res[avg>0], aes(it, avg)) + geom_line() + geom_ribbon(aes(it, ymin = avg - sigma, ymax = avg + sigma), alpha = 0.2, fill = 'blue') + 
-  geom_hline(yintercept = 0.1, color = 'red', linetype = 'dashed')
+  geom_hline(yintercept = 0.05, color = 'red', linetype = 'dashed')
 
 df_cv_res[avg == min(avg)]#0.102632 
 
 # build model
-models_boost =  rbf_boost.create(df[,.(x)],  df$y,  max_nodes = 300, n_runs = 100, max_it = 20, growth_rate =2, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' )
+models_boost =  rbf_boost.create(df[,.(x)],  df$y, 1,  max_nodes = 128, n_runs = 30, max_it = 20, growth_rate =2, shrink_kernel = 0.4, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1' )
 res = rbf_boost.predict(models_boost, df[,.(x)], combine_boots = FALSE)
 setDT(res)
  
@@ -454,7 +454,7 @@ ggplot(df, aes(x, y, fill = target_true)) + geom_tile() + scale_fill_custom('jet
 
 #rbf_mquad_kernel, 
 
-models_boost =  rbf_boost.create(df[,.(x, y)], df$target, max_nodes = 512, n_runs = 10, max_it = 100, growth_rate = 2.0, kernel_fun = rbf_linear_kernel, dist_fun = 'L2', adaptive = TRUE)
+models_boost =  rbf_boost.create(df[,.(x, y)], df$target, 1, max_nodes = 256, n_runs = 10, max_it = 100, growth_rate = 2.0,shrink_kernel = 0.7, kernel_fun = rbf_gauss_kernel, dist_fun = 'L1', adaptive = TRUE)
 res = rbf_boost.predict(models_boost, df[,.(x, y)], combine_boots = TRUE)
 setDT(res)
 

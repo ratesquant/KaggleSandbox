@@ -445,7 +445,7 @@ marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
 ```{r rbf_2d_test}
 
 df = data.table(expand.grid(x = seq(-1, 1, by = 0.02), y = seq(-1, 1, by = 0.02)))
-df[, target_true:= sin(20 * x * y)]
+df[, target_true:= sin(10 * x * exp(y) )]
 df[, target:= target_true + 0.2*rnorm(nrow(df))]
 df[, id := seq(nrow(df))]
 
@@ -454,7 +454,7 @@ ggplot(df, aes(x, y, fill = target_true)) + geom_tile() + scale_fill_custom('jet
 
 #rbf_mquad_kernel, 
 
-models_boost =  rbf_boost.create(df[,.(x, y)], df$target, 1, max_nodes = 256, n_runs = 10, max_it = 100, growth_rate = 2.0,shrink_kernel = 0.7, kernel_fun = rbf_gauss_kernel, dist_fun = 'L1', adaptive = TRUE)
+models_boost =  rbf_boost.create(df[,.(x, y)], df$target, 1, max_nodes = 256, n_runs = 10, max_it = 100, growth_rate = 2.0,shrink_kernel = 0.7, kernel_fun = rbf_linear_kernel, dist_fun = 'L1', adaptive = TRUE)
 res = rbf_boost.predict(models_boost, df[,.(x, y)], combine_boots = TRUE)
 setDT(res)
 
@@ -466,7 +466,6 @@ ggplot(res_df, aes(x, y, fill = y_pred_cum  )) + geom_tile() + scale_fill_custom
 #ggplot(res_df, aes(x, y, fill = y_pred  )) + geom_tile() + scale_fill_custom('jet', discrete = FALSE) + facet_wrap(~model_id1)
 #0.244613
 
-
 nodes = ldply(seq(length(models_boost)), function(model_id1) {
       boot_models = models_boost[[model_id1]]
       ldply(seq(length(boot_models)), function(model_id2) {
@@ -474,6 +473,53 @@ nodes = ldply(seq(length(models_boost)), function(model_id1) {
       })
     })
 ggplot(nodes, aes(x, y)) + geom_point(size = 0.2) + facet_wrap(~model_id1) 
+
+```
+
+## MARS 2D test
+
+```{r mars_2d_test}
+library(earth)
+
+df = data.table(expand.grid(x = seq(-1, 1, by = 0.02), y = seq(-1, 1, by = 0.02)))
+df[, target_true:= sin(10 * x * exp(y) )]
+df[, target:= target_true + 0.2*rnorm(nrow(df))]
+df[, id := seq(nrow(df))]
+
+ggplot(df, aes(x, y, fill = target)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+ggplot(df, aes(x, y, fill = target_true)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+
+model.mars = earth(target ~ x + y, df,  degree = 2, thresh = 0.000001, nk = 1000, nfold=0, trace = 2)
+
+summary(model.mars, style = 'pmax')
+
+df[, mars_pred := predict(model.mars, df) ]
+
+ggplot(df, aes(x, y, fill = mars_pred)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+
+```
+
+## GBM 2D test
+
+```{r gbm_2d_test}
+library(gbm)
+
+df = data.table(expand.grid(x = seq(-1, 1, by = 0.02), y = seq(-1, 1, by = 0.02)))
+df[, target_true:= sin(10 * x * exp(y) )]
+df[, target:= target_true + 0.2*rnorm(nrow(df))]
+df[, id := seq(nrow(df))]
+
+ggplot(df, aes(x, y, fill = target)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+ggplot(df, aes(x, y, fill = target_true)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+
+model.gbm = gbm(target ~ x + y, df, distribution = "gaussian", n.trees = 1000, interaction.depth=7, shrinkage = 0.1, verbose = TRUE)
+
+best_it.gbm = gbm.perf(model.gbm, plot.it = TRUE)
+#plot(model.gbm, i.var = 1:2, n.trees = 1000)
+
+df[, gbm_pred := predict(model.gbm, df) ]
+
+ggplot(df, aes(x, y, fill = gbm_pred)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
 
 ```
 

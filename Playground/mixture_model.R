@@ -4,6 +4,8 @@ library(flexmix)
 
 n = 300
 
+
+
 x = rnorm(n)
 y = sample(c(1.5, 0.5), n, replace = TRUE) * x + 0.1*rnorm(n)
 df = data.table(x, y)

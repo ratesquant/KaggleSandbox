@@ -27,7 +27,7 @@ rms <-function(y1, y2) sqrt( mean( (y1 - y2)^2 ))
 
 ```
 
-## Test
+## Test 1D
 
 ```{r test}
 x = seq(0, 1, by = 0.01)
@@ -59,8 +59,8 @@ y = 0.2 + 0.4 * x * x + 0.3 *x * sin(15 * x) + 0.05 * cos(50 * x)
 
 df = data.table(x, y)
 
-nodes = as.matrix(c(0.5))
-#nodes = as.matrix(c(0.25, 0.75))
+#nodes = as.matrix(c(0.5))
+nodes = as.matrix(c(0.25, 0.75))
 #nodes = as.matrix(seq(0, 1, by =0.1))
 
 rbf_kernels = list('rbf_linear_kernel' = rbf_linear_kernel, 'rbf_cauchy_kernel' = rbf_cauchy_kernel, 
@@ -126,7 +126,7 @@ y = 0.2 + 0.4 * x * x + 0.3 *x * sin(15 * x) + 0.05 * cos(50 * x)
 df = data.table(x, y)
 df[, id:=seq(nrow(df))]
 
-max_nodes = 25
+max_nodes = 10
 
 df_res = ldply(names(rbf_kernels), function(my_kernel) {
   
@@ -207,7 +207,7 @@ ggplot(res_conv, aes(x, y_pred_cum)) + geom_line(color = 'red', size = 1)  + geo
 ggplot(res_conv[order(id), .(error = rms(y_pred_cum, df$y)), by =.(model_id1) ] , aes(model_id1, error)) + geom_line() +  geom_point()
 
 # CV ---------
-cv_res = rbf_boost.create_cv(df[,.(x)],  df$y,1, max_nodes = 32, n_runs = 10, max_it = 20, growth_rate =2.0, shrink_kernel = 0.65, nfolds = 10, kernel_fun = rbf_gauss_kernel, dist_fun = 'L1' )
+cv_res = rbf_boost.create_cv(df[,.(x)],  df$y,1, max_nodes = 32, n_runs = 10, max_it = 20, growth_rate =1.5, shrink_kernel = 0.65, nfolds = 10, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' )
 df_cv_res = data.table(it = seq(nrow(cv_res)), avg = apply(cv_res, 1, mean ), sigma = apply(cv_res, 1, sd ), cv_res )
 ggplot(df_cv_res, aes(it, avg)) + geom_line() + geom_point() + geom_ribbon(aes(it, ymin = avg - sigma, ymax = avg + sigma), alpha = 0.2, fill = 'blue')
 ```
@@ -445,7 +445,7 @@ marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
 ```{r rbf_2d_test}
 
 df = data.table(expand.grid(x = seq(-1, 1, by = 0.02), y = seq(-1, 1, by = 0.02)))
-df[, target_true:= sin(20*x * y)]
+df[, target_true:= sin(20 * x * y)]
 df[, target:= target_true + 0.2*rnorm(nrow(df))]
 df[, id := seq(nrow(df))]
 

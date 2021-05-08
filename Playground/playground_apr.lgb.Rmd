@@ -127,7 +127,7 @@ df[, cabin_number_5 := as.numeric(stri_sub(Cabin, 6, 6)) ]
 df[, cabin_number_1_mod2 := cabin_number_1 %% 2 ]
 df[, cabin_number_5_mod2 := cabin_number_5 %% 2 ]
 
-df[, age_ := pmin(60, Age) ]
+df[, age_ := pmin(81, Age) ]
 
 df_cab = df[train_index & Cabin!='', .(.N), by = .(Cabin) ]
 df[df_cab, cabin_size:=i.N, on =.(Cabin)]
@@ -191,7 +191,7 @@ set.seed(1321)
 t_index_v = which(train_index)
 t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
 
-lgb_vars = c('cabin_prefix', 'cabin_number_1', 'cabin_number_2', 'ticket_prefix_ex', 'cabin_size', all_vars) %!in_set% c('Name', 'Ticket', 'Cabin')
+lgb_vars = c('cabin_prefix', 'cabin_number_1', 'cabin_number_2', 'ticket_prefix', 'cabin_size', all_vars) %!in_set% c('Name', 'Ticket', 'Cabin')
 
 my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
 
@@ -223,7 +223,7 @@ model.lgb <- lgb.cv(
   min_data_in_bin = 5,
 
   boost_from_average = TRUE,
-  eval_freq = 100,
+  eval_freq = 10,
   early_stopping_rounds = 100,
   force_row_wise=TRUE
 )
@@ -233,7 +233,7 @@ model.lgb <- lgb.cv(
 
 #cv_error = as.numeric(model.lgb$record_evals$valid$binary_logloss$eval)
 cv_error = as.numeric(model.lgb$record_evals$valid$binary_error$eval)
-ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line()
+ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line() + geom_point()
 
 min(cv_error)
 max(cv_error) #0.78687
@@ -263,6 +263,10 @@ lgb_importance = lgb.importance(model.lgb$boosters[[1]][[1]], percentage = TRUE)
 ggplot(lgb_importance, aes(fct_reorder(Feature,Gain), Gain)) + geom_bar(stat = 'identity') + coord_flip()
 #lgb.plot.interpretation(lgb_importance)
 
+tree_interpretation <- lgb.interprete(model = model.lgb$boosters[[1]][[1]]  , data = dm_all, idxset = 1L:5L)
+lgb.plot.interpretation(tree_interpretation_dt = tree_interpretation[[2L]], top_n = 10L)
+
+
  plots = llply( lgb_vars %!in_set% c('Name', 'Ticket', 'Cabin'), function(var_name) { #lgb_vars
     p = plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[[var_name]][train_index], bucket_count = 50, error_band = 'binom') +
       ggtitle(var_name) +  theme(title =element_text(size=8))
@@ -281,6 +285,7 @@ ggplot(lgb_importance, aes(fct_reorder(Feature,Gain), Gain)) + geom_bar(stat = '
   plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['cabin_number']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
   plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['cabin_length']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
   plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['ticket_prefix']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['ticket_prefix_ex']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
   plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['is_ticket_long']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
   plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['cabin_size']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
   
@@ -327,7 +332,7 @@ set.seed(1321)
 t_index_v = which(train_index)
 t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
 
-lgb_vars = c('cabin_prefix', 'cabin_number_1', 'cabin_number_2', 'ticket_prefix', 'cabin_size', all_vars) %!in_set% c('Name', 'Ticket', 'Cabin')
+lgb_vars = c('cabin_prefix', 'cabin_number_1', 'cabin_number_2', 'ticket_prefix_ex', 'cabin_size', all_vars) %!in_set% c('Name', 'Ticket', 'Cabin')
 
 my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
 
@@ -363,10 +368,10 @@ param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
   
   var.monotone = rep(0, length(lgb_vars))
-mon_inc_vars = c('Fare')
-mon_dec_vars = c()
-var.monotone[lgb_vars %in% mon_inc_vars]  =  1
-var.monotone[lgb_vars %in% mon_dec_vars]  = -1
+  mon_inc_vars = c('Fare')
+  mon_dec_vars = c()
+  var.monotone[lgb_vars %in% mon_inc_vars]  =  1
+  var.monotone[lgb_vars %in% mon_dec_vars]  = -1
 
   
   model.lgb <- lgb.cv(
@@ -454,13 +459,14 @@ set.seed(1321)
 t_index_v = which(train_index)
 t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
 
-my_params = data.table(ticket_levels = seq(2, 50)) #default = 31
+my_params = data.table(min_age = seq(1, 10)) #default = 31
 
 param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   
-  df[, ticket_prefix_ex :=fct_lump_min(ticket_prefix, min = my_params$ticket_levels[run_index])]
+  df[, age_ := pmax(Age, my_params$min_age[run_index])]
   
   lgb_vars = c('cabin_prefix', 'cabin_number_1', 'cabin_number_2', 'ticket_prefix_ex', 'cabin_size', all_vars) %!in_set% c('Name', 'Ticket', 'Cabin')
+  lgb_vars = c(lgb_vars %!in_set% c('Age'), 'age_')
   my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
   dfs = df[t_index_v1, c(obj_var,lgb_vars), with = FALSE]
   dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
@@ -502,7 +508,7 @@ param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   nrounds = 20000,
   boost_from_average = TRUE,
   eval_freq = 100,
-  early_stopping_rounds = 100,
+  early_stopping_rounds = 200,
   force_row_wise = TRUE,
   )
   
@@ -524,7 +530,115 @@ param_res[best_score  == min(best_score)]
 ggplot(param_res, aes(best_it, elapsed)) + geom_point()
 ggplot(param_res, aes(best_it, learning_rate)) + geom_point()
 
-ggplot(param_res, aes(ticket_levels, best_score)) + geom_point()
+ggplot(param_res, aes(min_age, best_score)) + geom_point()
 
 ```
 
+## Catboost
+
+```{r cat_boost, echo=FALSE}
+
+set.seed(1321)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+cb_vars = c('cabin_prefix', 'cabin_number_1', 'cabin_number_2', 'ticket_prefix', 'cabin_size', all_vars) %!in_set% c('Name', 'Ticket', 'Cabin')
+
+my_cat_vars =  names(which(sapply(df[,cb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
+
+df[, (my_cat_vars):=lapply(.SD, as.factor), .SDcols = my_cat_vars]
+
+dfs = df[t_index_v1, c(obj_var,cb_vars), with = FALSE]
+
+var.monotone = rep(0, length(cb_vars))
+mon_inc_vars = c('Fare')
+mon_dec_vars = c()
+var.monotone[cb_vars %in% mon_inc_vars]  =  1
+var.monotone[cb_vars %in% mon_dec_vars]  = -1
+
+dtrain <- catboost.load_pool(data = dfs[, cb_vars , with = FALSE], label = dfs[[obj_var]])
+params <- list(loss_function = 'Logloss', eval_metric = 'Accuracy', iterations = 100, metric_period=10, boost_from_average = TRUE, 
+               monotone_constraints = var.monotone)
+
+
+model.cb <- catboost.cv(
+  pool = dtrain,
+  params = params,
+  fold_count  = 10,
+)
+
+#   best_it best_score  elapsed learning_rate bagging_fraction min_data min_data_in_bin num_leaves
+#1:     500  0.2174599 1.047372   0.009686582        0.9003351       27               7         54
+
+#cv_error = as.numeric(model.lgb$record_evals$valid$binary_logloss$eval)
+cv_error = as.numeric(model.lgb$record_evals$valid$binary_error$eval)
+ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line() + geom_point()
+
+min(cv_error)
+max(cv_error) #0.78687
+
+dm_all = data.matrix(df[,lgb_vars, with = F])
+pred.lgb_cvi = ldply(seq(length(model.lgb$boosters)), function(i){ data.frame(cv = i, id = df$id, pred= predict(model.lgb$boosters[[i]]$booster, dm_all)) } )
+setDT(pred.lgb_cvi)
+
+#pred.lgb_cv_summary = pred.lgb_cvi[, .(.N, avg=logistic(mean(logit(pred))), sigma = sd(pred)), by =.(cv)]
+#pred.lgb_cv         = pred.lgb_cvi[, .(.N, avg=logistic(mean(logit(pred))), sigma = sd(pred)), by =.(id)]
+
+pred.lgb_cv_summary = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(cv)]
+pred.lgb_cv         = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(id)]
+
+#%% Plot -----
+#plot_profiles(df$target_lgb[train_index], df[train_index,])
+#plot_profiles_2d(df$target_lgb[p_index], df[p_index,])
+
+df[pred.lgb_cv, target_lgb :=  i.avg, on=.(id)]
+
+#df[train_index, sum(abs(Survived - (target_lgb > 0.5)))/.N  ]
+
+plot_binmodel_roc(df$Survived[train_index], df$target_lgb[train_index])
+plot_binmodel_predictions(df$Survived[train_index], df$target_lgb[train_index])
+
+lgb_importance = lgb.importance(model.lgb$boosters[[1]][[1]], percentage = TRUE)
+ggplot(lgb_importance, aes(fct_reorder(Feature,Gain), Gain)) + geom_bar(stat = 'identity') + coord_flip()
+#lgb.plot.interpretation(lgb_importance)
+
+tree_interpretation <- lgb.interprete(model = model.lgb$boosters[[1]][[1]]  , data = dm_all, idxset = 1L:5L)
+lgb.plot.interpretation(tree_interpretation_dt = tree_interpretation[[2L]], top_n = 10L)
+
+
+ plots = llply( lgb_vars %!in_set% c('Name', 'Ticket', 'Cabin'), function(var_name) { #lgb_vars
+    p = plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[[var_name]][train_index], bucket_count = 50, error_band = 'binom') +
+      ggtitle(var_name) +  theme(title =element_text(size=8))
+    return( ggplotGrob(p) )
+  })
+  marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+ ggsave(filename = file.path(working_folder,"Playground/Apr2021/profiles.pdf"), plot = marrangeGrob(plots, nrow=4, ncol=4), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+  
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['Age']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['Embarked']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['cabin_number_1']][train_index]), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['cabin_number_2']][train_index]), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['cabin_number_3']][train_index]), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['cabin_number_4']][train_index]), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['cabin_number_5']][train_index]), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['cabin_number']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['cabin_length']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['ticket_prefix']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['ticket_prefix_ex']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['is_ticket_long']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], df[['cabin_size']][train_index], bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['name_2']][train_index]), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['cabin_number_5']][train_index]), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['cabin_number_5']][train_index] %% 2), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  plot_profile(df$target_lgb[train_index],  df$Survived[train_index], as.factor(df[['cabin_number_1_mod2']][train_index]), bucket_count = 50, error_band = 'binom') +  theme(title =element_text(size=8))
+  
+  #partial plots
+  pdp_index = sample(which(train_index), 10000)
+  my_model = model.lgb$boosters[[1]][[1]]
+df_plot = partialPlot(my_model, data.matrix(df[pdp_index,lgb_vars, with = FALSE]), xname = "Age", n.pt = 100)
+ggplot(df_plot, aes(x, y)) + geom_line()
+
+```

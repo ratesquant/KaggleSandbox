@@ -758,7 +758,7 @@ df_train <- xgb.DMatrix(data.matrix(df[t_index_v1, all_vars_final, with = F]), l
 
 ### Benchmark -------------
 
-param_res  = ldply(seq(8), function(num_threads){
+param_res  = ldply(seq(32), function(num_threads){
   print(num_threads)
   
   set.seed(132140937)
@@ -797,10 +797,10 @@ single_core = param_res[num_threads  == 1, elapsed]
 param_res[, speed_up := single_core / elapsed]
 
 ggplot(param_res, aes(factor(num_threads), elapsed, label = sprintf('%.2f', elapsed) )) + 
-  geom_point(size = 2) + geom_text(nudge_x  = 0.0, nudge_y = 0.5)
+  geom_point(size = 2) + geom_text(nudge_x  = 0.0, nudge_y = 0.2)
 
 ggplot(param_res, aes(factor(num_threads), speed_up, label = sprintf('%.2f', speed_up) )) + 
-  geom_point() + geom_text(nudge_x  = 0.0, nudge_y = 0.1)
+  geom_point() + geom_text(nudge_x  = 0.0, nudge_y = 0.2)
 
 
 ```

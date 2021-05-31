@@ -17,6 +17,7 @@ library(earth)
 library(foreach)
 library(lubridate)
 library(dplyr)
+library(zoo)
 
 
 #working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
@@ -58,13 +59,25 @@ df[, first_tie  := (is_first == 1 & reward ==0)]
 df[, date := date(etime )]
 df[df_type, type:=i.type, on=.(submission_id) ]
 df[order(time), is_first_cum :=  cummean(is_first), by =.(submission_id)]
+df[order(time), first_loss_cum :=  cummean(is_first == 1 & reward !=  1), by =.(submission_id)]
+df[order(time), second_win_cum :=  cummean(is_first == 0 & reward != -1), by =.(submission_id)]
+
+df[order(time), first_loss_m20 :=  rollmeanr(is_first == 1 & reward !=  1, k=50, na.pad = TRUE), by =.(submission_id)]
+df[order(time), second_win_m20 :=  rollmeanr(is_first == 0 & reward != -1, k=50, na.pad = TRUE), by =.(submission_id)]
+
+#df[submission_id == '21086463']
+
 
 df[first_loss == 1,][order(etime)]
+df = df[my_team_name == 'magicsany']
 
-df_sum = df[, .(.N, start_time = min(stime), max_score = max(score), avg_score = mean(score), first_move = sum(is_first == 1), second_move = sum(is_first != 1), 
+#df[submission_id == '21012137'  ,]
+#df[submission_id == '19810416', .(sum(first_loss), sum(first_tie), sum(is_first == 0 & reward ==1))]
+
+df_sum = df[, .(.N, total_time = max(time),start_time = min(stime), max_score = max(score), avg_score = mean(score), first_move = sum(is_first == 1), second_move = sum(is_first != 1), 
                 wins = sum(reward ==1),  tie = sum(reward == 0), loss = sum(reward ==-1), 
-                first_loss = sum(is_first == 1 & reward !=1),
-                second_win = sum(is_first == 0 & reward ==1),
+                first_loss = sum(is_first == 1 & reward !=  1),
+                second_win = sum(is_first == 0 & reward != -1),
                 first_tie = sum(is_first == 1 & reward == 0), age = max(time), type = type[1] ), by =.(submission_id) ][order(N)]
 df_sum[, first_loss_pct:=100*first_loss/first_move]
 df_sum[, second_win_pct:=100*second_win/second_move]
@@ -74,22 +87,93 @@ df_sum$N/as.numeric(df_sum$V5)
 summary( lm('N ~ age ', df_sum) )# 25 in first day, than 6 per day
 
 df_sum[order(first_loss_pct, -second_win_pct )]
-df_sum[order(max_score)]
+df_sum[order(-max_score)]
+df_sum[order(N)]
+
+df[first_loss == TRUE][order(stime)]
 
 ggplot(df_sum, aes(age, N) ) + geom_line() + geom_point()
 ggplot(df_sum, aes(age, max_score) ) +  geom_point()
 ggplot(df_sum, aes(max_score, first_pct) ) +  geom_point()
-ggplot(df_sum, aes(avg_score, first_pct) ) +  geom_point()
+ggplot(df_sum, aes(avg_score, second_win_pct) ) +  geom_point()
 ggplot(df_sum, aes(avg_score, max_score) ) +  geom_point()
 ggplot(df_sum, aes(max_score, first_loss_pct) ) +  geom_point()
 ggplot(df_sum, aes(start_time, max_score, size = N) ) +  geom_point()
 ggplot(df_sum, aes(start_time, first_loss_pct, size = N) ) +  geom_point()
 
+ggplot(df_sum, aes(age, first_loss, color = type) ) +  geom_point(size = 3)
+ggplot(df_sum, aes(age, second_win_pct, color = type) ) +  geom_point(size = 3) + geom_smooth(se = FALSE, method = 'lm')
+
+ggplot(df[time>1], aes(time, second_win_cum, color = type) ) +  geom_point(alpha = 0.1, size = 0.1) + geom_smooth(se = FALSE)
+ggplot(df[time>1], aes(date, first_loss_cum, color = type) ) +  geom_point()
+#ggplot(df[time>1], aes(time, first_loss_m20, color = type) ) +  geom_point(alpha = 0.1) + facet_wrap(~type)
+#ggplot(df[time>1], aes(time, second_win_m20, color = type) ) +  geom_point(alpha = 0.1) + facet_wrap(~type)
+
+ggplot(df_sum, aes(start_time, second_win_pct, color = type) ) +  geom_point(size = 3)
+ggplot(df_sum, aes(start_time, first_loss_pct, color = type) ) +  geom_point(size = 3)
+ggplot(df_sum, aes(age, max_score, color = type) ) +  geom_point(size = 3)
+
+# Recent --------------
+# 19700359 - central
+# 19700145, 19670498, 19748268 - boundary
+# 19683151, 19725787 - random
+# 19683130 default 
+# 19620547 prefers center moves
+# 19442278 - default
+# 19725613 - default trained on top games
+# 19749534 - long games
+
+recent_sub = c(19700359, 19700145, 19683151, 19683130, 19725787, 19725613, 19748268, 19748268, 19797665, 19804069, 19810416)
+ggplot(df[submission_id %in% recent_sub & time > 0.1], aes(etime ,  score, group = submission_id, color = factor(submission_id) )) + geom_line() + geom_point() +  facet_wrap(~type)+   geom_hline(yintercept = c(1400, 1300), linetype = 'dashed')
+
+ggplot(df[submission_id %in% recent_sub & time > 0.2], aes(etime,  score, group = submission_id, color = factor(submission_id) )) + geom_line() + geom_point() + facet_wrap(~type)
+ggplot(df[submission_id %in% recent_sub & time > 0.2], aes(etime,  is_first_cum, group = submission_id, color = factor(submission_id) )) + geom_line() + geom_point() +
+  facet_wrap(~type)
+
+ggplot(df[submission_id %in% recent_sub & time>0.1], aes(is_first_cum, score, group = submission_id, color = factor(submission_id) )) + geom_point() +  facet_wrap(~type)
+
+df[submission_id %in%  recent_sub, .(.N, lost = sum(reward ==-1), lost_pct = 100*sum(reward ==-1)/.N, first_lost = sum(is_first == 1 & reward ==-1), 
+                                     first = sum(is_first == 1),  first_pct = sum(is_first == 1)/.N,age = max(time), max_score = max(score), sd_score = sd(score)), by = .(submission_id)]
+
+
+df[submission_id %in% recent_sub & time > 0.2 & reward !=1,]
+
+ggplot(df[is_first == 1 & reward == -1], aes(score, score2)) + geom_point()
+ggplot(df[is_first == 1 & reward == -1], aes(date, score)) + geom_point()
+ggplot(df[is_first == 0 & reward != -1], aes(score, score2)) + geom_point() + geom_abline(slope = 1, color = 'red')
+
+ggplot(df[is_first == 0 & reward != -1], aes(date, score)) + geom_point()
+
+selected_subs = c(20324274,21012137)
+ggplot(df[submission_id %in% selected_subs & time > 0.1], aes(etime ,  score, group = submission_id, color = factor(submission_id) )) + geom_line() + geom_point()
+ggplot(df[submission_id %in% selected_subs & time > 0.1], aes(etime ,  first_loss_cum , group = submission_id, color = factor(submission_id) )) + geom_line() + geom_point()
+ggplot(df[submission_id %in% selected_subs & time > 0.1], aes(etime ,  second_win_cum , group = submission_id, color = factor(submission_id) )) + geom_line() + geom_point()
+
+df[submission_id == '20324274']
+```
+
+##Load Data
+```{r overview}
 ggplot(df[time>0.5], aes(factor(submission_id), score) ) +  geom_boxplot() + facet_wrap(~type)
+
+ggplot(df[time>10.0], aes(date, score, group = submission_id) ) +  geom_line()
+ggplot(df[time>10.0], aes(date, first_loss_cum) ) +  geom_point(alpha = 0.1)
+ggplot(df[time>10.0], aes(date, second_win_cum) ) +  geom_point(alpha = 0.1)
+ggplot(df[time>10.0], aes(score, second_win_cum) ) +  geom_point(alpha = 0.1)
+ggplot(df[time>10.0], aes(score, first_loss_cum) ) +  geom_point(alpha = 0.1)
+
+ggplot( df[time>1, .(score = mean(score)), by =.(t = floor(time))], aes(t, score)) + geom_point()
+
+#plot_profile(df$score, df$score, factor(floor(df$time)) )
+
+ggplot(df[time>10.0], aes(is_first_cum, score) ) +  geom_point(alpha = 0.1)
+ggplot(df[time>10.0 & submission_id == '20324274' ], aes(is_first_cum, score) ) +  geom_point()
+ggplot(df[time>10.0 & submission_id == '20324274' ], aes(date, score) ) +  geom_point()
+ggplot(df[time>1.0 ], aes(time, is_first_cum, color = score) ) +  geom_point() + scale_color_custom('jet', discrete  = FALSE)
 
 ggplot(df[elapsed<120], aes(stime, elapsed, group = submission_id)) + geom_point() + facet_wrap(~submission_id)
 
-ggplot(df[time>0.5], aes(stime, score, group = submission_id)) + geom_line() + facet_wrap(~submission_id) + 
+ggplot(df[time>1.0], aes(stime, score, group = submission_id)) + geom_line() + facet_wrap(~submission_id) + 
   geom_hline(yintercept = c(1300, 1400, 1500), linetype = 'dashed')
 
 ggplot(df[time>0.1 & time < 20], aes(time, score, group = submission_id, color = factor(submission_id) )) + geom_line() + 
@@ -121,32 +205,40 @@ ggplot(df[time>1, .(avg_score = mean(score), .N), by = .(date)], aes(date, N)) +
 ggplot(df, aes(stime, score_conf  , group = submission_id, color = factor(submission_id) )) + geom_line() +
   facet_wrap(~submission_id)
 
-# Recent --------------
-# 19700359 - central
-# 19700145, 19670498, 19748268 - boundary
-# 19683151, 19725787 - random
-# 19683130 default 
-# 19620547 prefers center moves
-# 19442278 - default
-# 19725613 - default trained on top games
-# 19749534 - long games
+df[submission_id == '21086630' & time>0.5 & is_first == 0 & reward ==1]
+df[submission_id == '21086630' & is_first == 1 & reward !=1]
+ggplot(df[submission_id %in% c('21086630', '21086463', '21053536', '21012137') & time>1.0,], aes(time, score, group = submission_id, color = factor(submission_id) )) + geom_line()
+ggplot(df[submission_id %in% c('21086630', '21086463', '21053536', '21012137') & time>1.0,], aes(time, is_first_cum, group = submission_id, color = factor(submission_id) )) + geom_line()
+ggplot(df[submission_id %in% c('21086630', '21086463', '21053536', '21012137'),], aes(time, first_loss, group = submission_id, color = factor(submission_id) )) + geom_line()
+ggplot(df[submission_id %in% c('21086630', '21086463', '21053536', '21012137'),], aes(time, is_first == 0 & reward ==1, group = submission_id, color = factor(submission_id) )) + geom_line()
 
-recent_sub = c(19700359, 19700145, 19683151, 19683130, 19725787, 19725613, 19748268, 19748268, 19797665, 19804069, 19810416)
-ggplot(df[submission_id %in% recent_sub & time > 0.1], aes(etime ,  score, group = submission_id, color = factor(submission_id) )) + geom_line() + geom_point() +  facet_wrap(~type)+   geom_hline(yintercept = c(1400, 1300), linetype = 'dashed')
-
-ggplot(df[submission_id %in% recent_sub & time > 0.2], aes(etime,  score, group = submission_id, color = factor(submission_id) )) + geom_line() + geom_point() + facet_wrap(~type)
-ggplot(df[submission_id %in% recent_sub & time > 0.2], aes(etime,  is_first_cum, group = submission_id, color = factor(submission_id) )) + geom_line() + geom_point() +
-  facet_wrap(~type)
-
-ggplot(df[submission_id %in% recent_sub & time>0.1], aes(is_first_cum, score, group = submission_id, color = factor(submission_id) )) + geom_point() +  facet_wrap(~type)
-
-df[submission_id %in%  recent_sub, .(.N, lost = sum(reward ==-1), lost_pct = 100*sum(reward ==-1)/.N, first_lost = sum(is_first == 1 & reward ==-1), 
-                                     first = sum(is_first == 1),  first_pct = sum(is_first == 1)/.N,age = max(time), max_score = max(score), sd_score = sd(score)), by = .(submission_id)]
+ggplot(df[submission_id %in% c('21167184', '21086630', '21086463', '21053536', '21012137') & time>0.5,], 
+       aes(time, score, group = submission_id, color = factor(submission_id) )) + geom_line()
 
 
-df[submission_id %in% recent_sub & time > 0.2 & reward !=1,]
+ggplot(df[time>1.0,], aes(time, score, group = submission_id)) + geom_line() + facet_wrap(~type)
+ggplot(df[time>1.0,], aes(stime, score, group = submission_id)) + geom_line() + facet_wrap(~type)
+
+ggplot(df[time>10.0,], aes(score, group = type, color = type)) + geom_density()
+
+ggplot(df[submission_id == '19700145' & time>0.5,], aes(time, is_first_cum)) + geom_point()
+ggplot(df[submission_id == '19700145' & time>0.5,], aes(time, score)) + geom_point()
+ggplot(df[submission_id == '19700145' & time>0.5,], aes(is_first_cum, score)) + geom_point()
+
+ggplot(df[submission_id == '21005650' & time>0.5,], aes(time, first_loss)) + geom_point()
+
+ggplot(df[submission_id == '20324274' & time>0.5,], aes(time, is_first_cum)) + geom_point()
+ggplot(df[submission_id == '20324274' & time>0.5,], aes(time, is_first == 0 & reward ==1)) + geom_point()
+
+ggplot(df[ time>1 & is_first == 0 & reward ==1], aes(time, score2)) + geom_point()
+
+ggplot(df[ time>1 & reward ==1], aes(time, score2, group = is_first, color = factor (is_first) )) + geom_point(alpha = 0.1) + geom_smooth()
+ggplot(df[ time>1 & reward ==1 & is_first == 0], aes(time, score2)) + geom_point()
+
+ggplot(df[ time>20,], aes(is_first_cum, score)) + geom_point(alpha = 0.2)
 
 ```
+  
 
 ##Load Data
  6 depth reference: 4.962794 min, match: 2372, avg_error: 3.990969, cor: 0.805851

@@ -165,6 +165,10 @@ custom_cols <- function(...) {
   
   custom_colors[cols]
 }
+#https://www.kennethmoreland.com/color-maps/
+#https://jiffyclub.github.io/palettable/cubehelix/
+#http://www.mrao.cam.ac.uk/~dag/CUBEHELIX/
+#https://github.com/jrwrigh/cfdpost_colormaps
 
 custom_palettes <- list(
   `main`  = custom_cols("blue", "green", "yellow"),
@@ -172,7 +176,8 @@ custom_palettes <- list(
   `hot`   = custom_cols("yellow", "orange", "red"),
   `mixed` = custom_cols("blue", "green", "yellow", "orange", "red"),
   `grey`  = custom_cols("light grey", "dark grey"),
-  `jet`   = c("#000080","#0000ff","#0080ff", "#00ffff", "#80ff80", "#ffff00","#ff8000","#ff0000", "#800000")
+  `jet`   = c("#000080","#0000ff","#0080ff", "#00ffff", "#80ff80", "#ffff00","#ff8000","#ff0000", "#800000"),
+  `div`   = c("#5548C1","#DDDDDD", "#B10127")
 )
 
 custom_pal <- function(palette = "main", reverse = FALSE, ...) {

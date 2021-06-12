@@ -108,9 +108,12 @@ rbf_boost.create <- function(X, Y, n_nodes = ncol(X), max_nodes = 20, n_runs = 1
     
     print(sprintf('it: %d, nodes: %d, scale: %.1f, error: %f, elapsed: %f', it, n_nodes, kernel_scale, rms(current_objective, res_agg$y_pred), elapsed ))
     
-    if(adaptive) sample_prob = abs(current_objective - res_agg$y_pred)
-    
     current_objective = current_objective - res_agg$y_pred
+    
+    if(adaptive){
+      sample_prob = current_objective * current_objective
+      sample_prob = sample_prob / sum(sample_prob)
+    }
     
     all_models[[it]] = model_list    
     

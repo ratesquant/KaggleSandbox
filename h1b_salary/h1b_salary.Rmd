@@ -18,7 +18,7 @@ library(stringi)
 library(forcats)
 library(foreach)
 
-memory.limit(36000)
+#memory.limit(36000)
 
 working_folder = 'D:/Github/KaggleSandbox/'
 #working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
@@ -30,7 +30,8 @@ source(file.path(working_folder, 'Utils/common.R'))
 ## Convert Data
 ```{r convert_data, eval = FALSE}
 
-files = list.files(file.path(working_folder,'h1b_salary/data'), glob2rx('H-1B_Disclosure_Data_FY*.xlsx'), full.names = TRUE)
+#files = list.files(file.path(working_folder,'h1b_salary/data'), glob2rx('H-1B_Disclosure_Data_FY*.xlsx'), full.names = TRUE)
+files = list.files(file.path(working_folder,'h1b_salary/data'), glob2rx('*.xlsx'), full.names = TRUE)
 
 foreach(file = files) %do% {
   df_temp = read_excel(file)
@@ -42,20 +43,55 @@ foreach(file = files) %do% {
 ## Load Data
 https://www.foreignlaborcert.doleta.gov/performancedata.cfm
 ```{r load_data}
-
+keep_columns = c('CASE_STATUS', 'CASE_SUBMITTED', 'DECISION_DATE', 'VISA_CLASS',	
+                 'EMPLOYER_NAME', 'EMPLOYER_CITY',	'EMPLOYER_STATE','EMPLOYER_POSTAL_CODE',	'EMPLOYER_COUNTRY', 'JOB_TITLE','SOC_CODE', 'SOC_NAME','SOC_TITLE', 'NAIC_CODE',
+                 'TOTAL_WORKERS', 'FULL_TIME_POSITION', 'PREVAILING_WAGE','PW_WAGE_LEVEL',
+                 'WAGE_RATE_OF_PAY_FROM',	'WAGE_RATE_OF_PAY_TO', 'WAGE_UNIT_OF_PAY','WILLFUL_VIOLATOR',
+                 'WORKSITE_CITY', 'WORKSITE_COUNTY', 'WORKSITE_STATE','ORIGINAL_CERT_DATE', 'filename')
 
 
 files = list.files(file.path(working_folder,'h1b_salary/data'), glob2rx('H-1B_Disclosure_Data_FY*.xlsx.csv'), full.names = TRUE)
 
-df = foreach(file = files, .combine = function(...) rbind(..., fill = TRUE) ) %do% {
-  df_temp = fread(file, nrows = 1000)
-  return(df_temp)
+df = foreach(file = files, .combine = function(...) rbind(..., fill = TRUE, use.names = TRUE) ) %do% {
+  #df_temp = fread(file, nrows = 10000)
+  df_temp = fread(file)
+  
+  if('WAGE_RATE_OF_PAY_FROM_1' %in% names(df_temp)){
+    df_temp[, WAGE_RATE_OF_PAY_FROM := WAGE_RATE_OF_PAY_FROM_1]
+    df_temp[, WAGE_RATE_OF_PAY_TO   := WAGE_RATE_OF_PAY_TO_1]
+    df_temp[, WAGE_UNIT_OF_PAY      := WAGE_UNIT_OF_PAY_1]
+    df_temp[, PREVAILING_WAGE       := PREVAILING_WAGE_1]
+    df_temp[, WORKSITE_CITY         := WORKSITE_CITY_1]
+    df_temp[, WORKSITE_STATE        := WORKSITE_STATE_1]
+    df_temp[, WORKSITE_COUNTY       := WORKSITE_COUNTY_1]
+  }
+  
+  if('NAICS_CODE' %in% names(df_temp)){
+    df_temp[, NAIC_CODE := NAICS_CODE]
+  }
+  if('NAICS_CODE' %in% names(df_temp)){
+    df_temp[, NAIC_CODE := NAICS_CODE]
+  }
+  
+  
+  df_temp[, filename := basename(file)]
+  
+  return(df_temp[, keep_columns %in_set% names(df_temp), with = FALSE])
 }
 
+df[, .(.N, sum(is.na(NAIC_CODE))), by = .(filename)]
+table(df$WILLFUL_VIOLATOR)
 
 
-df[,  WAGE_RATE_OF_PAY_FROM_1 := as.numeric(stri_replace(WAGE_RATE_OF_PAY_FROM_1, '', regex = '[$,]', mode = 'all'))]
-df[,  WAGE_RATE_OF_PAY_TO_1   := as.numeric(stri_replace(WAGE_RATE_OF_PAY_TO_1,   '', regex = '[$,]', mode = 'all'))]
+df[,  WAGE_RATE_OF_PAY_FROM := as.numeric(stri_replace(WAGE_RATE_OF_PAY_FROM, '', regex = '[$,]', mode = 'all'))]
+df[,  WAGE_RATE_OF_PAY_TO   := as.numeric(stri_replace(WAGE_RATE_OF_PAY_TO,   '', regex = '[$,]', mode = 'all'))]
+df[, CASE_SUBMITTED := as.Date(CASE_SUBMITTED)]
+df[, DECISION_DATE := as.Date(DECISION_DATE)]
+
+df[, case_year := year(CASE_SUBMITTED)]
+df[is.na(WAGE_RATE_OF_PAY_FROM), .(.N), by = .(filename)]
+
+#
 
 
 #Meta Data on H-1B visas ----
@@ -102,6 +138,59 @@ ggplot(df_meta_year, aes(year, t_appr )) + geom_point() + geom_line()
 df_meta[order(c_appr)]
 
 ```
+
+## JPM Wages
+
+H-1B visas 649083 in 2019
+```{r plot_wages, echo=FALSE}
+
+table(df$WAGE_UNIT_OF_PAY_1, df$VISA_CLASS)
+
+dfs = df[VISA_CLASS=='H-1B', .(EMPLOYER_NAME, CASE_SUBMITTED, CASE_STATUS, JOB_TITLE, SOC_TITLE, WORKSITE_CITY, WORKSITE_STATE, 
+                          WAGE_RATE_OF_PAY_FROM, WAGE_RATE_OF_PAY_TO, WAGE_UNIT_OF_PAY, PREVAILING_WAGE, PW_UNIT_OF_PAY, PW_WAGE_LEVEL)]
+
+all_names = unique(df$EMPLOYER_NAME)
+jp_names = all_names[grep('(JPMORGAN)', all_names)]
+citi_names = all_names[grep('(CITIGROUP|CITIBANK)', all_names)]
+luxsoft_names =  all_names[grep('(LUXOFT USA|DXC TECHNOLOGY SERVICES LLC)', all_names)]
+
+df_agg = df[, .(.N, med = median(1e-3*WAGE_RATE_OF_PAY_FROM,  na.rm = TRUE),  p80 = quantile(1e-3*WAGE_RATE_OF_PAY_FROM, probs = 0.8, na.rm = TRUE, names = FALSE)), by =.(EMPLOYER_NAME)]
+
+ggplot(df_agg[N>200 & p80 > 150], aes(fct_reorder(EMPLOYER_NAME, p80), p80)) + geom_bar(stat = 'identity') +  coord_flip()
+
+
+dfs[EMPLOYER_NAME %in% jp_names][order(-WAGE_RATE_OF_PAY_FROM)]
+
+#table(dfs[EMPLOYER_NAME %in% jp_names, WAGE_UNIT_OF_PAY_1]) #only annual pays
+
+df[is.na(WAGE_RATE_OF_PAY_FROM), .(.N), by = .(filename)]
+
+ggplot(df[EMPLOYER_NAME %in% jp_names], aes(1e-3*WAGE_RATE_OF_PAY_FROM, group = CASE_STATUS, color = CASE_STATUS)) + stat_ecdf() + facet_wrap(~case_year)
+ggplot(df[EMPLOYER_NAME %in% jp_names], aes(1e-3*WAGE_RATE_OF_PAY_FROM, group = CASE_STATUS, color = CASE_STATUS)) + stat_ecdf()
+
+ggplot(df[EMPLOYER_NAME %in% jp_names], aes(CASE_SUBMITTED, 1e-3*WAGE_RATE_OF_PAY_FROM, color = CASE_STATUS)) + geom_point(alpha = 0.3)
+
+ggplot(df[EMPLOYER_NAME %in% citi_names], aes(CASE_SUBMITTED, 1e-3*WAGE_RATE_OF_PAY_FROM, color = CASE_STATUS)) + geom_point(alpha = 0.3)
+
+ggplot(df[EMPLOYER_NAME %in% citi_names & CASE_STATUS  == 'CERTIFIED'], aes(SOC_TITLE, 1e-3*WAGE_RATE_OF_PAY_FROM)) + geom_boxplot() + coord_flip()
+ggplot(df[EMPLOYER_NAME %in% jp_names & CASE_STATUS  == 'CERTIFIED'], aes(SOC_TITLE, 1e-3*WAGE_RATE_OF_PAY_FROM)) + geom_boxplot() + coord_flip()
+
+ggplot(df[CASE_STATUS  == 'CERTIFIED' & EMPLOYER_NAME %in% c(emp_set,luxsoft_names) ], aes(EMPLOYER_NAME, 1e-3*WAGE_RATE_OF_PAY_FROM)) + geom_boxplot() + coord_flip()
+
+#LUXsoft
+ggplot(df[EMPLOYER_NAME %in% luxsoft_names & CASE_STATUS  == 'CERTIFIED'], aes(DECISION_DATE, 1e-3*WAGE_RATE_OF_PAY_FROM)) + geom_point() + facet_wrap(~SOC_TITLE)
+
+ggplot(df[EMPLOYER_NAME %in% luxsoft_names & CASE_STATUS  == 'CERTIFIED'], aes(SOC_TITLE, 1e-3*WAGE_RATE_OF_PAY_FROM)) + geom_boxplot() + coord_flip()
+
+ggplot(df[EMPLOYER_NAME %in% luxsoft_names & CASE_STATUS  == 'CERTIFIED'], aes(WORKSITE_CITY)) + geom_bar()
+
+ggplot(df[EMPLOYER_NAME %in% luxsoft_names & CASE_STATUS  == 'CERTIFIED'], aes( 1e-3*WAGE_RATE_OF_PAY_FROM, group = EMPLOYER_NAME, fill = EMPLOYER_NAME)) + geom_density(alpha = 0.5)
+
+
+df[EMPLOYER_NAME %in% citi_names][order(-WAGE_RATE_OF_PAY_FROM)][1:100, .(CASE_SUBMITTED,EMPLOYER_NAME, JOB_TITLE, SOC_NAME,PREVAILING_WAGE,WAGE_RATE_OF_PAY_FROM, WORKSITE_CITY)]
+df[EMPLOYER_NAME %in% luxsoft_names & WORKSITE_STATE == 'TX'][order(-WAGE_RATE_OF_PAY_FROM)][1:100, .(CASE_SUBMITTED,EMPLOYER_NAME, JOB_TITLE, SOC_NAME,PREVAILING_WAGE,WAGE_RATE_OF_PAY_FROM, WORKSITE_CITY)]
+```
+
 ## Plot Wages
 
 H-1B visas 649083 in 2019
@@ -109,12 +198,20 @@ H-1B visas 649083 in 2019
 
 table(df$WAGE_UNIT_OF_PAY_1, df$VISA_CLASS)
 
-dfs = df[VISA_CLASS== 'H-1B', .(EMPLOYER_NAME, CASE_STATUS, JOB_TITLE, SOC_TITLE, TOTAL_WORKER_POSITIONS, WORKSITE_CITY_1, WORKSITE_STATE_1 , 
+dfs = df[VISA_CLASS== 'H-1B', .(EMPLOYER_NAME, CASE_SUBMITTED, CASE_STATUS, JOB_TITLE, SOC_TITLE, TOTAL_WORKER_POSITIONS, WORKSITE_CITY_1, WORKSITE_STATE_1 , 
                           WAGE_RATE_OF_PAY_FROM_1, WAGE_RATE_OF_PAY_TO_1, WAGE_UNIT_OF_PAY_1, PREVAILING_WAGE_1, PW_UNIT_OF_PAY_1, PW_WAGE_LEVEL_1)]
+
+dfs[EMPLOYER_NAME %in% c("JPMORGAN CHASE & CO.", "JPMORGAN CHASE &AMP; CO.")][order(-WAGE_RATE_OF_PAY_FROM_1)]
+
+ggplot(dfs[EMPLOYER_NAME %in% c("JPMORGAN CHASE & CO.", "JPMORGAN CHASE &AMP; CO.")], aes(1e-3*WAGE_RATE_OF_PAY_FROM_1, group = CASE_STATUS, color = CASE_STATUS)) + stat_ecdf()
+ggplot(dfs[EMPLOYER_NAME %in% c("JPMORGAN CHASE & CO.", "JPMORGAN CHASE &AMP; CO.")], aes(1e-3*WAGE_RATE_OF_PAY_FROM_1, group = CASE_STATUS, color = CASE_STATUS)) + stat_ecdf()
+
 
 dfs[, max_wage := 1e-3*pmax(WAGE_RATE_OF_PAY_TO_1, WAGE_RATE_OF_PAY_FROM_1, na.rm = TRUE)]
 
 largest_employers = dfs[,.(.N), by =.(EMPLOYER_NAME)][N>1000, EMPLOYER_NAME]
+
+largest_employers[grep('JPMORGAN', largest_employers)]
 
 ggplot(dfs[EMPLOYER_NAME %in% largest_employers,.(.N), by =.(EMPLOYER_NAME, CASE_STATUS)], aes(EMPLOYER_NAME, N, group = CASE_STATUS, fill = CASE_STATUS)) + 
   geom_bar(stat = 'identity') + coord_flip()
@@ -130,6 +227,9 @@ emp_set = c("JPMORGAN CHASE & CO.", "GOOGLE LLC", "FACEBOOK INC.", "GOLDMAN SACH
 
 ggplot(dfs[EMPLOYER_NAME %in% emp_set & WAGE_UNIT_OF_PAY_1 == 'Year'], aes(EMPLOYER_NAME, max_wage)) + 
   geom_violin(adjust = 0.5) +  coord_flip()  + geom_hline(yintercept = 200, color = 'red', linetype = 'dashed')
+
+ggplot(dfs[EMPLOYER_NAME %in% emp_set & WAGE_UNIT_OF_PAY_1 == 'Year'], aes(max_wage, group = EMPLOYER_NAME, fill = EMPLOYER_NAME)) + 
+  geom_density(adjust = 1) +  geom_vline(xintercept = 200, color = 'red', linetype = 'dashed') + facet_wrap(~EMPLOYER_NAME) + theme (legend.position = 'none')
 
 ggplot(dfs[EMPLOYER_NAME %in% emp_set & WAGE_UNIT_OF_PAY_1 == 'Year'], aes(max_wage, group = EMPLOYER_NAME, fill = EMPLOYER_NAME)) + 
   geom_density(adjust = 1) +  geom_vline(xintercept = 200, color = 'red', linetype = 'dashed') + facet_wrap(~EMPLOYER_NAME) + theme (legend.position = 'none')

@@ -381,8 +381,20 @@ convert_to_prob <-function(x, train_index){
   if(is.character(x) )x = as.numeric(as.factor(x))
   ecdf(x[train_index])(x)
 }
+
+convert_to_normal_prob <-function(x, train_index){
+  if(is.character(x) )x = as.numeric(as.factor(x))
+  qnorm(pmin(1-1e-12,pmax(1e-12, ecdf(x[train_index])(x))) )
+}
+
 p_vars = stri_join('p_', all_vars)
+n_vars = stri_join('n_', all_vars)
 df[, (p_vars):=lapply(.SD, function(x) convert_to_prob(x, train_index)), .SDcols = all_vars]
+df[, (n_vars):=lapply(.SD, function(x) convert_to_normal_prob(x, train_index)), .SDcols = all_vars]
+
+ggplot(df[ sample( which(train_index), 0.1*sum(train_index))], aes(p_cont1, p_cont13)) +  geom_point(size = 0.3, alpha = 0.3)
+ggplot(df[ sample( which(train_index), 0.1*sum(train_index))], aes(cont1, cont13)) + geom_point(size = 0.3, alpha = 0.3)
+ggplot(df[ sample( which(train_index), 0.1*sum(train_index))], aes(n_cont1, n_cont13)) + geom_point(size = 0.3, alpha = 0.3)
 
 #one hot for categorical variables ----
 one_hot <- dummyVars(" ~ .", data=df[, cat_vars, with = FALSE])
@@ -495,7 +507,7 @@ ggplot(df, aes(x, y, z = target)) + stat_summary_2d() + scale_fill_custom('jet',
 
 #rbf_mquad_kernel, 
 
-models_boost =  rbf_boost.create(df[,.(x, y)], df$target, 1, max_nodes = 1024, n_runs = 100, max_it = 100, growth_rate = 2.0, shrink_kernel = 1.0, kernel_fun = rbf_linear_kernel, dist_fun = 'L2', adaptive = FALSE)
+models_boost =  rbf_boost.create(df[,.(x, y)], df$target, 1, max_nodes = 1024, n_runs = 100, max_it = 100, growth_rate = 2.0, shrink_kernel = 1.0, kernel_fun = rbf_linear_kernel, dist_fun = 'L2', adaptive = TRUE)
 res = rbf_boost.predict(models_boost, df[,.(x, y)], combine_boots = TRUE)
 setDT(res)
 
@@ -510,7 +522,7 @@ res_all_df = res_all[df_all, on = .(id)]
 
 ggplot(res_all_df, aes(x, y, fill = target_true)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE) + facet_wrap(~model_id1)
 ggplot(res_all_df, aes(x, y, fill = y_pred_cum)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE) + facet_wrap(~model_id1)
-ggplot(res_all_df[model_id1  > 4 & model_id1 <11,], aes(x, y, fill = y_pred_cum)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)+ facet_wrap(~model_id1)
+ggplot(res_all_df[model_id1 == 11,], aes(x, y, fill = y_pred_cum)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)+ facet_wrap(~model_id1)
 ggplot(res_all_df[model_id1  > 7], aes(x, y, fill = y_pred_cum-target_true)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)+ facet_wrap(~model_id1)
 
 ggplot(res_df, aes(x, y, color = y_pred_cum  )) + geom_point() + scale_color_custom('jet', discrete = FALSE) + facet_wrap(~model_id1)
@@ -533,21 +545,18 @@ ggplot(nodes, aes(x, y)) + geom_bin2d(bins = 20) + facet_wrap(~model_id1) + scal
 ```{r mars_2d_test}
 library(earth)
 
-df = data.table(expand.grid(x = seq(-1, 1, by = 0.02), y = seq(-1, 1, by = 0.02)))
-df[, target_true:= sin(10 * x * exp(y) )]
-df[, target:= target_true + 0.2*rnorm(nrow(df))]
-df[, id := seq(nrow(df))]
-
-ggplot(df, aes(x, y, fill = target)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
-ggplot(df, aes(x, y, fill = target_true)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
-
-model.mars = earth(target ~ x + y, df,  degree = 2, thresh = 0.000001, nk = 1000, nfold=0, trace = 2)
+model.mars = earth(target ~ x + y, df,  degree = 4, thresh = 0.0001, nk = 1000, nfold=0, trace = 2)
 
 summary(model.mars, style = 'pmax')
 
-df[, mars_pred := predict(model.mars, df) ]
+df_all[, mars_pred := predict(model.mars, df_all) ]
+df[,     mars_pred := predict(model.mars, df) ]
 
-ggplot(df, aes(x, y, fill = mars_pred)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+df[order(id), .(rms_data = rms(mars_pred, df$target), rms_act = rms(mars_pred, df$target_true))]
+rms(df$mars_pred, df$target_true)
+rms(df$mars_pred, df$target)
+
+ggplot(df_all, aes(x, y, fill = mars_pred)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
 
 ```
 
@@ -556,26 +565,85 @@ ggplot(df, aes(x, y, fill = mars_pred)) + geom_tile() + scale_fill_custom('jet',
 ```{r gbm_2d_test}
 library(gbm)
 
-#df = data.table(expand.grid(x = seq(-1, 1, by = 0.02), y = seq(-1, 1, by = 0.02)))
-#df[, target_true:= sin(10 * x * exp(y) )]
-#df[, target:= target_true + 0.2*rnorm(nrow(df))]
-#df[, id := seq(nrow(df))]
+model.gbm = gbm(target ~ x + y, df, distribution = "gaussian", n.trees = 20000, interaction.depth=4, shrinkage = 0.01, bag.fraction = 1.0, cv.folds = 10, verbose = TRUE)
 
-ggplot(df, aes(x, y, fill = target)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
-ggplot(df, aes(x, y, fill = target_true)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
-
-model.gbm = gbm(target ~ x + y, df, distribution = "gaussian", n.trees = 1000, interaction.depth=7, shrinkage = 0.1, verbose = TRUE)
-
+plot_gbmiterations(model.gbm)
 best_it.gbm = gbm.perf(model.gbm, plot.it = TRUE)
-#plot(model.gbm, i.var = 1:2, n.trees = 1000)
 
-df[, gbm_pred := predict(model.gbm, df) ]
+df_all[, gbm_pred := predict(model.gbm, df_all) ]
+df[,     gbm_pred := predict(model.gbm, df) ]
 
 rms(df$gbm_pred, df$target_true)
 rms(df$gbm_pred, df$target)
 
-ggplot(df, aes(x, y, fill = gbm_pred)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
-ggplot(df, aes(x, y, fill = target_true - gbm_pred)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+ggplot(df_all, aes(x, y, fill = gbm_pred)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+
+```
+
+
+## KNN 2D test
+
+```{r knn_test}
+library(caret)
+
+set.seed(132140937)
+
+formula.knn    = formula("target ~ x + y")
+
+control = trainControl(method = "repeatedcv",
+                       number = 10,
+                       repeats = 3)
+
+system.time(model.knn <- train(formula.knn, data = df[,.(x,y,target)], 
+                               method = "knn", #kknn
+                               trControl = control,
+                               tuneGrid = data.frame(k = seq(1,23,2)), #use instead of tuneLength
+                               tuneLength = 10,
+                               metric = "Rsquared"))
+model.knn
+plot(model.knn)
+
+df_all[, knn_pred := predict(model.knn, df_all, type = 'raw') ]
+df[,     knn_pred := predict(model.knn, df, type = 'raw') ]
+
+rms(df$knn_pred, df$target_true)
+rms(df$knn_pred, df$target)
+
+ggplot(df_all, aes(x, y, fill = knn_pred)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+
+```
+
+## NNET
+
+```{r nnet_model, echo=FALSE}
+library(nnet)
+
+model.nnet <- nnet( formula("target ~ x + y"), data = df, size=100, maxit = 1000, trace=TRUE, decay = 1e-4, linout = TRUE)
+
+df_all[, nnet_pred := as.numeric(predict(model.nnet, df_all)) ]
+df[,     nnet_pred := as.numeric(predict(model.nnet, df)) ]
+
+rms(df$nnet_pred, df$target_true)
+rms(df$nnet_pred, df$target)
+
+ggplot(df_all, aes(x, y, fill = nnet_pred)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+
+```
+
+## NNET: Multi-Layer
+does not quite work
+```{r nnet2_model, echo=FALSE}
+library(neuralnet)
+
+model.nnet2 <- neuralnet(formula("target ~ x + y"), data = df, hidden= 100, stepmax = 1000, rep = 1, linear.output = TRUE, threshold = 1)#, stepmax = 10, linear.output = FALSE)
+
+df_all[, nnet2_pred := as.numeric(predict(model.nnet2, df_all)) ]
+df[,     nnet2_pred := as.numeric(predict(model.nnet2, df)) ]
+
+rms(df$nnet2_pred, df$target_true)
+rms(df$nnet2_pred, df$target)
+
+ggplot(df_all, aes(x, y, fill = nnet2_pred)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
 
 ```
 
@@ -597,7 +665,7 @@ rbf.create(df[,.(x, y)], df$v, df[,.(x, y)], rbf_linear_kernel, dist_fun = 'L1')
   #fwrite(df, file.path(working_folder,'Playground/Feb2021/data/df.csv'))
 
   #%% boost runs ----------------
-  models_boost =  rbf_boost.create(dfs, target, max_nodes = 2561, n_runs = 20, max_it = 20, growth_rate = 1.5, kernel_fun = rbf_linear_kernel, dist_fun = 'L1', adaptive =TRUE )
+  models_boost =  rbf_boost.create(dfs, target, max_nodes = 2561, n_runs = 20, max_it = 20, growth_rate = 1.5, kernel_fun = rbf_linear_kernel, dist_fun = 'L2', adaptive =TRUE )
   res = rbf_boost.predict(models_boost, df[,rfb_vars, with = FALSE], combine_boots = TRUE)
   setDT(res)
   df[, target_rbf := res[order(id)][model_id1 == max(model_id1), y_pred_cum]] 

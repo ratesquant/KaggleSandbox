@@ -1,0 +1,74 @@
+---
+title: "Basel RWA"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(data.table)
+```
+
+## Utils
+
+```{r basel_utils}
+
+bloss_cdf<-function(x, pd, rho) {
+  pnorm(  (sqrt(1-rho) * qnorm(x) - qnorm(pd))/sqrt(rho)  )
+}
+
+bloss_cdf_inv <- function(pd, p, rho) {
+  pnorm( (qnorm(pd) + sqrt(rho) * qnorm(p))/sqrt(1.0-rho) )
+}
+
+#RWA - should be multiplied by EAD * LGD
+basel_rwa <- function(pd, p = 0.999, rho = 0.04) {
+  12.5 * (bloss_cdf_inv(pd, p, rho) - pd)
+}
+
+bloss_cdf_inv_calc <- Vectorize(function(pd, p, rho) {
+uniroot(function(x) bloss_cdf(x, pd, rho) - p, c(0, 1), tol = .Machine$double.eps )$root  
+})
+
+bloss_pdf<-function(x, p, rho) {
+  sqrt( (1.0-rho)/rho) * exp(-(0.2/rho) * (sqrt(1.0-rho) * qnorm(x) - qnorm(p))^2 +0.5*(qnorm(x))^2)
+}
+
+
+#derivative of Basel RWA by pd (should be multiplied by EAD * LGD)
+basel_rwa_dp <- function(pd, p, rho) {
+  12.5 * (dnorm( (qnorm(pd) + sqrt(rho) * qnorm(p))/sqrt(1.0-rho))/(sqrt(1.0-rho) * dnorm(qnorm(pd))) - 1)
+}
+
+
+```
+
+## Figures
+
+```{r my_figures, echo=FALSE}
+
+df = data.table(expand.grid(x = seq(0, 0.1, length.out = 100), rho = c(0.04, 0.1) ))
+df[, loss_cdf := bloss_cdf(x, 0.02, rho) ]
+df[, loss_pdf := bloss_pdf(x, 0.02, rho) ]
+
+ggplot(df, aes(x, loss_cdf, color = factor(rho))) + geom_line() + geom_vline(xintercept = 0.02, linetype = 'dashed')
+ggplot(df, aes(x, loss_pdf, color = factor(rho))) + geom_line() + geom_vline(xintercept = 0.02, linetype = 'dashed')
+
+#99% percentile
+df = data.table(expand.grid(rho = seq(0, 0.1, length.out = 100), p = c(0.9, 0.99) ))
+df[, p_loss := bloss_cdf_inv(0.1, p, rho)]
+
+ggplot(df, aes(rho, p_loss, color = factor(p))) + geom_line() + geom_vline(xintercept = 0.04, linetype = 'dashed')
+
+#RWA percentile
+df = data.table(expand.grid(pd = seq(0, 0.8, length.out = 100), p = c(0.9, 0.99) ))
+df[, rwa := basel_rwa(pd, p, 0.04)]
+
+ggplot(df, aes(pd, rwa, color = factor(p))) + geom_line()
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

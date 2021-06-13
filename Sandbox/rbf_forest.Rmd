@@ -392,18 +392,30 @@ n_vars = stri_join('n_', all_vars)
 df[, (p_vars):=lapply(.SD, function(x) convert_to_prob(x, train_index)), .SDcols = all_vars]
 df[, (n_vars):=lapply(.SD, function(x) convert_to_normal_prob(x, train_index)), .SDcols = all_vars]
 
-ggplot(df[ sample( which(train_index), 0.1*sum(train_index))], aes(p_cont1, p_cont13)) +  geom_point(size = 0.3, alpha = 0.3)
-ggplot(df[ sample( which(train_index), 0.1*sum(train_index))], aes(cont1, cont13)) + geom_point(size = 0.3, alpha = 0.3)
-ggplot(df[ sample( which(train_index), 0.1*sum(train_index))], aes(n_cont1, n_cont13)) + geom_point(size = 0.3, alpha = 0.3)
+#decorrelate 
+cor_mat_chol_inv = solve(chol(cor(df[train_index,n_vars , with = FALSE])))
+nc_vars = stri_join('nc_', all_vars)
+
+df_decor <- data.table(id = df$id, as.matrix(df[,n_vars , with = FALSE]) %*% cor_mat_chol_inv  ) 
+names(df_decor) <-c('id', nc_vars)
+df = df[df_decor, on =.(id)]
+
+ggplot(df[ sample( which(train_index), 0.1*sum(train_index))], aes(p_cont5, p_cont9)) + geom_point(size = 0.3, alpha = 0.3)
+ggplot(df[ sample( which(train_index), 0.1*sum(train_index))], aes(cont5, cont9))     + geom_point(size = 0.3, alpha = 0.3)
+ggplot(df[ sample( which(train_index), 0.1*sum(train_index))], aes(n_cont5, n_cont9)) + geom_point(size = 0.3, alpha = 0.3)
+ggplot(df[ sample( which(train_index), 0.1*sum(train_index))], aes(nc_cont5, nc_cont9)) + geom_point(size = 0.3, alpha = 0.3)
+
+cor(df[,n_vars , with = FALSE])
 
 #one hot for categorical variables ----
 one_hot <- dummyVars(" ~ .", data=df[, cat_vars, with = FALSE])
 dt_one_hot <- data.table(predict(one_hot, newdata =df[, cat_vars, with = FALSE]))
 df = cbind(df, dt_one_hot)
-rfb_vars = c(p_vars, names(dt_one_hot))
+#rfb_vars = c(p_vars, names(dt_one_hot))
 #rfb_vars= c(con_vars, names(dt_one_hot))
+rfb_vars = c(nc_vars)
 
-my_index = sample( which(train_index), 1.0*sum(train_index))
+my_index = sample( which(train_index), 0.1*sum(train_index))
 dfs = data.matrix(df[my_index,rfb_vars, with = FALSE])
 target = df$target[my_index]
 
@@ -412,8 +424,7 @@ target = df$target[my_index]
 
 null_rms = rms(target, mean(target) )
 
-
-run_cases = expand.grid(nodes = c(300), runs = c(30, 40), dist_fun = c('L1'), rbf_kernel = c('rbf_linear_kernel', 'rbf_cauchy_kernel', 'rbf_mquad_kernel'), kernel_scale = c(1,2,3), stringsAsFactors = FALSE )
+run_cases = expand.grid(nodes = c(300), runs = c(10, 20, 30, 40), dist_fun = c('L2'), rbf_kernel = c('rbf_linear_kernel'), kernel_scale = c(1), stringsAsFactors = FALSE )
 
 cv_res = ldply(seq(nrow(run_cases)), function(run_id){
   
@@ -426,9 +437,9 @@ cv_res = ldply(seq(nrow(run_cases)), function(run_id){
              kernel_fun = run_cases$rbf_kernel[run_id],  scale = run_cases$kernel_scale[run_id])
 })
 setDT(cv_res)
-#rbf_boot.create_cv(dfs, target, n_nodes = 1000, n_runs = 10, nfolds = 5, kernel_fun = rbf_linear_kernel, dist_fun = 'L1')
+#rbf_boot.create_cv(dfs, target, n_nodes = 1000, n_runs = 10, nfolds = 5, kernel_fun = rbf_linear_kernel, dist_fun = 'L2')
 #source(file.path(working_folder, 'Utils/rbf_utils.R'))
-ggplot(cv_res, aes(kernel_fun, cv_error, group = n_runs/null_rms, color = factor(n_runs) )) + geom_point() +  geom_line() + facet_wrap(~scale) # + facet_wrap(~dist_fun)# + geom_smooth(se = FALSE, color = 'black') + 
+ggplot(cv_res, aes(n_runs, cv_error, group = n_runs/null_rms, color = factor(n_runs) )) + geom_point() +  geom_line() + facet_wrap(~scale) # + facet_wrap(~dist_fun)# + geom_smooth(se = FALSE, color = 'black') + 
  
 
 
@@ -438,7 +449,7 @@ min(cv_res$cv_error) #0.8533613
 
 
 #%% boost runs ----------------
-models_boost =  rbf_boost.create(dfs, target, max_nodes = 2561, n_runs = 20, max_it = 20, growth_rate = 1.5, kernel_fun = rbf_linear_kernel, dist_fun = 'L1', adaptive =TRUE )
+models_boost =  rbf_boost.create(dfs, target, max_nodes = 2561, n_runs = 20, max_it = 20, growth_rate = 2.0, kernel_fun = rbf_linear_kernel, dist_fun = 'L2', adaptive =TRUE )
 res = rbf_boost.predict(models_boost, df[,rfb_vars, with = FALSE], combine_boots = TRUE)
 setDT(res)
 df[, target_rbf := res[order(id)][model_id1 == max(model_id1), y_pred_cum]] 

@@ -1,0 +1,78 @@
+---
+title: "Unemployment Trends"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library(proxy)
+library(MASS)
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(stringi)
+library(caret)
+library(gridExtra)
+library(GGally)
+library(gpairs)
+library(lubridate)
+
+working_folder = 'D:/Github/KaggleSandbox'
+
+source(file.path(working_folder, 'Utils/common.R'))
+
+
+```
+
+## Load Data
+
+```{r load_data}
+
+df_uer = fread(file.path(working_folder, 'data/mev/UNRATE.csv'))
+df_iuic = fread(file.path(working_folder, 'data/mev/ICSA.csv'))
+df_pop = fread(file.path(working_folder, 'data/mev/POPTHM.csv'))
+df_labor_part = fread(file.path(working_folder, 'data/mev/CIVPART.csv'))
+df_uer_weeks = fread(file.path(working_folder, 'data/mev/UEMPMEAN.csv'))
+
+df_uer[, date := as.Date(DATE)]
+df_iuic[, date := as.Date(DATE)]
+df_iuic[, date_month := make_date(year(date), month(date), 1)]
+df_pop[, date := as.Date(DATE)]
+df_labor_part[, date := as.Date(DATE)]
+df_uer_weeks[, date := as.Date(DATE)]
+
+df_iuic_m = df_iuic[, .(.N, iuic = mean(ICSA, na.rm = TRUE)), by =.(date_month)]
+
+df = df_uer[, .(date, uer = UNRATE)]
+df[df_iuic, iuic := 1e-3*i.ICSA, on=.(date = date_month)]
+df[df_pop, pop := 1e-3*i.POPTHM, on=.(date)]
+df[df_labor_part, lpart := i.CIVPART, on=.(date)]
+df[df_uer_weeks, u_weeks := i.UEMPMEAN, on=.(date)]
+
+ggplot(df, aes(date, uer)) + geom_line()
+ggplot(df, aes(date, pop)) + geom_line()
+ggplot(df, aes(date, iuic)) + geom_line()
+ggplot(df, aes(date, lpart)) + geom_line()
+
+#ggpairs(df[sample.int(nrow(df), 1000)])
+#gpairs(df[sample.int(nrow(df), 1000)])
+#ggcorr(df, palette = "RdBu", label = TRUE)
+#ggally_cross(df, aes(cut, color,  label = scales::percent(after_stat(prop)) ), geom_text_args = list(colour = "white", fontface = "bold", size = 2))
+#ggally_count(df, aes(cut, color))
+```
+
+## Create simulation
+
+```{r load_data}
+
+start_date = '2000-01-01'
+states = c('E', 'U', 'N') #E=employed, U=unemployed, N - Not in Labor force 
+n = 100 #number of people
+
+df_sim = data.table(id = seq(n), month = 0, state = sample(states, n, replace = TRUE, prob = c(64.608, 2.692, 32.7) ) )
+
+```

@@ -4,8 +4,8 @@ library(ggplot2)
 n = 2000
 
 df = data.table(x = rnorm(n), y = rnorm(n))
-df[,x := x - mean(x)]
-df[,y := y - mean(y)]
+#df[,x := x - mean(x)]
+#df[,y := y - mean(y)]
 
 ggplot(df, aes(x, y)) + geom_point()
 

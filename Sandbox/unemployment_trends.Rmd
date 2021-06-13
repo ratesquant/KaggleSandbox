@@ -20,6 +20,7 @@ library(gridExtra)
 library(GGally)
 library(gpairs)
 library(lubridate)
+library(expm)  
 
 working_folder = 'D:/Github/KaggleSandbox'
 
@@ -65,14 +66,67 @@ ggplot(df, aes(date, lpart)) + geom_line()
 #ggally_count(df, aes(cut, color))
 ```
 
+## Average transition matrix
+
+```{r simulation}
+
+start_date = '1980-01-01'
+states = c('E', 'U', 'N') #E=employed, U=unemployed, N - Not in Labor force 
+
+tr_matrix = t(matrix(c(0.99, 0.01, 0.0, 
+                       0.1,   0.8, 0.1,
+                       0.0,   0.1, 0.9), nrow = 3))
+
+tr_matrix_from_params <- function(tr_rates){
+  r_eu = exp( tr_rates[1] ) / (1 + exp( tr_rates[1] ))
+  
+  r_ue = exp( tr_rates[2] ) / (1 + exp(tr_rates[2]) + exp(tr_rates[3]) )
+  r_un = exp( tr_rates[3] ) / (1 + exp(tr_rates[2]) + exp(tr_rates[3]) )
+  
+  r_nu = exp( tr_rates[4] ) / (1 + exp(tr_rates[4])) 
+  
+  tr_temp = t(matrix(c(1-r_eu, r_eu, 0.0, 
+                       r_ue,   1-r_un-r_ue, r_un,
+                       0.0,   r_nu, 1-r_nu), nrow = 3))
+  return (tr_temp)
+} 
+
+obj_fun <-function(tr_rates_params){
+  tr_temp = tr_matrix_from_params(tr_rates_params)
+  
+  st = df[order(date) & date>=start_date,.(lpart * (1 - 0.01*uer),0.01*lpart * uer, 100-lpart  )]
+  st_next = as.matrix(st) %*% (tr_temp)
+  
+  res = st[-1,] - st_next[-nrow(st_next),]
+  return ( norm(as.matrix(res), type = 'F') )
+}
+
+tr_rates_params = c(-5.916822,  -3.176981, -11.613970, -14.549339)
+res = optim(tr_rates, obj_fun, method = 'L-BFGS', control = list(trace = TRUE))
+#res = optim(tr_rates, obj_fun, method = 'Nelder-Mead', control = list(trace = TRUE, maxit =  500))
+
+```
+
 ## Create simulation
 
-```{r load_data}
+```{r simulation}
 
-start_date = '2000-01-01'
+start_date = '1990-01-01'
 states = c('E', 'U', 'N') #E=employed, U=unemployed, N - Not in Labor force 
 n = 100 #number of people
 
-df_sim = data.table(id = seq(n), month = 0, state = sample(states, n, replace = TRUE, prob = c(64.608, 2.692, 32.7) ) )
+tr_matrix =  tr_matrix_from_params(tr_rates_params)
+
+start_states = as.numeric(df[date==start_date,.(lpart * (1 - 0.01*uer),0.01*lpart * uer, 100-lpart  )])
+ 
+start_states %*% (tr_matrix %^% 30)
+
+rownames(tr_matrix)<-states
+colnames(tr_matrix)<-states
+#rowSums(tr_matrix)
+
+
+df_sim = data.table(id = seq(n), month = 0, state = sample(states, n, replace = TRUE, prob = c(64.608, 2.692, 32.7) ) ) #as of 2000-01-01
+
 
 ```

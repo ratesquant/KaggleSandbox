@@ -15,6 +15,9 @@ library(data.table)
 ## Utils
 
 ```{r basel_utils}
+pbound<-function(x, min_x, max_x){
+  pmin(pmax(x, min_x), max_x)
+}
 
 bloss_cdf<-function(x, pd, rho) {
   pnorm(  (sqrt(1-rho) * qnorm(x) - qnorm(pd))/sqrt(rho)  )
@@ -43,7 +46,13 @@ basel_rwa_dp <- function(pd, p, rho) {
   12.5 * (dnorm( (qnorm(pd) + sqrt(rho) * qnorm(p))/sqrt(1.0-rho))/(sqrt(1.0-rho) * dnorm(qnorm(pd))) - 1)
 }
 
-
+cc <- function(x,...){
+  if(.Platform$OS.type == "unix"){
+    write.clipboard(x,...)
+  }else{
+    write.table(x, "clipboard-1024", sep="\t", row.names=FALSE,...)
+  }
+}
 ```
 
 ## Figures
@@ -71,4 +80,62 @@ ggplot(df, aes(pd, rwa, color = factor(p))) + geom_line()
 
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## Attribution
+
+```{r attribution, echo=FALSE}
+
+rho = 0.04
+p_tail = 0.999
+
+n = 1000
+df = data.table(pd = rbeta(n, 1, 10), ead = exp(rnorm(n)),  lgd = runif(n, min = 0.8, max = 1.0))
+
+df[, pd2  := pbound(pd + runif(n, min = -0.1, max = 0.2), 0, 1)]
+df[, ead2 := pmax(0.1, ead + runif(n, min = -0.5, max = 0.5))]
+df[, lgd2 := pbound(lgd + runif(n, min = -0.1, max = 0.1), 0.8, 1)]
+
+df[, rwa_pd  := ead  * lgd  * basel_rwa_dp(pd , p_tail, 0.04) ]
+df[, rwa_ead  := lgd  * basel_rwa(pd , p_tail, 0.04) ]
+df[, rwa_lgd  := ead  * basel_rwa(pd , p_tail, 0.04) ]
+
+df[, rwa  := ead  * lgd  * basel_rwa(pd , p_tail, 0.04) ]
+df[, rwa2 := ead2 * lgd2 * basel_rwa(pd2, p_tail, 0.04) ]
+df[, id:=seq(nrow(df))]
+
+summary(df)
+
+sum(df$rwa)
+sum(df$rwa2)
+
+ggplot(df) + geom_density(aes(pd)) + geom_density(aes(pd2), color = 'red')
+ggplot(df) + geom_density(aes(ead)) + geom_density(aes(ead2), color = 'red')
+ggplot(df) + geom_density(aes(lgd)) + geom_density(aes(lgd2), color = 'red')
+
+ggplot(df) + geom_point(aes(pd, pd2))
+ggplot(df) + geom_point(aes(ead, ead2))
+ggplot(df) + geom_point(aes(lgd, lgd2))
+
+#attribution ---------
+
+#LGD, EAD, PD (from small to large) - order dependent
+df[, d1 := ead   * lgd2  * basel_rwa(pd , p_tail, rho) - ead   * lgd   * basel_rwa(pd, p_tail, rho)]
+df[, d2 := ead2  * lgd2  * basel_rwa(pd , p_tail, rho) - ead   * lgd2  * basel_rwa(pd, p_tail, rho)]
+df[, d3 := ead2  * lgd2  * basel_rwa(pd2, p_tail, rho) - ead2  * lgd2  * basel_rwa(pd, p_tail, rho)]
+
+#change in RWA due to particular component
+sprintf('LGD: %.2f, EAD: %.2f, PD: %.2f, total: %.3f, %.3f', sum(df$d1), sum(df$d2), sum(df$d3), sum(df$d1) + sum(df$d2) + sum(df$d3), sum(df$rwa2) - sum(df$rwa))
+
+1000*mean(df$ead)  * (mean(df$lgd2) - mean(df$lgd))  * basel_rwa(mean(df$pd) , p_tail, 0.04)
+1000*mean(df$lgd2)  * (mean(df$ead2) - mean(df$ead))  * basel_rwa(mean(df$pd) , p_tail, 0.04)
+1000*mean(df$lgd2)  * mean(df$ead2)  * (basel_rwa(mean(df$pd2) , p_tail, 0.04) - basel_rwa(mean(df$pd) , p_tail, 0.04))
+
+ggplot(df) + geom_line(aes(id, cumsum(d1) )) + geom_line(aes(id, cumsum(d2) )) +  geom_line(aes(id, cumsum(d3) )) + geom_line(aes(id, cumsum(rwa2 - rwa) ))
+ggplot(df) + geom_line(aes(cumsum(rwa2 - rwa), cumsum(d1) )) + geom_line(aes(cumsum(rwa2 - rwa), cumsum(d2) )) +  geom_line(aes(cumsum(rwa2 - rwa), cumsum(d3) ))
+
+#20% convexity
+1000*mean(df$ead)  * mean(df$lgd)  * basel_rwa(mean(df$pd) , p_tail, 0.04)
+1000*mean(df$ead2) * mean(df$lgd2) * basel_rwa(mean(df$pd2) , p_tail, 0.04)
+
+1000*mean(df$ead)  * mean(df$lgd)  * basel_rwa(mean(df$pd)  , p_tail, 0.04) - sum(df$rwa)
+1000*mean(df$ead2) * mean(df$lgd2) * basel_rwa(mean(df$pd2) , p_tail, 0.04) - sum(df$rwa2)
+```

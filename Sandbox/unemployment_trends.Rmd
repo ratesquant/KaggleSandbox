@@ -21,6 +21,7 @@ library(GGally)
 library(gpairs)
 library(lubridate)
 library(expm)  
+library(foreach)  
 
 working_folder = 'D:/Github/KaggleSandbox'
 
@@ -54,10 +55,14 @@ df[df_pop, pop := 1e-3*i.POPTHM, on=.(date)]
 df[df_labor_part, lpart := i.CIVPART, on=.(date)]
 df[df_uer_weeks, u_weeks := i.UEMPMEAN, on=.(date)]
 
+df = df[complete.cases(df)]#1967-01-01 - all data becomes 
+
 ggplot(df, aes(date, uer)) + geom_line()
 ggplot(df, aes(date, pop)) + geom_line()
 ggplot(df, aes(date, iuic)) + geom_line()
 ggplot(df, aes(date, lpart)) + geom_line()
+
+ggplot(df, aes(date, 0.1*iuic * (52/12) / (pop * lpart * (1 - 0.01*uer)) )) + geom_line()
 
 #ggpairs(df[sample.int(nrow(df), 1000)])
 #gpairs(df[sample.int(nrow(df), 1000)])
@@ -66,10 +71,10 @@ ggplot(df, aes(date, lpart)) + geom_line()
 #ggally_count(df, aes(cut, color))
 ```
 
+
 ## Average transition matrix
 
 ```{r simulation}
-
 start_date = '1980-01-01'
 states = c('E', 'U', 'N') #E=employed, U=unemployed, N - Not in Labor force 
 
@@ -91,6 +96,7 @@ tr_matrix_from_params <- function(tr_rates){
   return (tr_temp)
 } 
 
+#static monthly
 obj_fun <-function(tr_rates_params){
   tr_temp = tr_matrix_from_params(tr_rates_params)
   
@@ -101,21 +107,82 @@ obj_fun <-function(tr_rates_params){
   return ( norm(as.matrix(res), type = 'F') )
 }
 
-tr_rates_params = c(-5.916822,  -3.176981, -11.613970, -14.549339)
+#dynamic
+obj_fun2 <-function(tr_rates_params){
+  
+  st = df[order(date) & date>=start_date,.(lpart * (1 - 0.01*uer),0.01*lpart * uer, 100-lpart  )]
+  t_eu = df[order(date) & date>=start_date,  0.1*iuic * (52/12) / (pop * lpart * (1 - 0.01*uer)) ]
+  
+  st_next = as.matrix(st)
+  
+  for(i in 1:(nrow(st)-1)){
+    st_next[i+1,] = st_next[i,] %*% (tr_matrix_from_params(c(logit(t_eu[i] * tr_rates_params[1] ), tr_rates_params[-1])))
+  }
+  
+  #ggplot() + geom_line(data = cbind(st, df[order(date) & date>=start_date, .(date) ]), aes(date, V2), inherit.aes = FALSE) + geom_line(data = cbind(st_next, df[order(date) & date>=start_date, .(date) ]), aes(date, V2), inherit.aes = FALSE, color = 'red')
+  #ggplot() + geom_line(data = cbind(st, df[order(date) & date>=start_date, .(date) ]), aes(date, V1), inherit.aes = FALSE) + geom_line(data = cbind(st_next, df[order(date) & date>=start_date, .(date) ]), aes(date, V1), inherit.aes = FALSE, color = 'red')
+  #ggplot() + geom_line(data = cbind(st, df[order(date) & date>=start_date, .(date) ]), aes(date, V3), inherit.aes = FALSE) + geom_line(data = cbind(st_next, df[order(date) & date>=start_date, .(date) ]), aes(date, V3), inherit.aes = FALSE, color = 'red')
+  
+  
+  res = st - st_next
+  return ( norm(as.matrix(res), type = 'F') )
+}
+
+
+tr_rates_params = c(-5.916822,  -3.176981, -11.613970, -14.549339)#static monthly params
 res = optim(tr_rates, obj_fun, method = 'L-BFGS', control = list(trace = TRUE))
 #res = optim(tr_rates, obj_fun, method = 'Nelder-Mead', control = list(trace = TRUE, maxit =  500))
 
+tr_rates_params_dyn = c(  0.4393218,  -2.5398041, -23.4553341, -10.0342715)#static monthly params
+res = optim(tr_rates_params_dyn, obj_fun2, method = 'L-BFGS-B', control = list(trace = TRUE), lower = c(0.1, rep(-Inf,3)), upper = c(2, rep(Inf,3)) )
+#res = optim(tr_rates_params_dyn, obj_fun2, method = 'Nelder-Mead', control = list(trace = TRUE, maxit =  500))
+
+tr_matrix = tr_matrix_from_params(c(logit(0.01 * tr_rates_params_dyn[1] ), tr_rates_params_dyn[-1]))
+start_states %*% (tr_matrix %^% 30)
 ```
 
-## Create simulation
 
-```{r simulation}
+## Extract Transition rates
 
-start_date = '1990-01-01'
+```{r tr_rate}
+
+st = as.matrix( df[order(date) & date>=start_date,.(lpart * (1 - 0.01*uer),0.01*lpart * uer, 100-lpart  )] )
+
+params = matrix(NA, nrow(st), 3)
+
+tr_init = c(-4.863087,  -2.141216, -23.778963)
+
+ for(i in 1:(nrow(st)-1)){
+   print(i)
+   res = optim(tr_init, function(x) norm(st[i+1,] - st[i,] %*% tr_matrix_from_params(c(x,-10.0342715)) ) , method = 'L-BFGS-B', control = list(trace = TRUE))
+   params[i, ] = res$par
+ }
+
+  st_next = as.matrix(st)
+  
+  for(i in 1:(nrow(st)-1)){
+    st_next[i+1,] = st_next[i,] %*% (tr_matrix_from_params(c(params[i,], -10.0342715)))
+  }
+
+ggplot() + geom_line(data = cbind(params, df[order(date) & date>=start_date, .(date) ]), aes(date, exp(V1 ) / (1 + exp( V1 ))), inherit.aes = FALSE) + geom_line(data = cbind(st_next, df[order(date) & date>=start_date, .(date, tr_eu = 0.1*iuic * (52/12) / (pop * lpart * (1 - 0.01*uer))) ]), aes(date, tr_eu), inherit.aes = FALSE, color = 'red')
+
+ggplot() + geom_line(data = cbind(params, df[order(date) & date>=start_date, .(date) ]), aes(date, exp(V2 ) / (1 + exp( V2 ))), inherit.aes = FALSE)
+
+  ggplot() + geom_line(data = cbind(st, df[order(date) & date>=start_date, .(date) ]), aes(date, V2), inherit.aes = FALSE) + geom_line(data = cbind(st_next, df[order(date) & date>=start_date, .(date) ]), aes(date, V2), inherit.aes = FALSE, color = 'red')
+  ggplot() + geom_line(data = cbind(st, df[order(date) & date>=start_date, .(date) ]), aes(date, V1), inherit.aes = FALSE) + geom_line(data = cbind(st_next, df[order(date) & date>=start_date, .(date) ]), aes(date, V1), inherit.aes = FALSE, color = 'red')
+  ggplot() + geom_line(data = cbind(st, df[order(date) & date>=start_date, .(date) ]), aes(date, V3), inherit.aes = FALSE) + geom_line(data = cbind(st_next, df[order(date) & date>=start_date, .(date) ]), aes(date, V3), inherit.aes = FALSE, color = 'red')
+  
+```
+
+## Create MC simulation simulation
+
+```{r mc_simulation}
+
+start_date = '1980-01-01'
 states = c('E', 'U', 'N') #E=employed, U=unemployed, N - Not in Labor force 
-n = 100 #number of people
+n = 10000 #number of people
 
-tr_matrix =  tr_matrix_from_params(tr_rates_params)
+tr_matrix =  tr_matrix_from_params( c(-5.916822,  -3.176981, -11.613970, -14.549339))
 
 start_states = as.numeric(df[date==start_date,.(lpart * (1 - 0.01*uer),0.01*lpart * uer, 100-lpart  )])
  
@@ -125,8 +192,86 @@ rownames(tr_matrix)<-states
 colnames(tr_matrix)<-states
 #rowSums(tr_matrix)
 
+df_s = df[order(date) & date>=start_date,.(date, E = lpart * (1 - 0.01*uer), U = 0.01*lpart * uer, N = 100-lpart, UER = uer  )]
 
-df_sim = data.table(id = seq(n), month = 0, state = sample(states, n, replace = TRUE, prob = c(64.608, 2.692, 32.7) ) ) #as of 2000-01-01
+df_s[, t := seq(0, nrow(df_s)-1)]
 
+#ts is time in state
+dt_temp =  data.table(id = seq(n), t = 0, ts = 0, state = sample(states, n, replace = TRUE, prob = c(59.9680, 4.0320, 36.0) ) )
+
+df_sim = foreach (i = seq(nrow(df_s)-1), .combine = rbind) %do% {
+#df_sim = foreach (i = seq(240), .combine = rbind) %do% {
+  
+  cur_states = dt_temp[,state]
+  ts = dt_temp[,ts]
+  
+  for (j in 1:nrow(dt_temp)){
+    cur_state = cur_states[j]
+    probs = tr_matrix[which(states == cur_state),]
+    next_state = states[which(cumsum(probs) >= runif(1))[1]]
+    ts[j] = ifelse(next_state == cur_state, ts[j] + 1, 0)
+    cur_states[j] = next_state
+  }
+ res = data.table(id = dt_temp$id, t = i, ts, state = cur_states)
+ dt_temp = res
+ return(res)
+}
+
+df_agg = df_sim[, .(.N), by = .(t, state)]
+
+ggplot(dcast(df_agg, t ~ state, value.var = 'N'), aes(t, 100*U/(E+U))) + geom_line() +
+  geom_line(data = df_s, aes(t, UER), color = 'red')
+
+```
+
+
+
+## Transition simulation
+
+```{r tr_simulation}
+
+start_date = '1980-01-01'
+states = c('E', 'U', 'N') #E=employed, U=unemployed, N - Not in Labor force 
+n = 10000 #number of people
+
+tr_matrix =  tr_matrix_from_params( c(-5.916822,  -3.176981, -11.613970, -14.549339))
+
+start_states = as.numeric(df[date==start_date,.(lpart * (1 - 0.01*uer),0.01*lpart * uer, 100-lpart  )])
+ 
+start_states %*% (tr_matrix %^% 30)
+
+rownames(tr_matrix)<-states
+colnames(tr_matrix)<-states
+#rowSums(tr_matrix)
+
+df_s = df[order(date) & date>=start_date,.(date, E = lpart * (1 - 0.01*uer), U = 0.01*lpart * uer, N = 100-lpart, UER = uer, t_eu = 0.1*iuic * (52/12) / (pop * lpart * (1 - 0.01*uer))  )]
+
+df_s[, t := seq(0, nrow(df_s)-1)]
+
+#ts is time in state
+dt_temp =  data.table(id = seq(n), t = 0, ts = 0, state = sample(states, n, replace = TRUE, prob = c(59.9680, 4.0320, 36.0) ) )
+
+df_sim = foreach (i = seq(nrow(df_s)-1), .combine = rbind) %do% {
+#df_sim = foreach (i = seq(240), .combine = rbind) %do% {
+  
+  cur_states = dt_temp[,state]
+  ts = dt_temp[,ts]
+  
+  for (j in 1:nrow(dt_temp)){
+    cur_state = cur_states[j]
+    probs = tr_matrix[which(states == cur_state),]
+    next_state = states[which(cumsum(probs) >= runif(1))[1]]
+    ts[j] = ifelse(next_state == cur_state, ts[j] + 1, 0)
+    cur_states[j] = next_state
+  }
+ res = data.table(id = dt_temp$id, t = i, ts, state = cur_states)
+ dt_temp = res
+ return(res)
+}
+
+df_agg = df_sim[, .(.N), by = .(t, state)]
+
+ggplot(dcast(df_agg, t ~ state, value.var = 'N'), aes(t, 100*U/(E+U))) + geom_line() +
+  geom_line(data = df_s, aes(t, UER), color = 'red')
 
 ```

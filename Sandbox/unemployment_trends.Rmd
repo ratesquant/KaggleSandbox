@@ -23,6 +23,10 @@ library(lubridate)
 library(expm)  
 library(foreach)  
 
+#optimization
+library(Rsolnp)
+library(nloptr)
+
 working_folder = 'D:/Github/KaggleSandbox'
 
 source(file.path(working_folder, 'Utils/common.R'))
@@ -50,7 +54,7 @@ df_uer_weeks[, date := as.Date(DATE)]
 df_iuic_m = df_iuic[, .(.N, iuic = mean(ICSA, na.rm = TRUE)), by =.(date_month)]
 
 df = df_uer[, .(date, uer = UNRATE)]
-df[df_iuic, iuic := 1e-3*i.ICSA, on=.(date = date_month)]
+df[df_iuic_m, iuic := 1e-3*i.iuic, on=.(date = date_month)]
 df[df_pop, pop := 1e-3*i.POPTHM, on=.(date)]
 df[df_labor_part, lpart := i.CIVPART, on=.(date)]
 df[df_uer_weeks, u_weeks := i.UEMPMEAN, on=.(date)]
@@ -144,6 +148,7 @@ start_states %*% (tr_matrix %^% 30)
 ## IUIC driven transitions
 
 ```{r iuic_transitions}
+#library(dfoptim)
 
 start_date = '1980-01-01'
 end_date = '2020-01-01'
@@ -155,33 +160,52 @@ obj_fun <-function(tr_rates_params){
   index = df$date>=start_date
   
   date      = df[index, date]
-  st        = df[index,.(E=lpart * (1 - 0.01*uer), U=0.01*lpart * uer, N=100-lpart)]
+  st        = df[index,.(E=lpart * (1 - 0.01*uer), U = 0.01*lpart * uer, N = 100 - lpart)]
   iuic_rate = df[index, iuic_rate]
-  st_next = as.matrix(st)
   
-  for(i in 2:nrow(st)) {
-    br = logit(iuic_rate[i-1])
+  st = as.matrix(st)
+  st_next = st
+  
+  #fit annual transition
+  stride = 12
+  for(j in 2:(nrow(st) - stride)) {
     
-    params = br*tr_rates_params[1:6] + tr_rates_params[-(1:6)]
+    st_temp = st[j,]
     
-    tr_temp = tr_matrix_from_params(params)
-    
-    st_next[i,] = st_next[i-1,] %*% (tr_temp)
+    for(i in 1:stride) {
+      br = iuic_rate[j + i - 2]/0.01
+      
+      params = br*tr_rates_params[1:6] + tr_rates_params[-(1:6)]
+      
+      st_temp = st_temp %*% (tr_matrix_from_params(params))
+    }
+    st_next[j + stride,] = st_temp
   }
   
   res = st - st_next
-  return ( norm(as.matrix(res[date<=end_date,]), type = 'F') )
+  return ( norm(as.matrix(res[date <= end_date,]), type = 'F') )
   
   #ggplot() + geom_line(data = cbind(st, df[index, .(date) ]), aes(date, U), inherit.aes = FALSE) + geom_line(data = cbind(st_next, df[index, .(date) ]), aes(date, U), inherit.aes = FALSE, color = 'red')
   #ggplot() + geom_line(data = cbind(st, df[index, .(date) ]), aes(date, E), inherit.aes = FALSE) + geom_line(data = cbind(st_next, df[index, .(date) ]), aes(date, E), inherit.aes = FALSE, color = 'red')
   #ggplot() + geom_line(data = cbind(st, df[index, .(date) ]), aes(date, N), inherit.aes = FALSE) + geom_line(data = cbind(st_next, df[index, .(date) ]), aes(date, N), inherit.aes = FALSE, color = 'red')
+  #ggplot() + geom_line(data = cbind(st, df[index, .(date) ]), aes(date, (E+U)/(E+U+N)), inherit.aes = FALSE) + geom_line(data = cbind(st_next, df[index, .(date) ]), aes(date, (E+U)/(E+U+N)), inherit.aes = FALSE, color = 'red')
 }
 
-tr_rates_params = c(0.793568057241818, -0.0731684928115083, -1.07252559991543, -9.61358840006317, -4.85220536865818, -1.22689600909341, 1.81165195480568, -0.194358455287068, 0.813794199994513, -0.402177899993125, 0.813021568941359, -0.402190455438853)
+tr_rates_params = c(1.27978427178106, -5.67323498117342, 49.409058108502, 20.9042971355755, 1.12264113480967, 0.56638352411322, -5.78883475986432, -3.65211542845336, -48.9505357368036, 13.9550027827274, -4.91161205468058, -2.74443738181706)#rep(1, 12)
+#tr_rates_params = c(rep(0, 6), rep(-2, 6))
+
 #tr_rates_params = c(0.624466113165663, -0.550644085442827, -42.6741137108064, -113.317541518673, -0.947400611828628, 3.7324598895776, 0.475600512332723, -3.98150479813621, 289.803404703998, -65.4518720642512, -5.1265878334206, 7.43952709092029)
 res = optim(tr_rates_params, obj_fun, method = 'L-BFGS', control = list(trace = TRUE))
+res = solnp(tr_rates_params, fun = obj_fun)
+
+#res = hjk(tr_rates_params, obj_fun, control = list(maxfeval = 1000, info= TRUE))
+#tr_rates_params = res$par 
 #cat(paste(res$par, collapse=", "))
 #res = optim(tr_rates_params, obj_fun, method = 'Nelder-Mead', control = list(trace = TRUE, maxit =  5000))
+#res = optim(tr_rates_params, obj_fun, method = 'SANN', control = list(trace = TRUE))
+res <- nloptr(x0=tr_rates_params, eval_f=obj_fun,opts= list("algorithm"="NLOPT_LN_SBPLX","xtol_rel"=1.0e-8, maxeval = 1000))
+#cat(paste(res$solution, collapse=", "))
+
 
 start_states = as.numeric(df[date==start_date,.(lpart * (1 - 0.01*uer),0.01*lpart * uer, 100-lpart  )])
 
@@ -194,7 +218,142 @@ colnames(tr_matrix)<-states
 ggplot(reshape2::melt(tr_matrix), aes(Var1, Var2, fill = value, label = sprintf('%.2f', 100*value) ))  + geom_tile() + geom_text()
 ```
 
+## DepMix
 
+```{r hmm__transitions_ex}
+library(depmixS4)
+data('speed')
+set.seed(1)
+
+mod <- depmix(response = rt ~ 1, data = speed, nstates = 2, trstart = runif(4))
+
+fm <- fit(mod, emc=em.control(rand=FALSE))
+summary(fm)
+```
+
+
+## HMM
+
+```{r hmm__transitions}
+#library(depmixS4)
+library(HMM)
+
+# Initialise HMM
+hmm = initHMM(c("A","B"), c("L","R"), transProbs=matrix(c(.8,.2,.2,.8),2),emissionProbs=matrix(c(.6,.4,.4,.6),2))
+print(hmm)
+# Sequence of observations
+sim = simHMM(hmm, 10)
+# Calculate forward probablities
+logForwardProbabilities = forward(hmm,sim$observation)
+logBackwardProbabilities = backward(hmm,sim$observation)
+print(exp(logForwardProbabilities))
+
+viterbi = viterbi(hmm,sim$observation)
+print(viterbi)
+
+
+# Sequence of observation
+a = sample(c(rep("L",100),rep("R",300)))
+b = sample(c(rep("L",300),rep("R",100)))
+observation = c(a,b)
+# Viterbi-training
+vt = viterbiTraining(hmm,observation,10)
+print(vt$hmm)
+
+# Baum-Welch
+bw = baumWelch(hmm,observation,10)
+print(bw$hmm)
+```
+
+```{r dishonestCasino_transitions}
+
+  #dishonestCasino()
+
+  nSim = 2000
+  States = c("Fair", "Unfair")
+  Symbols = 1:6
+  transProbs = matrix(c(0.99, 0.01, 0.02, 0.98), c(length(States), length(States)), byrow = TRUE)
+  emissionProbs = matrix(c(rep(1/6, 6), c(rep(0.1, 5), 0.5)), c(length(States), length(Symbols)), byrow = TRUE)
+  hmm = initHMM(States, Symbols, transProbs = transProbs, emissionProbs = emissionProbs)
+  sim = simHMM(hmm, nSim)
+  vit = viterbi(hmm, sim$observation)
+  f = forward(hmm, sim$observation)
+  b = backward(hmm, sim$observation)
+  i <- f[1, nSim]
+  j <- f[2, nSim]
+  probObservations = (i + log(1 + exp(j - i)))
+  posterior = exp((f + b) - probObservations)
+  x = list(hmm = hmm, sim = sim, vit = vit, posterior = posterior)
+  readline("Plot simulated throws:\n")
+  mn = "Fair and unfair die"
+  xlb = "Throw nr."
+  ylb = ""
+  plot(x$sim$observation, ylim = c(-7.5, 6), pch = 3, main = mn, 
+      xlab = xlb, ylab = ylb, bty = "n", yaxt = "n")
+  axis(2, at = 1:6)
+  readline("Simulated, which die was used:\n")
+  text(0, -1.2, adj = 0, cex = 0.8, col = "black", "True: green = fair die")
+  for (i in 1:nSim) {
+      if (x$sim$states[i] == "Fair") 
+          rect(i, -1, i + 1, 0, col = "green", border = NA)
+      else rect(i, -1, i + 1, 0, col = "red", border = NA)
+  }
+  readline("Most probable path (viterbi):\n")
+  text(0, -3.2, adj = 0, cex = 0.8, col = "black", "Most probable path")
+  for (i in 1:nSim) {
+      if (x$vit[i] == "Fair") 
+          rect(i, -3, i + 1, -2, col = "green", border = NA)
+      else rect(i, -3, i + 1, -2, col = "red", border = NA)
+  }
+  readline("Differences:\n")
+  text(0, -5.2, adj = 0, cex = 0.8, col = "black", "Difference")
+  differing = !(x$sim$states == x$vit)
+  for (i in 1:nSim) {
+      if (differing[i]) 
+          rect(i, -5, i + 1, -4, col = rgb(0.3, 0.3, 0.3), 
+              border = NA)
+      else rect(i, -5, i + 1, -4, col = rgb(0.9, 0.9, 0.9), 
+          border = NA)
+  }
+  readline("Posterior-probability:\n")
+  points(x$posterior[2, ] - 3, type = "l")
+  readline("Difference with classification by posterior-probability:\n")
+  text(0, -7.2, adj = 0, cex = 0.8, col = "black", "Difference by posterior-probability")
+  differing = !(x$sim$states == x$vit)
+  for (i in 1:nSim) {
+      if (posterior[1, i] > 0.5) {
+          if (x$sim$states[i] == "Fair") 
+              rect(i, -7, i + 1, -6, col = rgb(0.9, 0.9, 0.9), 
+                border = NA)
+          else rect(i, -7, i + 1, -6, col = rgb(0.3, 0.3, 0.3), 
+              border = NA)
+      }
+      else {
+          if (x$sim$states[i] == "Unfair") 
+              rect(i, -7, i + 1, -6, col = rgb(0.9, 0.9, 0.9), 
+                border = NA)
+          else rect(i, -7, i + 1, -6, col = rgb(0.3, 0.3, 0.3), 
+              border = NA)
+      }
+  }
+  readline("Difference with classification by posterior-probability > .95:\n")
+  text(0, -7.2, adj = 0, cex = 0.8, col = "black", "Difference by posterior-probability > .95")
+  differing = !(x$sim$states == x$vit)
+  for (i in 1:nSim) {
+      if (posterior[2, i] > 0.95 || posterior[2, i] < 0.05) {
+          if (differing[i]) 
+              rect(i, -7, i + 1, -6, col = rgb(0.3, 0.3, 0.3), 
+                border = NA)
+          else rect(i, -7, i + 1, -6, col = rgb(0.9, 0.9, 0.9), 
+              border = NA)
+      }
+      else {
+          rect(i, -7, i + 1, -6, col = rgb(0.9, 0.9, 0.9), 
+              border = NA)
+      }
+  }
+  invisible(x)
+```
 
 ## Create MC simulation simulation
 

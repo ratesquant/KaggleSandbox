@@ -21,7 +21,8 @@ library(GGally)
 library(gpairs)
 library(lubridate)
 library(expm)  
-library(foreach)  
+library(foreach)
+library(zoo)  
 
 #optimization
 library(Rsolnp)
@@ -87,6 +88,121 @@ ggplot(df, aes(date, iuic_rate )) + geom_line()
 
 #ggpairs(df)
 ```
+
+
+## Signal Filtering
+
+```{r signal_filtering}
+library(glmnet)
+library(TTR)
+
+my_ewma <- function(x, a) {
+  s1 <- x[1]
+  sk <- s1
+  s <- vapply(x[-1], function(x) sk <<- (1 - a) * x + a * sk, 0)
+  s <- c(s1, s)
+  return(s)
+}
+
+
+#try to predict UER from IUIC
+
+fir_weights = rep(1, 10)/10
+
+df[, uer_fir   := frollapply(uer, n = 10, FUN = function(x) sum(x * fir_weights))  ]
+df[, uer_fir_t := rollmeanr(uer, k = 10, fill = NA)  ]
+
+ggplot(df, aes(date, uer)) + geom_line() + geom_line(aes(date, uer_fir), color = 'red')
+ggplot(df, aes(date, iuic)) + geom_line() 
+
+df_s = df[date<'2020-01-01',.(date, uer, iuic = iuic)][order(date)]
+
+#add lagged vars
+for(i in seq(0, 64)) {
+  vname = sprintf('iuic_lag_%02d', i)
+  df_s[, c(vname) := shift(iuic, i)]  
+}
+
+model_vars = names(df_s)[ grep('iuic_', names(df_s)) ]
+
+model.lm = lm(formula(stri_join('uer ~', stri_join(model_vars, collapse = ' + '))), df_s)
+summary(model.lm)
+
+df_s[, uer_pred := predict(model.lm, df_s)]
+
+ggplot(df_s, aes(date, uer)) + geom_line() + geom_line(aes(date, uer_pred), color = 'red')
+#ggplot(df_s, aes(date, uer)) + geom_line() + geom_line(aes(date, iuic_lag_64/100), color = 'red')
+
+coefs = coefficients(model.lm)
+
+ggplot(data.table(val = coefs, name = names(coefs))[name != '(Intercept)'], aes(name, val) ) + geom_bar(stat = 'identity') +  theme(axis.text.x  = element_text(angle=90))
+
+#lasso
+x=data.matrix(df_s[, model_vars, with = FALSE])
+index = complete.cases(x)
+x = x[index,]
+y = df_s$uer[index]
+#fit1=glmnet(x,y, family="gaussian")
+cvob3=cv.glmnet(x, y, family="gaussian", nfolds = 10)
+plot(cvob3)
+
+get_all_coefs<-function(glmnet_obj){
+  res = ldply(glmnet_obj$lambda, function(lambda){
+    temp = data.matrix(coef(glmnet_obj,s=lambda))
+    data.frame(var_name = rownames(temp), coef = as.numeric(temp), lambda)
+  })
+  return(res)
+}
+
+ggplot(data.frame(rms = cvob3$cvm, rms_hi = cvob3$cvup, rms_lo = cvob3$cvlo, lambda = log(cvob3$lambda)) , aes(lambda, rms) ) + geom_line() + 
+  geom_ribbon(aes(ymin = rms_lo, ymax = rms_hi), fill = 'blue', alpha = 0.3) +
+  geom_vline(xintercept =  c(log(cvob3$lambda.min),  log(cvob3$lambda.1se), -2), linetype = 'dashed') +
+  ggtitle(sprintf('Best RMS %.5f', cvob3$cvm[which(cvob3$lambda == cvob3$lambda.1se)]))
+
+cvob3$cvm[which(cvob3$lambda == cvob3$lambda.min)]
+cvob3$cvm[which(cvob3$lambda == cvob3$lambda.1se)]
+cvob3$glmnet.fit$df[which(cvob3$lambda == cvob3$lambda.1se)]
+cvob3$glmnet.fit$df[which(cvob3$lambda == cvob3$lambda.min)]
+
+coef_path = data.table(get_all_coefs(cvob3))
+imp_vars = as.character(unique( coef_path[lambda >= cvob3$lambda.1se & abs(coef) >0, var_name] ))
+ggplot(coef_path[var_name %in% imp_vars, ][var_name != '(Intercept)'], aes(log(lambda), coef, group = var_name, color = var_name )) + geom_line() + 
+  geom_vline(xintercept = log(cvob3$lambda.1se), linetype = 'dashed') + facet_wrap(~var_name, scales = 'free')
+
+ggplot(coef_path[var_name != '(Intercept)'], aes(var_name, coef, group = lambda, fill = log(lambda) )) + 
+    geom_bar(stat = 'identity', position = 'dodge') +  theme(axis.text.x  = element_text(angle=90)) + scale_fill_custom('jet',discrete = FALSE)
+
+all_lambdas = sort(unique(coef_path$lambda))
+#which(abs(all_lambdas  - exp(-1))<0.01 )
+
+ggplot(coef_path[var_name != '(Intercept)'][lambda == all_lambdas[42], ], aes(var_name, coef, group = lambda)) + 
+    geom_bar(stat = 'identity', position = 'dodge') +  theme(axis.text.x  = element_text(angle=90))
+
+ggplot(coef_path[var_name %in% imp_vars, ][var_name != '(Intercept)'], aes(log(lambda), coef, group = var_name, color = var_name )) + geom_line() + 
+  geom_vline(xintercept = c(log(cvob3$lambda.1se), -1), linetype = 'dashed') + facet_wrap(~var_name, scales = 'free')
+
+ggplot(coef_path[var_name %in% imp_vars, ][var_name != '(Intercept)'], aes(log(lambda), coef, group = var_name, color = var_name )) + geom_line() + 
+  geom_vline(xintercept = c(log(cvob3$lambda.1se), -1), linetype = 'dashed') + scale_color_custom('mixed')
+
+df_s[, uer_pred := predict(cvob3, newx=data.matrix(df_s[,model_vars, with = F]), s= exp(-1))]
+
+ggplot(df_s, aes(date, uer)) + geom_line() + geom_line(aes(date, uer_pred), color = 'red')
+
+summary(lm('uer ~ uer_pred', df_s))
+
+#ewma with rate 0.86762056331924
+df_s[, iuic_ewma := my_ewma(iuic, 0.86762056331924) ]
+
+ggplot(df_s, aes(date, iuic)) + geom_line() + geom_line(aes(date, iuic_ewma), color = 'red')
+
+summary(lm('uer ~ iuic_ewma', df_s))
+
+df_s[, uer_pred := predict(lm('uer ~ iuic_ewma', df_s), df_s)]
+ggplot(df_s, aes(date, uer)) + geom_line() + geom_line(aes(date, uer_pred), color = 'red')
+
+
+```
+
 
 
 ## Average transition matrix

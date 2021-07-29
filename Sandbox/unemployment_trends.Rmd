@@ -95,6 +95,7 @@ ggplot(df, aes(date, iuic_rate )) + geom_line()
 ```{r signal_filtering}
 library(glmnet)
 library(TTR)
+library(corrplot)
 
 my_ewma <- function(x, a) {
   s1 <- x[1]
@@ -123,7 +124,7 @@ for(i in seq(0, 64)) {
   df_s[, c(vname) := shift(iuic, i)]  
 }
 
-model_vars = names(df_s)[ grep('iuic_', names(df_s)) ]
+model_vars = names(df_s)[ grep('iuic_lag', names(df_s)) ]
 
 model.lm = lm(formula(stri_join('uer ~', stri_join(model_vars, collapse = ' + '))), df_s)
 summary(model.lm)
@@ -142,6 +143,9 @@ x=data.matrix(df_s[, model_vars, with = FALSE])
 index = complete.cases(x)
 x = x[index,]
 y = df_s$uer[index]
+
+#corrplot(cor(x), method="ellipse")
+
 #fit1=glmnet(x,y, family="gaussian")
 cvob3=cv.glmnet(x, y, family="gaussian", nfolds = 10)
 plot(cvob3)
@@ -200,7 +204,100 @@ summary(lm('uer ~ iuic_ewma', df_s))
 df_s[, uer_pred := predict(lm('uer ~ iuic_ewma', df_s), df_s)]
 ggplot(df_s, aes(date, uer)) + geom_line() + geom_line(aes(date, uer_pred), color = 'red')
 
+#add diff vars ----- 
+for(i in seq(0, 64)) {
+  vname = sprintf('iuic_diff_%02d', i)
+  
+  if(i == 0)
+    df_s[, c(vname) := shift(iuic, i)]  
+  else
+    df_s[, c(vname) := shift(iuic, i) - shift(iuic, i-1)]  
+    
+}
 
+model_diff_vars = names(df_s)[ grep('iuic_diff', names(df_s)) ]
+
+x=data.matrix(df_s[, model_diff_vars, with = FALSE])
+index = complete.cases(x)
+x = x[index,]
+y = df_s$uer[index]
+
+#corrplot(cor(x), method="ellipse")
+cvob3=cv.glmnet(x, y, family="gaussian", nfolds = 10)
+plot(cvob3)
+
+ggplot(data.frame(rms = cvob3$cvm, rms_hi = cvob3$cvup, rms_lo = cvob3$cvlo, lambda = log(cvob3$lambda)) , aes(lambda, rms) ) + geom_line() + geom_point() + 
+  geom_ribbon(aes(ymin = rms_lo, ymax = rms_hi), fill = 'blue', alpha = 0.3) +
+  geom_vline(xintercept =  c(log(cvob3$lambda.min),  log(cvob3$lambda.1se), -2), linetype = 'dashed') +
+  ggtitle(sprintf('Best RMS %.5f', cvob3$cvm[which(cvob3$lambda == cvob3$lambda.1se)]))
+
+coef_path = data.table(get_all_coefs(cvob3))
+imp_vars = as.character(unique( coef_path[lambda >= cvob3$lambda.1se & abs(coef) >0, var_name] ))
+
+ggplot(coef_path[var_name != '(Intercept)'][lambda == cvob3$lambda.1se, ], aes(var_name, coef, group = lambda)) + 
+    geom_bar(stat = 'identity', position = 'dodge') +  theme(axis.text.x  = element_text(angle=90))
+
+ggplot(coef_path[var_name != '(Intercept)'][lambda == cvob3$lambda.1se, ], aes(var_name, c(-diff(coef),coef[length(coef)]), group = lambda)) + 
+    geom_bar(stat = 'identity', position = 'dodge') +  theme(axis.text.x  = element_text(angle=90))
+
+df_s[, uer_pred := predict(cvob3, newx=data.matrix(df_s[,model_diff_vars, with = F]), s= 'lambda.1se')]
+ggplot(df_s, aes(date, uer)) + geom_line() + geom_line(aes(date, uer_pred), color = 'red')
+
+summary(lm('uer ~ uer_pred', df_s))
+
+#reconstruct
+diff_coefs = c(coef_path[var_name == '(Intercept)'][lambda == cvob3$lambda.1se,coef], coef_path[var_name != '(Intercept)' & lambda == cvob3$lambda.1se][order(var_name), c(-diff(coef),coef[length(coef)])])
+x = data.matrix(df_s[, model_vars, with = FALSE])
+df_s[, uer_pred := cbind(intercept = 1, x) %*% diff_coefs]
+
+ggplot(df_s, aes(date, uer)) + geom_line() + geom_line(aes(date, uer_pred), color = 'red')
+
+#add rolling mean vars ----- 
+for(i in seq(64)) {
+  vname = sprintf('iuic_rm_%02d', i)
+  df_s[order(date), c(vname) := rollmeanr(iuic, k = i, fill = NA)]  
+}
+
+model_rm_vars = names(df_s)[ grep('iuic_rm', names(df_s)) ]
+
+x=data.matrix(df_s[, model_rm_vars, with = FALSE])
+index = complete.cases(x)
+x = x[index,]
+y = df_s$uer[index]
+
+#corrplot(cor(x), method="ellipse")
+cvob3=cv.glmnet(x, y, family="gaussian", nfolds = 10)
+plot(cvob3)
+
+ggplot(data.frame(rms = cvob3$cvm, rms_hi = cvob3$cvup, rms_lo = cvob3$cvlo, lambda = log(cvob3$lambda)) , aes(lambda, rms) ) + geom_line() + geom_point() + 
+  geom_ribbon(aes(ymin = rms_lo, ymax = rms_hi), fill = 'blue', alpha = 0.3) +
+  geom_vline(xintercept =  c(log(cvob3$lambda.min),  log(cvob3$lambda.1se), -2), linetype = 'dashed') +
+  ggtitle(sprintf('Best RMS %.5f', cvob3$cvm[which(cvob3$lambda == cvob3$lambda.1se)]))
+
+coef_path = data.table(get_all_coefs(cvob3))
+coef_path[order(var_name), weight := seq(0, .N-1),  by =.(lambda)]
+coef_path[order(var_name,  decreasing = TRUE), adj_coef := cumsum(coef / weight),  by =.(lambda)]
+
+imp_vars = as.character(unique( coef_path[lambda >= cvob3$lambda.1se & abs(coef) >0, var_name] ))
+
+
+ggplot(coef_path[var_name != '(Intercept)'][lambda == cvob3$lambda.1se, ], aes(var_name, coef, group = lambda)) + 
+    geom_bar(stat = 'identity', position = 'dodge') +  theme(axis.text.x  = element_text(angle=90))
+
+ggplot(coef_path[var_name != '(Intercept)'][lambda == cvob3$lambda.1se, ], aes(var_name,adj_coef, group = lambda)) + 
+    geom_bar(stat = 'identity', position = 'dodge') +  theme(axis.text.x  = element_text(angle=90))
+
+df_s[, uer_pred := predict(cvob3, newx=data.matrix(df_s[,model_rm_vars, with = F]), s= 'lambda.1se')]
+ggplot(df_s, aes(date, uer)) + geom_line() + geom_line(aes(date, uer_pred), color = 'red')
+
+summary(lm('uer ~ uer_pred', df_s))
+
+#reconstruct
+rm_coefs = c(coef_path[var_name == '(Intercept)'][lambda == cvob3$lambda.1se,coef], coef_path[var_name != '(Intercept)' & lambda == cvob3$lambda.1se][order(var_name), adj_coef])
+x = data.matrix(df_s[, model_vars %!in_set% c('iuic_lag_64'), with = FALSE])[, -nrow(x)]
+df_s[, uer_pred := cbind(intercept = 1, x) %*% rm_coefs]
+
+ggplot(df_s, aes(date, uer)) + geom_line() + geom_line(aes(date, uer_pred), color = 'red')
 ```
 
 

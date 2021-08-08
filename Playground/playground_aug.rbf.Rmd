@@ -1,0 +1,164 @@
+---
+title: "March Playground"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(plyr)
+library(forcats)
+library(proxy)
+library(MASS)
+
+working_folder = 'D:/Github/KaggleSandbox'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
+source(file.path(working_folder, 'Utils/common.R'))
+source(file.path(working_folder, 'Utils/rbf_utils.R'))
+
+rms <-function(actual, model) {
+  sqrt( mean( (actual - model) * (actual - model) ) )
+}
+
+```
+
+## Load Data
+```{r load_data}
+load_existing = FALSE
+
+if (load_existing) {
+  df <- fread(file.path(working_folder,'Playground/Aug2021/data/df.csv'), check.names = TRUE)
+} else{
+  train <- fread(file.path(working_folder,'Playground/Aug2021/data/train.csv'), check.names = TRUE)
+  test  <- fread(file.path(working_folder,'Playground/Aug2021/data/test.csv'),  check.names = TRUE) # 1459   80
+  test[, loss :=NA]
+  df = rbind(train, test)
+  
+  fwrite(df, file.path(working_folder,'Playground/Aug2021/data/df.csv'))
+  
+  gc(reset=TRUE)
+}
+setkey(df, id)
+  
+test_index = is.na(df$loss)
+train_index = !test_index
+
+obj_var = 'loss'
+all_vars = names(df) %!in_set% c('id', obj_var)
+cat_vars = names(which(sapply(df[,all_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
+con_vars = names(which(sapply(df[,all_vars, with = FALSE], function(x) is.numeric(x)  )))
+
+df[, is_test:= is.na(loss)]
+
+#pre-preprocess
+#df[, cat10_1_ex  :=  fct_infreq(fct_lump_prop(stri_sub(cat10,1,1), 0.005, other_level = "OT")) ]
+#df[, cat10_2_ex  :=  fct_infreq(fct_lump_prop(stri_sub(cat10,2,2), 0.005, other_level = "OT")) ]
+
+#percentile transform - not useful
+p_vars = stri_join('p_', all_vars)
+df[, (p_vars):=lapply(.SD, function(x) ecdf(x[train_index])(x) ), .SDcols = all_vars]
+
+#w_vars = stri_join('w_', all_vars)
+#df[, (w_vars):=lapply(.SD, function(x) winsoraze(x, x[train_index], 0.001) ), .SDcols = all_vars]
+
+```
+
+## Plots
+
+```{r plots, echo=FALSE}
+s_index = sample.int(nrow(df), nrow(df))
+plots = llply(all_vars %!in_set% c('id'), function(var_name){
+  ggplot(df[s_index ], aes_string(var_name, group = 'is.na(loss)', color = 'is.na(loss)')) + geom_density(adjust = 0.1) + ggtitle(var_name)
+  })
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+
+
+ggplot(df[train_index,], aes(loss)) + geom_bar()
+```
+
+
+## RBF
+7.895165 - rbf_linear_kernel, L2
+```{r default_run, echo=FALSE}
+
+rfb_vars = c(p_vars)
+
+#my_index = sample( which(train_index & df$target > 4), 1.0*sum(train_index))
+dfs = data.matrix(df[train_index, rfb_vars, with = FALSE])
+target = df$loss[train_index]
+
+models_boost =  rbf_boost.create(dfs, target, 16, max_nodes = 1024, n_runs = 50, max_it = 15, growth_rate = 0.5*(1 + sqrt(5)), kernel_fun = rbf_linear_kernel, dist_fun = 'L2', adaptive = TRUE)
+res = rbf_boost.predict(models_boost, df[,rfb_vars, with = FALSE], combine_boots = TRUE)
+setDT(res)
+df[, target_rbf := res[order(id)][model_id1 == max(model_id1), y_pred_cum]] 
+
+rms(df$loss[train_index], df$target_rbf[train_index] )
+
+#ggplot(df[train_index,], aes(round(target_rbf))) + geom_bar()
+
+
+ plots = llply(rfb_vars, function(var_name) { #lgb_vars
+    p = plot_profile(df$target_rbf[train_index],  df$loss[train_index], df[[var_name]][train_index], bucket_count = 20, error_band = 'normal') +
+      ggtitle(var_name) +  theme(title =element_text(size=8))
+    return( ggplotGrob(p) )
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
+  ggsave(filename = file.path(working_folder,"Playground/Aug2021/profiles_rbf.pdf"), plot = marrangeGrob(plots, nrow=4, ncol=4), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+  
+  plot_profile(df$target_rbf[train_index],  df$loss[train_index], df[['f81']][train_index], bucket_count = 50, error_band = 'normal') +  theme(title =element_text(size=8))
+  
+```
+
+##Submit 
+      7.85832
+v1  - 7.88803 baseline (no optimization, no pre-processing)
+
+```{r submit, echo=FALSE}
+  #fwrite(df, file.path(working_folder,'Playground/Apr2021/data/df.csv'))
+ 
+  file = file.path(working_folder, "Playground/Aug2021/submit_v1.rbf.csv")
+  #fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
+  fwrite(df[test_index, .(id, loss = target_rbf)], file = file, row.names = FALSE)
+  zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
+  print(file)
+
+```
+
+#RBF Tuning
+```{r rbf_tune, eval = FALSE}
+
+
+rbf_kernels = list('rbf_linear_kernel' = rbf_linear_kernel, 'rbf_cauchy_kernel' = rbf_cauchy_kernel, 
+                   'rbf_cubic_kernel' = rbf_cubic_kernel, 'rbf_gauss_kernel' = rbf_gauss_kernel, 
+                   'rbf_bump_kernel' = rbf_bump_kernel, 'rbf_mquad_kernel' = rbf_mquad_kernel, 'rbf_imquad_kernel' = rbf_imquad_kernel,
+                   'rbf_tp_kernel' = rbf_tp_kernel, 'rbf_iquad_kernel' = rbf_iquad_kernel, 'rbf_acq_kernel' = rbf_acq_kernel,
+                   'rbf_tp2_kernel' = rbf_tp2_kernel, 'rbf_p5_kernel' = rbf_p5_kernel, 'rbf_logistic_kernel' = rbf_logistic_kernel)
+
+set.seed(132140937)
+
+my_index = sample( which(train_index), 0.1*sum(train_index))
+dfs = data.matrix(df[my_index, p_vars, with = FALSE])
+target = df$loss[my_index]
+
+
+# CV ---------
+# cv_it  cv_error    cv_sigma n_nodes n_runs dist_fun       kernel_fun adaptive var_set growth_rate kernel_scale  elapsed       tag
+#  1:    13 0.8482968 0.005317974    2048     30       L1 rbf_mquad_kernel     TRUE   pvars         1.5            1 14.15168  TRUE: 30
+ 
+cv_res = rbf_boost.create_cv(dfs, target, 2, max_nodes = 1024*2, n_runs = 30, max_it = 20, growth_rate = 1.5, nfolds = 5, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1', adaptive = TRUE )
+df_cv_res = data.table(it = seq(nrow(cv_res)), avg = apply(cv_res, 1, mean ), sigma = apply(cv_res, 1, sd ), cv_res )
+ggplot(df_cv_res[avg>0], aes(it, avg)) + geom_line() + geom_ribbon(aes(it, ymin = avg - sigma, ymax = avg + sigma), alpha = 0.2, fill = 'blue') + 
+  geom_hline(yintercept = c(null_rms, 0.84310), color = 'red', linetype = 'dashed')
+
+
+```
+
+

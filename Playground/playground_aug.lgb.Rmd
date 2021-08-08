@@ -107,14 +107,14 @@ model.lgb <- lgb.cv(
   nfold = 10,
   num_threads = 5, 
   
-  min_data = 20, #default = 20
-  learning_rate = 0.01,
-  num_leaves = 31,
-  bagging_fraction = 0.95,
-  min_data_in_bin = 5,
+  min_data = 200, #default = 20
+  learning_rate = 0.008,
+  num_leaves = 78,
+  bagging_fraction = 0.975,
+  min_data_in_bin = 3,
 
   boost_from_average = TRUE,
-  eval_freq = 10,
+  eval_freq = 100,
   early_stopping_rounds = 100,
   force_col_wise=TRUE
 )
@@ -200,18 +200,18 @@ dfs = df[t_index_v1, c(obj_var,lgb_vars), with = FALSE]
 params <- list(objective = "regression", metric = "rmse")
 
 my_params = data.table(expand.grid(
-                       learning_rate = c(0.005, 0.01), 
-                       bagging_fraction = c(0.95), 
-                       min_data =c(10, 20, 100), #default = 20
-                       min_data_in_bin = c(3, 5, 7), #default = 3
-                       num_leaves = c(31, 42, 50, 60) )) #default = 31
+                       learning_rate = c(0.008), 
+                       bagging_fraction = c(0.975), 
+                       min_data =c(180, 200, 220, 240, 260, 280, 300), #default = 20
+                       min_data_in_bin = c(3), #default = 3
+                       num_leaves = c(78) )) #default = 31
 
 
 n_runs = 100 # 10 runs per hour
 my_params = data.table(
                        learning_rate = runif(n_runs, 0.005, 0.01), 
                        bagging_fraction = runif(n_runs, 0.9, 1.0), 
-                       min_data = sample(seq(from = 10, to = 200),n_runs, TRUE), #default = 20
+                       min_data = sample(seq(from = 180, to = 400),n_runs, TRUE), #default = 20
                        min_data_in_bin = sample(seq(3, 7),n_runs, TRUE), #default = 3
                        num_leaves = sample(seq(20, 100),n_runs, TRUE)) #default = 31
 
@@ -258,8 +258,8 @@ setDT(param_res)
 setorder(param_res, best_score)
 param_res[best_score  == min(best_score)]
 
-#   best_it best_score  elapsed learning_rate bagging_fraction min_data min_data_in_bin num_leaves
-#1:     500  0.2174599 1.047372   0.009686582        0.9003351       27               7         54
+# best_it best_score  elapsed learning_rate bagging_fraction min_data min_data_in_bin num_leaves
+#1:    2567   7.842562 10.67864   0.007952188        0.9730428      197               3         78
 
 ggplot(param_res, aes(best_it, elapsed)) + geom_point()
 ggplot(param_res, aes(best_it, learning_rate)) + geom_point()
@@ -269,7 +269,6 @@ ggplot(param_res, aes(bagging_fraction, best_score)) + geom_point()
 ggplot(param_res, aes(min_data, best_score)) + geom_point()
 ggplot(param_res, aes(min_data_in_bin, best_score)) + geom_point()
 ggplot(param_res, aes(num_leaves, best_score)) + geom_point()
-ggplot(param_res, aes(max_depth  , best_score)) + geom_line() + geom_point()
 
 #get GBM model 
 library(gbm)

@@ -96,6 +96,48 @@ library(wavethresh)
 
 df_s = df[date<'2020-03-01',.(date, uer, pop, iuic = iuic)][order(date)]
 
+wds <- wd(df_s$uer[1:512], filter.number = 1, family="DaubExPhase")
+ynwdT2obj <- threshold(wds, policy="BayesThresh")
+plot(wr(ynwdT2obj))
+plot(wr(wds))
+plot(wds)
+
+#manual transform - HAAR
+df_sm =  df_s[order(date)][(nrow(df_s)-511):nrow(df_s)]
+haarmat <- t(GenW(512, filter.number=1, family="DaubExPhase"))
+df_sm[, uer_haar:=haarmat %*% uer]
+df_sm[, haar_level:=floor(log2(nrow(df_sm) - seq(nrow(df_sm)) + 1 )) ]
+df_sm[haar_level==9, haar_level := 0]
+df_sm[haar_level>0, uer_haar:=0]
+df_sm[, uer_inv:=t(haarmat) %*% uer_haar]
+ggplot(df_sm, aes(date, uer)) + geom_line() + geom_line(aes(date, uer_inv), color = 'red')
+
+
+plots = llply(seq(0, 8), function(my_level){
+  df_sm[, uer_haar:=haarmat %*% uer]
+  df_sm[, haar_level:=floor(log2(nrow(df_sm) - seq(nrow(df_sm)) + 1 )) ]
+  df_sm[haar_level==9, haar_level := 0]
+  df_sm[haar_level>my_level, uer_haar:=0]
+  df_sm[, uer_inv:=t(haarmat) %*% uer_haar]
+  #p = ggplot(copy(df_sm), aes(date, uer)) + geom_line() + geom_line(aes(date, uer_inv), color = 'red') + ggtitle(my_level)
+  p = ggplot(copy(df_sm), aes(date, uer -uer_inv)) + geom_line() + ggtitle(my_level)
+})
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+
+
+#manual transform - Daub
+df_sm =  df_s[order(date)][(nrow(df_s)-511):nrow(df_s)]
+haarmat <- t(GenW(512, filter.number=4, family="DaubExPhase"))
+df_sm[, uer_haar:=haarmat %*% uer]
+df_sm[, haar_level:=floor(log2(nrow(df_sm) - seq(nrow(df_sm)) + 1 )) ]
+df_sm[haar_level==9, haar_level := 0]
+df_sm[haar_level>3, uer_haar:=0]
+df_sm[, uer_inv:=t(haarmat) %*% uer_haar]
+ggplot(df_sm, aes(date, uer)) + geom_line() + geom_line(aes(date, uer_inv), color = 'red')
+
+
+ggplot(df_sm, aes(date, uer_haar)) + geom_line()
+
 
 #wds <- wd(df_s[1:8, uer], filter.number = 1, family="DaubExPhase")
 #wr(wds) - df_s[1:64, uer]

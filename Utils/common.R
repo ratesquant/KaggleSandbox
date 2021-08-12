@@ -208,6 +208,70 @@ scale_fill_custom <- function(palette = "main", discrete = TRUE, reverse = FALSE
   }
 }
 
+## Models util functions ----------
+
+winsoraze<-function(x, x_train, alpha = 0.05) {
+  q_bounds = quantile(x_train, c(alpha/2, 1- alpha/2))
+  x = pmax(pmin(x, q_bounds[2]), q_bounds[1])
+  return (x)
+}
+
+partialPlot <- function(obj, pred.data, xname, n.pt = 19, discrete.x = FALSE, 
+                        subsample = pmin(1, n.pt * 100 / nrow(pred.data)), which.class = NULL,
+                        xlab = deparse(substitute(xname)), ylab = "", type = if (discrete.x) "p" else "b",
+                        main = "", rug = TRUE, seed = NULL, ...) {
+  stopifnot(dim(pred.data) >= 1)
+  
+  if (subsample < 1) {
+    if (!is.null(seed)) {
+      set.seed(seed)
+    } 
+    n <- nrow(pred.data)
+    picked <- sample(n, trunc(subsample * n))
+    pred.data <- pred.data[picked, , drop = FALSE]
+  }
+  xv <- pred.data[, xname]
+  
+  if (discrete.x) {
+    x <- unique(xv)
+  } else {
+    x <- quantile(xv, seq(0.03, 0.97, length.out = n.pt), names = FALSE, na.rm = TRUE)
+  }
+  y <- numeric(length(x))
+  
+  isRanger <- inherits(obj, "ranger")
+  isLm <- inherits(obj, "lm") | inherits(obj, "lmrob") | inherits(obj, "lmerMod")
+  
+  for (i in seq_along(x)) {
+    pred.data[, xname] <- x[i]
+    
+    if (isRanger) {
+      if (!is.null(which.class)) {
+        if (obj$treetype != "Probability estimation") {
+          stop("Choose probability = TRUE when fitting ranger multiclass model") 
+        }
+        preds <- predict(obj, pred.data)$predictions[, which.class]
+      }
+      else {
+        preds <- predict(obj, pred.data)$predictions
+      }
+    } else if (isLm) {
+      preds <- predict(obj, pred.data) 
+    } else {
+      if (!is.null(which.class)) {
+        preds <- predict(obj, pred.data, reshape = TRUE)[, which.class + 1] 
+      } else {
+        preds <- predict(obj, pred.data)
+      }
+    }
+    
+    y[i] <- mean(preds)
+  }
+  
+  #plot(x, y, xlab = xlab, ylab = ylab, main = main, type = type, ...)
+  data.frame(x = x, y = y)
+}
+
 ## GBM plotting functions ----------
 
 gbm_interactions <- function(gbm_model, data, iter, min_influence = 1, degree = 2){

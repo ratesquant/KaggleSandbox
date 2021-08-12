@@ -55,6 +55,14 @@ con_vars = names(which(sapply(df[,all_vars, with = FALSE], function(x) is.numeri
 
 df[, is_test:= is.na(loss)]
 
+convert_to_prob <-function(x, train_index){
+  ecdf(x[train_index])(x)
+}
+
+convert_to_normal_prob <-function(x, train_index){
+  qnorm(pmin(1-1e-9,pmax(1e-9, ecdf(x[train_index])(x))) )
+}
+
 #pre-preprocess
 #df[, cat10_1_ex  :=  fct_infreq(fct_lump_prop(stri_sub(cat10,1,1), 0.005, other_level = "OT")) ]
 #df[, cat10_2_ex  :=  fct_infreq(fct_lump_prop(stri_sub(cat10,2,2), 0.005, other_level = "OT")) ]
@@ -62,6 +70,11 @@ df[, is_test:= is.na(loss)]
 #percentile transform - not useful
 #p_vars = stri_join('p_', all_vars)
 #df[, (p_vars):=lapply(.SD, function(x) ecdf(x[train_index])(x) ), .SDcols = all_vars]
+
+#normal transform - not useful
+n_vars = stri_join('n_', all_vars)
+df[, (n_vars):=lapply(.SD, function(x) convert_to_normal_prob(x, train_index)), .SDcols = all_vars]
+
 
 w_vars = stri_join('w_', all_vars)
 df[, (w_vars):=lapply(.SD, function(x) winsoraze(x, x[train_index], 0.001) ), .SDcols = all_vars]
@@ -71,14 +84,42 @@ df[, (w_vars):=lapply(.SD, function(x) winsoraze(x, x[train_index], 0.001) ), .S
 ## Plots
 
 ```{r plots, echo=FALSE}
-s_index = sample.int(nrow(df), nrow(df))
-plots = llply(all_vars %!in_set% c('id'), function(var_name){
+imp_vars= c('f81','f52','f25','f77','f3','f96','f50','f69','f13')
+s_index = sample.int(nrow(df),10000)
+#plots = llply(all_vars %!in_set% c('id'), function(var_name){
+plots = llply(imp_vars %!in_set% c('id'), function(var_name){
   ggplot(df[s_index ], aes_string(var_name, group = 'is.na(loss)', color = 'is.na(loss)')) + geom_density(adjust = 0.1) + ggtitle(var_name)
   })
 marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 
+small_index = sample.int(nrow(df), 5000)
+ggplot(df[small_index], aes(f81, loss)) + geom_point(alpha = 0.3) + geom_smooth(span = 0.1, method = 'loess', se = FALSE)
+ggplot(df[small_index], aes(f52, loss)) + geom_point(alpha = 0.3)
+
+#decimal point
+ggplot(df[small_index], aes(f52-floor(f52), loss)) + geom_point(alpha = 0.3)
+ggplot(df[small_index], aes(f81-floor(f81), loss)) + geom_point(alpha = 0.3)
+ggplot(df[small_index], aes(f13-floor(f13), loss)) + geom_point(alpha = 0.3)
+ggplot(df[small_index], aes(n_f81, n_f52)) + geom_point(alpha = 0.3) + facet_wrap(~loss)
+
+plots = llply(all_vars %!in_set% c('id'), function(var_name){
+  ggplot(df[small_index], aes_string(sprintf("%s-floor(%s)", var_name,var_name), 'loss')) + geom_point(alpha = 0.3)
+  })
+marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
+
+plot_profile(df$loss[train_index],  df$loss[train_index], df[["f81"]][train_index], bucket_count = 25, error_band = 'normal')
+plot_profile(df$loss[train_index],  df$loss[train_index], df[["f81"]][train_index] - floor( df[["f81"]][train_index]), bucket_count = 10, error_band = 'normal')
+
+#df[, c('loss', imp_vars), with= FALSE]
 ```
 
+## Load RBF Vars
+
+```{r rbf_vars, echo=FALSE, eval = FALSE}
+df = fread(file.path(working_folder,'Playground/Aug2021/data/df_rbf_128_50.csv'))
+rbf_vars = names(df)[grep('rbf_p_', names(df))]
+
+```
 
 ## LightGBM
 
@@ -90,8 +131,10 @@ t_index_v = which(train_index)
 t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
 
 #lgb_vars = c(all_vars) %!in_set% c('id')
-lgb_vars = c(w_vars) %!in_set% c('id')
+#lgb_vars = c(w_vars) %!in_set% c('id')
 #lgb_vars = c(p_vars) %!in_set% c('id')
+#lgb_vars = c(rbf_vars) %!in_set% c('id')
+lgb_vars = c(n_vars) %!in_set% c('id')
 
 my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
 
@@ -107,10 +150,10 @@ model.lgb <- lgb.cv(
   nfold = 10,
   num_threads = 5, 
   
-  min_data = 200, #default = 20
+  min_data = 850, #default = 20
   learning_rate = 0.008,
-  num_leaves = 78,
-  bagging_fraction = 0.975,
+  num_leaves = 90,
+  bagging_fraction = 0.95,
   min_data_in_bin = 3,
 
   boost_from_average = TRUE,
@@ -119,11 +162,12 @@ model.lgb <- lgb.cv(
   force_col_wise=TRUE
 )
 
+#saveRDS(model.lgb, file.path(working_folder,'Playground/Aug2021/data/model_lgb.rds'))
+
 cv_error = as.numeric(model.lgb$record_evals$valid$rmse$eval)
 ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line() 
 
-min(cv_error)
-max(cv_error) #0.78687
+min(cv_error) #7.841514
 
 dm_all = data.matrix(df[,lgb_vars, with = F])
 pred.lgb_cvi = ldply(seq(length(model.lgb$boosters)), function(i){ data.frame(cv = i, id = df$id, pred= predict(model.lgb$boosters[[i]]$booster, dm_all)) } )
@@ -162,6 +206,9 @@ ggplot(df[pdp_index,], aes(loss, target_lgb)) + geom_point()
 
 plot_profile(df$target_lgb[train_index],  df$loss[train_index], df[['f81']][train_index], bucket_count = 20, error_band = 'normal')
 
+#ggplot(df[train_index,], aes(loss)) + geom_bar()
+#ggplot(df[train_index,], aes(round(target_lgb))) + geom_bar()
+
 ```
 
 ##Submit 
@@ -169,11 +216,15 @@ plot_profile(df$target_lgb[train_index],  df$loss[train_index], df[['f81']][trai
 v1  - 7.88803 baseline (no optimization, no pre-processing)
 v2  - 7.88812  (no optimization, percentile transform for each variable)
 v3  - 7.88757  (no optimization, winzoring 0.1% for each variable)
+v4  - 7.87727  (params optimization, winzoring 0.1% for each variable)
+v5  - 7.87703  (further params optimization, winzoring 0.1% for each variable, cv = 7.839697)
+v6  - 7.87689  (further params optimization, no winzoring, cv = 7.839599)
+v7  - 7.87606  (params optimization, and normal variables)
 
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Apr2021/data/df.csv'))
  
-  file = file.path(working_folder, "Playground/Aug2021/submit_v3.lgb.csv")
+  file = file.path(working_folder, "Playground/Aug2021/submit_v8.lgb.csv")
   #fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
   fwrite(df[test_index, .(id, loss = target_lgb)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
@@ -202,18 +253,20 @@ params <- list(objective = "regression", metric = "rmse")
 my_params = data.table(expand.grid(
                        learning_rate = c(0.008), 
                        bagging_fraction = c(0.975), 
-                       min_data =c(180, 200, 220, 240, 260, 280, 300), #default = 20
+                       min_data = seq(500, 800, by = 25), #default = 20
                        min_data_in_bin = c(3), #default = 3
                        num_leaves = c(78) )) #default = 31
 
-
-n_runs = 100 # 10 runs per hour
-my_params = data.table(
-                       learning_rate = runif(n_runs, 0.005, 0.01), 
-                       bagging_fraction = runif(n_runs, 0.9, 1.0), 
-                       min_data = sample(seq(from = 180, to = 400),n_runs, TRUE), #default = 20
-                       min_data_in_bin = sample(seq(3, 7),n_runs, TRUE), #default = 3
-                       num_leaves = sample(seq(20, 100),n_runs, TRUE)) #default = 31
+if(TRUE){
+  n_runs = 100 # 10 runs per hour
+  my_params = data.table(
+                         learning_rate = runif(n_runs, 0.005, 0.01), 
+                         bagging_fraction = runif(n_runs, 0.95, 1.0), 
+                         min_data = sample(seq(from = 700, to = 1000),n_runs, TRUE), #default = 20
+                         min_data_in_bin = sample(seq(3, 5),n_runs, TRUE), #default = 3
+                         num_leaves = sample(seq(70, 200),n_runs, TRUE),
+                         max_depth = sample(seq(6, 8),n_runs, TRUE)) #default = -1
+}
 
 param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   set.seed(1321)
@@ -238,8 +291,9 @@ param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   min_data = my_params$min_data[run_index],
   num_leaves = my_params$num_leaves[run_index],
   min_data_in_bin = my_params$min_data_in_bin[run_index],
+  max_depth = my_params$max_depth[run_index],
   
-  nrounds = 5000,
+  nrounds = 6000,
   boost_from_average = TRUE,
   eval_freq = 100,
   early_stopping_rounds = 100,
@@ -258,8 +312,8 @@ setDT(param_res)
 setorder(param_res, best_score)
 param_res[best_score  == min(best_score)]
 
-# best_it best_score  elapsed learning_rate bagging_fraction min_data min_data_in_bin num_leaves
-#1:    2567   7.842562 10.67864   0.007952188        0.9730428      197               3         78
+#   best_it best_score  elapsed learning_rate bagging_fraction min_data min_data_in_bin num_leaves
+#1:    2121    7.83797 11.89034   0.007467573        0.9575782      861               7         99
 
 ggplot(param_res, aes(best_it, elapsed)) + geom_point()
 ggplot(param_res, aes(best_it, learning_rate)) + geom_point()
@@ -272,14 +326,14 @@ ggplot(param_res, aes(num_leaves, best_score)) + geom_point()
 
 #get GBM model 
 library(gbm)
-formula.gbm = formula('best_score ~  learning_rate + bagging_fraction + min_data + min_data_in_bin + num_leaves')
+formula.gbm = formula('best_score ~  learning_rate + bagging_fraction + min_data + min_data_in_bin + num_leaves  + max_depth')
 dfs = param_res[, all.vars(formula.gbm), with = FALSE]
 
 model.gbm = gbm(formula.gbm, 
                 data = dfs, 
                 distribution = 'gaussian',
-                n.trees = 1000,
-                shrinkage = 0.005,#0.005
+                n.trees = 3000,
+                shrinkage = 0.002,#0.005
                 bag.fraction = 1.0,
                 interaction.depth = 2,
                 cv.folds = 10,
@@ -380,5 +434,6 @@ ggplot(param_res, aes(best_it, learning_rate)) + geom_point()
 ggplot(param_res, aes(min_age, best_score)) + geom_point()
 
 ```
+
 
 

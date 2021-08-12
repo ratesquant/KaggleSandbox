@@ -82,6 +82,10 @@ marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 
 
 ggplot(df[train_index,], aes(loss)) + geom_bar()
+
+ggplot(df[train_index,], aes(f81, group = loss, color = loss)) + geom_density()
+
+plot_cormat(df[train_index, all_vars, with = FALSE ])
 ```
 
 
@@ -95,7 +99,9 @@ rfb_vars = c(p_vars)
 dfs = data.matrix(df[train_index, rfb_vars, with = FALSE])
 target = df$loss[train_index]
 
-models_boost =  rbf_boost.create(dfs, target, 16, max_nodes = 1024, n_runs = 50, max_it = 15, growth_rate = 0.5*(1 + sqrt(5)), kernel_fun = rbf_linear_kernel, dist_fun = 'L2', adaptive = TRUE)
+#0.5*(1 + sqrt(5))
+
+models_boost =  rbf_boost.create(dfs, target, 4, max_nodes = 8*1024, n_runs = 3, max_it = 15, growth_rate = 0.5*(1 + sqrt(5)), kernel_fun = rbf_mquad_kernel, dist_fun = 'L2', adaptive = TRUE)
 res = rbf_boost.predict(models_boost, df[,rfb_vars, with = FALSE], combine_boots = TRUE)
 setDT(res)
 df[, target_rbf := res[order(id)][model_id1 == max(model_id1), y_pred_cum]] 
@@ -104,6 +110,12 @@ rms(df$loss[train_index], df$target_rbf[train_index] )
 
 #ggplot(df[train_index,], aes(round(target_rbf))) + geom_bar()
 
+#boost results for each step
+res_sum = res[, .(y_pred = mean(y_pred_cum)), by =.(id, model_id1 )]
+ggplot(res_sum[, .(error = rms(y_pred[train_index], df$loss[train_index])), by =.(model_id1)], aes(model_id1, error)) + geom_line() + geom_point()
+
+
+#ggplot(res_sum, aes(x, y_pred, group = model_id1 )) + geom_line()  + facet_wrap(~model_id1 )
 
  plots = llply(rfb_vars, function(var_name) { #lgb_vars
     p = plot_profile(df$target_rbf[train_index],  df$loss[train_index], df[[var_name]][train_index], bucket_count = 20, error_band = 'normal') +
@@ -114,17 +126,60 @@ rms(df$loss[train_index], df$target_rbf[train_index] )
   ggsave(filename = file.path(working_folder,"Playground/Aug2021/profiles_rbf.pdf"), plot = marrangeGrob(plots, nrow=4, ncol=4), device = 'pdf', width = 14, height = 8.5, dpi = 360)
   
   plot_profile(df$target_rbf[train_index],  df$loss[train_index], df[['f81']][train_index], bucket_count = 50, error_band = 'normal') +  theme(title =element_text(size=8))
+  plot_profile(df$target_rbf[train_index],  df$loss[train_index], df[['f52']][train_index], bucket_count = 50, error_band = 'normal') +  theme(title =element_text(size=8))
   
 ```
 
+## RBF 1D
+```{r rbf_1d, echo=FALSE}
+
+for(my_var in p_vars){
+  
+  print(my_var)
+  
+  my_output_name = stri_join('rbf_', my_var)
+
+  dfs = data.matrix(df[train_index, c(my_var), with = FALSE])
+  target = df$loss[train_index]
+  
+  #0.5*(1 + sqrt(5))
+  
+  models_boost =  rbf_boost.create(dfs, target, 2, max_nodes = 128, n_runs = 50, max_it = 15, growth_rate = 2, kernel_fun = rbf_linear_kernel, dist_fun = 'L1', adaptive = FALSE)
+  res = rbf_boost.predict(models_boost, df[,my_var, with = FALSE], combine_boots = TRUE)
+  setDT(res)
+  df[, c(my_output_name) := res[order(id)][model_id1 == max(model_id1), y_pred_cum]] 
+  
+  rms(df$loss[train_index], df[[my_output_name]][train_index] )
+}
+
+fwrite(df, file.path(working_folder,'Playground/Aug2021/data/df_rbf_128_50.csv'))
+
+#boost results for each step
+#res_sum = res[, .(y_pred = mean(y_pred_cum)), by =.(id, model_id1 )]
+#ggplot(res_sum[, .(error = rms(y_pred[train_index], df$loss[train_index])), by =.(model_id1)], aes(model_id1, error)) + geom_line() + geom_point()
+
+#ggplot(res_sum, aes(x, y_pred, group = model_id1 )) + geom_line()  + facet_wrap(~model_id1 )
+plot_profile(df[['rbf_p_f81']][train_index],  df$loss[train_index], df[['f81']][train_index], bucket_count = 100, error_band = 'normal') +  theme(title =element_text(size=8))
+
+rbf_names = names(df)[grep('rbf_p_', names(df))]
+model.lm = lm(formula(stri_join('loss ~ ', stri_join(rbf_names, collapse = '+' ))), df[train_index,])
+summary(model.lm)
+
+df[, target_rbf := predict(model.lm, .SD)] 
+
+```
+
+
 ##Submit 
-      7.85832
-v1  - 7.88803 baseline (no optimization, no pre-processing)
+      
+v1  - 7.93674 baseline (no optimization, no pre-processing)
+v2  - 7.93643 lm model based on RBF 1D
+v3 -  7.95343 lm model based on RBF 1D, 128_50
 
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Apr2021/data/df.csv'))
  
-  file = file.path(working_folder, "Playground/Aug2021/submit_v1.rbf.csv")
+  file = file.path(working_folder, "Playground/Aug2021/submit_v4.rbf.csv")
   #fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
   fwrite(df[test_index, .(id, loss = target_rbf)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
@@ -158,6 +213,75 @@ df_cv_res = data.table(it = seq(nrow(cv_res)), avg = apply(cv_res, 1, mean ), si
 ggplot(df_cv_res[avg>0], aes(it, avg)) + geom_line() + geom_ribbon(aes(it, ymin = avg - sigma, ymax = avg + sigma), alpha = 0.2, fill = 'blue') + 
   geom_hline(yintercept = c(null_rms, 0.84310), color = 'red', linetype = 'dashed')
 
+
+```
+
+
+#KNN
+```{r knn_regression, eval = FALSE}
+library(caret)
+
+formula.knn    = formula(stri_join( 'loss', ' ~ ', stri_join(unique(c('f81')), collapse = ' + ')))
+
+#control = trainControl(method = "repeatedcv", number = 10,repeats = 3)
+control = trainControl("cv", number = 10)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1*length(t_index_v))
+
+dfs = df[t_index_v1, all.vars(formula.knn), with = FALSE]
+system.time(model.knn <- train(formula.knn, data = dfs, 
+                               method = "knn", #kknn
+                               trControl = control,
+                               tuneGrid = data.frame(k = seq(400, 450,50)), #use instead of tuneLength
+                               metric = "RMSE"))
+model.knn
+plot(model.knn)
+
+pred.knn = predict(model.knn, df, type = 'raw')
+
+plot_profile(pred.knn[train_index],  df$loss[train_index], df[['f81']][train_index], bucket_count = 100, error_band = 'normal')
+
+```
+
+#KNN
+```{r knn_regression, eval = FALSE}
+library(caret)
+
+formula.knn    = formula(stri_join( 'loss', ' ~ ', stri_join(unique(c('f81')), collapse = ' + ')))
+
+#control = trainControl(method = "repeatedcv", number = 10,repeats = 3)
+control = trainControl("cv", number = 10)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1*length(t_index_v))
+
+dfs = df[t_index_v1, all.vars(formula.knn), with = FALSE]
+system.time(model.knn <- train(formula.knn, data = dfs, 
+                               method = "knn", #kknn
+                               trControl = control,
+                               tuneGrid = data.frame(k = seq(400, 450,50)), #use instead of tuneLength
+                               metric = "RMSE"))
+model.knn
+plot(model.knn)
+
+pred.knn = predict(model.knn, df, type = 'raw')
+
+plot_profile(pred.knn[train_index],  df$loss[train_index], df[['f81']][train_index], bucket_count = 100, error_band = 'normal')
+
+```
+
+#NP
+```{r knn_regression, eval = FALSE}
+library(np)
+
+#summary(bw)
+
+bw <- npregbw(xdat = df$f81[train_index], ydat = df$loss[train_index], ckertype="epanechnikov", regtype = 'lc')
+ghat <- npreg(bw)
+pred.np = predict(ghat,  df$f81, se = FALSE)
+
+plot_profile(pred.knn[train_index],  df$loss[train_index], df[['f81']][train_index], bucket_count = 100, error_band = 'normal')
 
 ```
 

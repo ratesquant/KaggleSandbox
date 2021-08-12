@@ -272,6 +272,15 @@ partialPlot <- function(obj, pred.data, xname, n.pt = 19, discrete.x = FALSE,
   data.frame(x = x, y = y)
 }
 
+plot_cormat <- function(df_in){
+corr_matrix = cor(data.matrix(df_in), use="pairwise.complete.obs")
+p = ggplot(reshape2::melt(corr_matrix), aes(Var1, Var2, fill = value)) + geom_tile() + 
+  theme(axis.text.x = element_text(angle = 90, size = 5), axis.text.y = element_text(size = 5), axis.title.x = element_blank(), axis.title.y = element_blank()) + 
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0)
+return (p)
+}
+
+
 ## GBM plotting functions ----------
 
 gbm_interactions <- function(gbm_model, data, iter, min_influence = 1, degree = 2){

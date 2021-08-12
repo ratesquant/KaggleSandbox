@@ -111,6 +111,7 @@ plot_profile(df$loss[train_index],  df$loss[train_index], df[["f81"]][train_inde
 plot_profile(df$loss[train_index],  df$loss[train_index], df[["f81"]][train_index] - floor( df[["f81"]][train_index]), bucket_count = 10, error_band = 'normal')
 
 #df[, c('loss', imp_vars), with= FALSE]
+plot_cormat(df[train_index, all_vars, with = FALSE ])
 ```
 
 ## Load RBF Vars

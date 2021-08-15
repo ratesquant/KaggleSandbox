@@ -112,7 +112,7 @@ target = df$loss[train_index]
 
 #0.5*(1 + sqrt(5))
 
-models_boost =  rbf_boost.create(dfs, target, 2, max_nodes = 1024, n_runs = 10, max_it = 15, growth_rate = 2, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1', adaptive = TRUE)
+models_boost =  rbf_boost.create(dfs, target, 2, max_nodes = 1500, n_runs = 10, max_it = 20, growth_rate = 1.5, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1', adaptive = FALSE)
 res = rbf_boost.predict(models_boost, df[,rfb_vars, with = FALSE], combine_boots = TRUE)
 setDT(res)
 df[, target_rbf := res[order(id)][model_id1 == max(model_id1), y_pred_cum]] 
@@ -144,7 +144,7 @@ plot_profile(df$target_rbf[train_index],  df$loss[train_index], df[['f52']][trai
 #7.857915  2, max_nodes = 1024, n_runs = 10, max_it = 20, growth_rate = 2, nfolds = 5, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1', adaptive = TRUE
 #7.857689  2, max_nodes = 1024, n_runs = 10, max_it = 20, growth_rate = 2, nfolds = 5, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1', adaptive = FALSE
 #7.858613  2, max_nodes = 1024, n_runs = 10, max_it = 20, growth_rate = 2, nfolds = 5, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1', adaptive = FALSE
-cv_res = rbf_boost.create_cv(dfs, target, 2, max_nodes = 4096, n_runs = 10, max_it = 50, growth_rate = 1.5, nfolds = 5, kernel_fun = rbf_mquad_kernel, dist_fun = 'L2', adaptive = FALSE )
+cv_res = rbf_boost.create_cv(dfs, target, 2, max_nodes = 4096, n_runs = 10, max_it = 50, growth_rate = 1.5, nfolds = 5, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1', adaptive = FALSE )
 df_cv_res = data.table(it = seq(nrow(cv_res)), avg = apply(cv_res, 1, mean ), sigma = apply(cv_res, 1, sd ), cv_res )
 ggplot(df_cv_res[avg>0], aes(it, avg)) + geom_line() + geom_point() + geom_ribbon(aes(it, ymin = avg - sigma, ymax = avg + sigma), alpha = 0.2, fill = 'blue')
 #+ geom_hline(yintercept = c(7.8), color = 'red', linetype = 'dashed')

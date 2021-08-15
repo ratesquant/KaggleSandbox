@@ -257,7 +257,7 @@ plot_profile(df$target_lgb[train_index],  df$loss[train_index], df[['f81']][trai
 
 ```
 
-## LightGBM - TWO stage
+## LightGBM - TWO stage (PD, LGD model)
 Binomial regression for loss == 0
 Regression for loss > 0
 ```{r two_state_model, echo=FALSE}
@@ -320,7 +320,7 @@ pred.lgb_cv         = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by
 #plot_profiles(df$target_lgb[train_index], df[train_index,])
 #plot_profiles_2d(df$target_lgb[p_index], df[p_index,])
 
-df[pred.lgb_cv, target_lgb :=  i.avg, on=.(id)]
+df[pred.lgb_cv, lgd_pred :=  i.avg, on=.(id)]
 
 lgb_importance = lgb.importance(model.lgb$boosters[[1]][[1]], percentage = TRUE)
 ggplot(lgb_importance, aes(fct_reorder(Feature,Gain), Gain)) + geom_bar(stat = 'identity') + coord_flip()
@@ -370,7 +370,7 @@ pred.lgb_cv_bin         = pred.lgb_cvi_bin[, .(.N, avg=mean(pred), sigma = sd(pr
 #plot_profiles_2d(df$target_lgb[p_index], df[p_index,])
 
 df[pred.lgb_cv_bin, loss_prob :=  i.avg, on=.(id)]
-df[, loss_pred := loss_prob * target_lgb]
+df[, loss_pred := loss_prob * lgd_pred]
 
 plot_binmodel_predictions(df$is_loss[train_index], df$loss_prob[train_index])
 ```
@@ -520,6 +520,124 @@ plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var), outpu
 marrangeGrob(plots, nrow = 2, ncol = 3, top = NULL)
 
 ```
+
+## LightGBM Grid Tune - LGD model
+
+```{r grid_tune_LGD, echo=FALSE, eval = FALSE}
+
+set.seed(1321)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+lgb_vars = c(n_vars) %!in_set% c('id')
+
+my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
+
+params <- list(objective = "regression", metric = "rmse")
+
+my_params = data.table(expand.grid(
+                       learning_rate = c(0.008), 
+                       bagging_fraction = c(0.95), 
+                       min_data = c(850), #default = 20
+                       min_data_in_bin = c(3), #default = 3
+                       num_leaves = c(90))) #default = 31
+
+if(TRUE){
+  n_runs = 100 # 10 runs per hour
+  my_params = data.table(
+                         learning_rate = runif(n_runs, 0.005, 0.01), 
+                         bagging_fraction = runif(n_runs, 0.95, 1.0), 
+                         min_data = sample(seq(from = 10, to = 200),n_runs, TRUE), #default = 20
+                         min_data_in_bin = sample(seq(3, 7),n_runs, TRUE), #default = 3
+                         num_leaves = sample(seq(31, 200),n_runs, TRUE)) #default = 31
+}
+
+param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
+  set.seed(1321)
+  #run_index = 1
+  print(run_index)
+  print(my_params[run_index,])
+  
+  start_time <- Sys.time()
+  
+  dfs = df[t_index_v1, c(obj_var,lgb_vars), with = FALSE][loss>0]
+
+  dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
+  
+  model.lgb <- lgb.cv(
+  params = params,
+  data = dtrain,
+  
+  nfold = 10,
+  num_threads = 5, 
+  verbose = -1,
+  
+  learning_rate = my_params$learning_rate[run_index],
+  bagging_fraction = my_params$bagging_fraction[run_index],
+  min_data = my_params$min_data[run_index],
+  num_leaves = my_params$num_leaves[run_index],
+  min_data_in_bin = my_params$min_data_in_bin[run_index],
+  
+  nrounds = 6000,
+  boost_from_average = TRUE,
+  eval_freq = 100,
+  early_stopping_rounds = 100,
+  force_col_wise=TRUE,
+  )
+  
+  print(model.lgb$best_score)
+  
+  gc(reset = TRUE)
+  elapsed = as.numeric(difftime(Sys.time(),start_time,units="secs"))/60
+  return ( data.frame(best_it = model.lgb$best_iter, best_score = model.lgb$best_score, elapsed = elapsed ) ) 
+})
+
+param_res = cbind(param_res_raw, my_params)
+setDT(param_res)
+setorder(param_res, best_score)
+param_res[best_score  == min(best_score)]
+
+#   best_it best_score  elapsed learning_rate bagging_fraction min_data min_data_in_bin num_leaves
+#1:    2121    7.83797 11.89034   0.007467573        0.9575782      861               7         99
+
+ggplot(param_res, aes(winsor_rate , best_score)) + geom_point()
+ggplot(param_res, aes(best_it, elapsed)) + geom_point()
+ggplot(param_res, aes(best_it, learning_rate)) + geom_point()
+
+ggplot(param_res, aes(learning_rate, best_score)) + geom_point()
+ggplot(param_res, aes(bagging_fraction, best_score)) + geom_point()
+ggplot(param_res, aes(min_data, best_score)) + geom_point()
+ggplot(param_res, aes(min_data_in_bin, best_score)) + geom_point()
+ggplot(param_res, aes(num_leaves, best_score)) + geom_point()
+
+#get GBM model 
+library(gbm)
+formula.gbm = formula('best_score ~  learning_rate + bagging_fraction + min_data + min_data_in_bin + num_leaves  + max_depth')
+dfs = param_res[, all.vars(formula.gbm), with = FALSE]
+
+model.gbm = gbm(formula.gbm, 
+                data = dfs, 
+                distribution = 'gaussian',
+                n.trees = 3000,
+                shrinkage = 0.002,#0.005
+                bag.fraction = 1.0,
+                interaction.depth = 2,
+                cv.folds = 10,
+                n.cores = 6,
+                verbose =  TRUE)
+plot_gbmiterations(model.gbm)
+
+best_it.gbm = gbm.perf(model.gbm, plot.it = FALSE)
+
+var_inf = summary(model.gbm, n.trees = best_it.gbm, plotit = F)
+plot_gbminfluence(var_inf)
+
+plots = plot_gbmpartial(model.gbm, best_it.gbm, as.character(var_inf$var), output_type = 'link' )
+marrangeGrob(plots, nrow = 2, ncol = 3, top = NULL)
+
+```
+
 
 ## LightGBM 1D Grid Tune
 

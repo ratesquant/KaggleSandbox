@@ -1,0 +1,82 @@
+---
+title: "GGPlot Themes"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(ggthemes)
+library(gapmap)
+
+working_folder = 'D:/Github/KaggleSandbox/'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
+source(file.path(working_folder, 'Utils/common.R'))
+```
+
+## Themes
+
+```{r cars}
+mtcars2 <- within(mtcars, {
+  vs <- factor(vs, labels = c("V-shaped", "Straight"))
+  am <- factor(am, labels = c("Automatic", "Manual"))
+  cyl  <- factor(cyl)
+  gear <- factor(gear)
+})
+
+p1 <- ggplot(mtcars2) +
+  geom_point(aes(x = wt, y = mpg, colour = gear)) +
+  labs(
+    title = "Fuel economy declines as weight increases",
+    subtitle = "(1973-74)",
+    caption = "Data from the 1974 Motor Trend US magazine.",
+    tag = "Figure 1",
+    x = "Weight (1000 lbs)",
+    y = "Fuel economy (mpg)",
+    colour = "Gears"
+  )
+
+p1 + theme_gray()
+p1 + theme_bw()
+p1 + theme_linedraw()
+p1 + theme_light()
+p1 + theme_dark()
+p1 + theme_minimal()
+p1 + theme_classic()
+
+p1 + theme_tufte()
+p1 + theme_solarized()
+p1 + theme_excel()
+p1 + theme_excel_new()
+p1 + theme_fivethirtyeight()
+p1 + theme_clean()
+p1 + theme_wsj()
+p1 + theme_gdocs()
+p1 + theme_economist()
+p1 + theme_calc()
+p1 + theme_few()
+```
+
+## Gapmap example
+https://yutannihilation.github.io/allYourFigureAreBelongToUs/1/
+```{r gapmap_example, echo=FALSE}
+set.seed(1234)
+#generate sample data
+x <- rnorm(10, mean=rep(1:5, each=2), sd=0.4)
+y <- rnorm(10, mean=rep(c(1,2), each=5), sd=0.4)
+dataFrame <- data.frame(x=x, y=y, row.names=c(1:10))
+#calculate distance matrix. default is Euclidean distance
+distxy <- dist(dataFrame)
+#perform hierarchical clustering. default is complete linkage.
+hc <- hclust(distxy)
+dend <- as.dendrogram(hc)
+#make a cluster heatmap plot
+gapmap(m = as.matrix(distxy), d_row= rev(dend), d_col=dend)
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

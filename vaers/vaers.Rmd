@@ -25,9 +25,9 @@ source(file.path(working_folder, 'Utils/common.R'))
 
 
 ```{r load_data}
-files_vax = list.files(file.path(working_folder,'vaers/data/AllVAERSDataCSVS'), glob2rx('*VAERSVAX.csv'), full.names = TRUE)
-files_sym = list.files(file.path(working_folder,'vaers/data/AllVAERSDataCSVS'), glob2rx('*2021VAERSSYMPTOMS.csv'), full.names = TRUE)
-files_dat = list.files(file.path(working_folder,'vaers/data/AllVAERSDataCSVS'), glob2rx('*VAERSDATA.csv'), full.names = TRUE)
+files_vax = list.files(file.path(working_folder,'vaers/data/'), glob2rx('*VAERSVAX.csv'), full.names = TRUE)
+files_sym = list.files(file.path(working_folder,'vaers/data/'), glob2rx('*VAERSSYMPTOMS.csv'), full.names = TRUE)
+files_dat = list.files(file.path(working_folder,'vaers/data/'), glob2rx('*VAERSDATA.csv'), full.names = TRUE)
 
 
 #load single file for testing
@@ -50,11 +50,12 @@ df_v = foreach(file = files_vax, .combine = function(...) rbind(..., fill = TRUE
 setkey(df_d,VAERS_ID)
 setkey(df_v,VAERS_ID)
 
-df_d[, RECVDATE := as.Date(RECVDATE, format = '%m/%d/%Y')]
-df_d[, ONSET_DATE := as.Date(ONSET_DATE, format = '%m/%d/%Y')]
-df_d[, VAX_DATE := as.Date(VAX_DATE, format = '%m/%d/%Y')]
-df_d[, DATEDIED := as.Date(DATEDIED, format = '%m/%d/%Y')]
-df_d[, RECVDATE_M := make_date(year(RECVDATE), month(RECVDATE), 1 )]
+df_d[, RECVDATE    := as.Date(RECVDATE, format = '%m/%d/%Y')]
+df_d[, ONSET_DATE  := as.Date(ONSET_DATE, format = '%m/%d/%Y')]
+df_d[, VAX_DATE    := as.Date(VAX_DATE, format = '%m/%d/%Y')]
+df_d[, DATEDIED    := as.Date(DATEDIED, format = '%m/%d/%Y')]
+df_d[, RECVDATE_M  := make_date(year(RECVDATE), month(RECVDATE), 1 )]
+df_d[, RECVDATE_Y  := make_date(year(RECVDATE), 1, 1 )]
 
 df_d[df_v, VAX_TYPE:=i.VAX_TYPE, on=.(VAERS_ID)]
 df_d[df_v, VAX_MANU:=VAX_MANU, on=.(VAERS_ID)]
@@ -62,21 +63,39 @@ df_d[df_v, VAX_MANU:=VAX_MANU, on=.(VAERS_ID)]
 df_d[, VAX_TYPE_TOP5 := fct_lump_n(VAX_TYPE, 5) ]
 
 df_d[,.(.N), by =.(VAX_TYPE_TOP5)]
+df_d[,.(.N), by =.(VAX_TYPE)]
 
+df_d[, is_flu := grepl('FLU',VAX_TYPE) ]
+
+#table(df_d[,.(VAX_TYPE, is_flu)])
+
+df_d[is_flu == TRUE,.(.N), by =.(RECVDATE_Y)]
+df_d[is_flu == TRUE & DIED == 'Y',.(.N), by =.(RECVDATE_Y)]
 ```
 
 ## Including Plots
 
 ```{r plots, echo=FALSE}
 
+df_d[!is.na(VAX_TYPE_TOP5),.(.N, disable = sum(DISABLE == 'Y'), death = sum(DIED == 'Y')), by =.(VAX_TYPE_TOP5)]
+df_d[is_flu == TRUE,.(.N, disable = sum(DISABLE == 'Y'), death = sum(DIED == 'Y'))]
+
+ggplot(df_d[is_flu == TRUE,.(.N), by =.(RECVDATE_M)], aes(RECVDATE_M, N)) + geom_line()
+ggplot(df_d[is_flu == TRUE & DIED == 'Y',.(.N), by =.(RECVDATE_M)], aes(RECVDATE_M, N)) + geom_line()
+ggplot(df_d[is_flu == TRUE & DISABLE == 'Y',.(.N), by =.(RECVDATE_M)], aes(RECVDATE_M, N)) + geom_line()
+
+
+#overall
+ggplot(df_d[,.(.N), by =.(RECVDATE_M, VAX_TYPE_TOP5)], aes(RECVDATE_M, N, group = VAX_TYPE_TOP5, fill = VAX_TYPE_TOP5)) + geom_area()
+ggplot(df_d[DIED == 'Y',.(.N), by =.(RECVDATE_M, VAX_TYPE_TOP5)], aes(RECVDATE_M, N, group = VAX_TYPE_TOP5, fill = VAX_TYPE_TOP5)) + geom_area()
+ggplot(df_d[DISABLE == 'Y',.(.N), by =.(RECVDATE_M, VAX_TYPE_TOP5)], aes(RECVDATE_M, N, group = VAX_TYPE_TOP5, fill = VAX_TYPE_TOP5)) + geom_area()
+
+
+ggplot(df_d[!is.na(VAX_TYPE_TOP5),.(.N), by =.(RECVDATE_M, VAX_TYPE_TOP5)][order(RECVDATE_M)], aes(RECVDATE_M, N, group = VAX_TYPE_TOP5, color = VAX_TYPE_TOP5)) + geom_line() + facet_wrap(~VAX_TYPE_TOP5, scales = 'free')
 
 ggplot(df_d[!is.na(VAX_TYPE_TOP5),.(.N), by =.(RECVDATE_M, VAX_TYPE_TOP5)], aes(RECVDATE_M, N, group = VAX_TYPE_TOP5, color = VAX_TYPE_TOP5)) + geom_line() + facet_wrap(~VAX_TYPE_TOP5, scales = 'free')
-ggplot(df_d[!is.na(DATEDIED) & !is.na(VAX_TYPE_TOP5),.(.N), by =.(RECVDATE_M, VAX_TYPE_TOP5)], aes(RECVDATE_M, N, group = VAX_TYPE_TOP5, color = VAX_TYPE_TOP5)) + geom_line()+ facet_wrap(~VAX_TYPE_TOP5, scales = 'free')
-
-ggplot(df_d[,.(.N), by =.(RECVDATE_M)], aes(RECVDATE_M, N)) + geom_line()
-ggplot(df_d[!is.na(DATEDIED),.(.N), by =.(RECVDATE_M)], aes(RECVDATE_M, N)) + geom_line()
-
 ggplot(df_d[DISABLE == 'Y' & !is.na(VAX_TYPE_TOP5),.(.N), by =.(RECVDATE_M, VAX_TYPE_TOP5)], aes(RECVDATE_M, N, group = VAX_TYPE_TOP5, color = VAX_TYPE_TOP5)) + geom_line()+ facet_wrap(~VAX_TYPE_TOP5, scales = 'free')
+ggplot(df_d[DIED   == 'Y' & !is.na(VAX_TYPE_TOP5),.(.N), by =.(RECVDATE_M, VAX_TYPE_TOP5)], aes(RECVDATE_M, N, group = VAX_TYPE_TOP5, color = VAX_TYPE_TOP5)) + geom_line()+ facet_wrap(~VAX_TYPE_TOP5, scales = 'free')
 
 ggplot(df_d[!is.na(VAX_TYPE_TOP5),.(.N), by =.(RECVDATE_M, VAX_TYPE_TOP5)], aes(RECVDATE_M, N, group = VAX_TYPE_TOP5, color = VAX_TYPE_TOP5)) + geom_line()
 ggplot(df_d[!is.na(DATEDIED) & !is.na(VAX_TYPE_TOP5),.(.N), by =.(RECVDATE_M, VAX_TYPE_TOP5)], aes(RECVDATE_M, N, group = VAX_TYPE_TOP5, color = VAX_TYPE_TOP5)) + geom_line()
@@ -85,20 +104,31 @@ df_d[!is.na(DATEDIED) & VAX_TYPE == 'COVID19', .(.N), by = .(VAX_MANU)]
 df_d[DISABLE == 'Y' & VAX_TYPE == 'COVID19', .(.N), by = .(VAX_MANU)]
 df_d[VAX_TYPE == 'COVID19', .(.N), by = .(VAX_MANU)]
 
-ggplot(df_d[!is.na(DATEDIED) & VAX_TYPE == 'COVID19',.(.N), by =.(RECVDATE_M, VAX_MANU)], aes(RECVDATE_M, N, group = VAX_MANU, color = VAX_MANU, label = sprintf('%d', N) )) + 
-  geom_line() + geom_point() + geom_text( nudge_x = 10)+ scale_x_date(date_breaks = "1 month", date_labels = "%b %y")
+ggplot(df_d[DIED == 'Y' & VAX_TYPE == 'COVID19',.(.N), by =.(RECVDATE_M, VAX_MANU)], aes(RECVDATE_M, N, group = VAX_MANU, color = VAX_MANU, label = sprintf('%d', N) )) + 
+  geom_line() + geom_point() + geom_text( nudge_x = 10) + scale_x_date(date_breaks = "1 month", date_labels = "%b %y")
 
+ggplot(df_d[DISABLE == 'Y' & VAX_TYPE == 'COVID19',.(.N), by =.(RECVDATE_M, VAX_MANU)], aes(RECVDATE_M, N, group = VAX_MANU, color = VAX_MANU, label = sprintf('%d', N) )) + 
+  geom_line() + geom_point() + geom_text( nudge_x = 10) + scale_x_date(date_breaks = "1 month", date_labels = "%b %y")
 ggplot(df_d[VAX_TYPE == 'COVID19' & RECVDATE_M > '2010-01-01',.(.N), by =.(RECVDATE_M, VAX_MANU)], aes(RECVDATE_M, N, group = VAX_MANU, color = VAX_MANU, label = sprintf('%d', N) )) + 
   geom_line() + geom_point() + geom_text( nudge_x = 10) + scale_x_date(date_breaks = "1 month", date_labels = "%b %y")
 
+
+ggplot(df_d[DIED == 'Y' & VAX_TYPE == 'COVID19' & NUMDAYS < 120,], aes(RECVDATE_M, NUMDAYS, fill = VAX_MANU)) +  geom_jitter(alpha = 0.5) + facet_wrap(~VAX_MANU)
 
 ggplot(df_d[DIED == 'Y' & VAX_TYPE == 'COVID19',], aes(pmin(60, NUMDAYS), fill = VAX_MANU)) +  geom_density(adjust = 0.5,alpha = 0.5) + facet_wrap(~VAX_MANU)
 ggplot(df_d[DIED == 'Y' & VAX_TYPE == 'COVID19',], aes(AGE_YRS, fill = VAX_MANU)) +  geom_density(adjust = 0.5,alpha = 0.5) + facet_wrap(~VAX_MANU)
 ggplot(df_d[DIED != 'Y' & VAX_TYPE == 'COVID19',], aes(AGE_YRS, fill = VAX_MANU)) +  geom_density(adjust = 0.5,alpha = 0.5) + facet_wrap(~VAX_MANU)
 ggplot(df_d[DIED != 'Y' & VAX_TYPE == 'COVID19',], aes(pmin(30, NUMDAYS), fill = VAX_MANU)) +  geom_density(adjust = 1.0,alpha = 0.5) + facet_wrap(~VAX_MANU)
 
+df_d[DIED == 'Y' & VAX_TYPE == 'COVID19',]
 
+ggplot(df_d[DIED == 'Y' & VAX_TYPE == 'COVID19',], aes(factor(10*floor(AGE_YRS/10)), fill = VAX_MANU)) +  geom_bar() + facet_grid(~VAX_MANU)
+ggplot(df_d[DISABLE == 'Y' & VAX_TYPE == 'COVID19',], aes(factor(10*floor(AGE_YRS/10)), fill = VAX_MANU)) +  geom_bar() + facet_grid(~VAX_MANU)
+ggplot(df_d[VAX_TYPE == 'COVID19',], aes(factor(10*floor(AGE_YRS/10)), fill = VAX_MANU)) +  geom_bar() + facet_grid(~VAX_MANU)
+
+ggplot(df_d[is_flu == TRUE & DIED == 'Y',], aes(factor(5*floor(AGE_YRS/5)))) +  geom_bar()
 
 ```
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+

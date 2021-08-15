@@ -1,0 +1,98 @@
+---
+title: "Check Markov Property"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library(ggplot2)
+library(expm)   
+library(foreach)
+library(forcats)
+```
+
+## Create a sample process
+
+```{r transition_process}
+steps = 120
+accounts = 2 #accounts
+
+states = c('CC', 'CD', 'D1', 'D2', 'CO', 'PO')
+
+tr_matrix = matrix(c(0.9, 0.0,  0.05, 0.0, 0.0, 0.05, 
+                     0.0, 0.9,  0.10, 0.0, 0.0, 0.00,
+                     0.0, 0.1,  0.5, 0.4, 0.0, 0.00,
+                     0.0, 0.05, 0.1, 0.35, 0.5, 0.00,
+                     0.0, 0.0, 0.0, 0.0, 1.0, 0.00,
+                     0.0, 0.0, 0.0, 0.0, 0.0, 1.0), ncol = length(states), byrow = TRUE) 
+rownames(tr_matrix)<-states
+colnames(tr_matrix)<-states
+
+rowSums(tr_matrix)
+tm = t(apply(tr_matrix, 1, cumsum))
+
+df_tr = data.table(reshape2::melt(tr_matrix) )
+names(df_tr)<-c('state_from', 'state_to', 'rate')
+df_tr[, .(total=sum(rate)),  by = state_from]
+
+#transition matrix
+ggplot(df_tr,aes(state_to, state_from, fill = rate, label = sprintf('%.2f', rate)) ) + geom_tile() + geom_text() + scale_fill_gradient(low = "white", high = "red" )
+
+
+c(1, 0, 0, 0, 0, 0) %*% (tr_matrix %^% 100) #matrix mulpilication form
+
+#eigen(tr_matrix)
+
+#simulate transitions
+df_bal = data.table(state_from = states, bal_from = c(100, 0, 0, 0, 0, 0))
+
+df = foreach(i = 1:steps, .combine = 'rbind') %do% {
+  df1 = df_tr[df_bal, on = 'state_from']
+  df1[, bal := rate * bal_from]
+  df1[, step:=i-1]
+  df_bal = df1[, .(bal_from = sum(bal)), by = .('state_from' = state_to )]
+  return (df1)
+}
+
+#bal_from - population of state_from before the transition
+#bal - pupulation that was transitioned
+
+# 
+df[step==1,]
+df[, .(.N, rate = mean(rate), rate_est = sum(bal)/sum(bal_from) ), by = .(state_from, state_to )]
+
+#period begin balances
+df[,.(bal = sum(bal)), by =.(step,  state_from)] 
+
+#period end balances
+df[,.(bal = sum(bal)), by =.(step,  state_to)] 
+
+#balances
+ggplot(df[,.(bal = sum(bal)), by =.(step,  state_to)], aes(step, bal, group = state_to, color = state_to)) + geom_line()
+#rates
+ggplot(df[,.(rate = sum(bal)/sum(bal_from)), by =.(step,  state_to, state_from)], aes(step, rate, group = state_to, color = state_to)) + geom_line() + facet_wrap(~state_from)
+
+#total balance
+ggplot(df[,.(bal = sum(bal)), by =.(step)], aes(step, bal)) + geom_line()
+
+#no clean dirty
+df[, state_from_ex := fct_recode(state_from, C = "CC", C = "CD")]
+df[, state_to_ex := fct_recode(state_to, C = "CC", C = "CD")]
+
+ggplot(df[state_from_ex == 'C',.(rate = sum(bal)/sum(bal_from)), by =.(step,  state_to_ex, state_from_ex)], aes(step, rate, group = state_to_ex, color = state_to_ex)) + geom_line() + facet_wrap(~state_from_ex)
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

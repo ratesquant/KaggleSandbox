@@ -13,6 +13,12 @@ library(ggplot2)
 library(forcats)
 library(zoo)
 library(ggdendro)
+library(lubridate)
+library(usmap)
+
+working_folder = 'D:/Github/KaggleSandbox/'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+source(file.path(working_folder, 'Utils/common.R'))
 ```
 
 ## Load Data
@@ -30,8 +36,16 @@ setkeyv(df, c('date', 'state'))
 df[, new_cases  := cases  - shift(cases), by = .(state)]
 df[, new_deaths := deaths - shift(deaths), by = .(state)]
 
+df[, new_cases_avg_7d   := rollmeanr(new_cases, k = 7, na.pad = TRUE), by = .(state)]
 df[, new_cases_avg_14d  := rollmeanr(new_cases, k = 14, na.pad = TRUE), by = .(state)]
+df[, new_cases_avg_28d  := rollmeanr(new_cases, k = 28, na.pad = TRUE), by = .(state)]
+df[, new_cases_avg_60d  := rollmeanr(new_cases, k = 60, na.pad = TRUE), by = .(state)]
 df[, new_cases_avg_14d_inc :=new_cases_avg_14d - shift(new_cases_avg_14d),  by = .(state)]
+
+df[, new_deaths_avg_7d   := rollmeanr(new_deaths, k = 7, na.pad = TRUE), by = .(state)]
+df[, new_deaths_avg_14d  := rollmeanr(new_deaths, k = 14, na.pad = TRUE), by = .(state)]
+df[, new_deaths_avg_28d  := rollmeanr(new_deaths, k = 28, na.pad = TRUE), by = .(state)]
+df[, new_deaths_avg_60d  := rollmeanr(new_deaths, k = 60, na.pad = TRUE), by = .(state)]
 
 ```
 
@@ -53,10 +67,31 @@ ggplot(df_county[state ==  'North Carolina'], aes(date, new_deaths)) + geom_line
 
 ```
 
+## Map
+
+```{r maps, echo=FALSE}
+
+df_last = df[date == max(date)]
+state_pop = data.table(statepop)
+
+df_last[state_pop, pop:=i.pop_2015, on = .(state = full)]
+
+df_last[, new_cases_avg_7d_per_capita:=1e6*new_cases_avg_7d/pop]
+
+plot_usmap(data = df_last, values = 'new_cases_avg_7d_per_capita') + theme(legend.position = "right") + 
+  scale_fill_custom('mixed', discrete = FALSE)
+
+plot_usmap(data = df_last, values = 'new_cases_avg_7d') + theme(legend.position = "right") + 
+  scale_fill_custom('mixed', discrete = FALSE)
+
+
+```
+
+
 ## Plots
 
 ```{r plots, echo=FALSE}
-my_states = c('Connecticut', 'New Jersey', 'New York', 'North Carolina', 'Georgia', 'Texas', 'California', 'Minnesota', 'Washington',  'USA', 'Ohio', 'Pennsylvania')
+my_states = c('Connecticut', 'New Jersey', 'New York', 'North Carolina', 'Georgia', 'Texas', 'California', 'Minnesota', 'Florida',  'USA', 'Ohio', 'Pennsylvania')
 
 ggplot(df[state %in% c('New Jersey', 'North Carolina')], aes(date, cases, group = state, color = state)) + geom_line()
 ggplot(df[state %in% c('New Jersey', 'North Carolina')], aes(date, new_cases, group = state, color = state)) + geom_line()
@@ -65,24 +100,24 @@ ggplot(df[state %in% c('New Jersey', 'North Carolina')], aes(date, deaths, group
 ggplot(df[state %in% my_states], aes(date, cases, group = state, color = state)) + geom_line() + facet_wrap(~state, scales = 'free_y')
 ggplot(df[state %in% my_states], aes(date, new_cases)) + geom_line() + geom_smooth(span = 0.1, se = FALSE, color = 'red') + facet_wrap(~state, scales = 'free_y')
 ggplot(df[state %in% my_states], aes(date, new_deaths)) + geom_line() + geom_smooth(span = 0.3, se = FALSE, color = 'red') + facet_wrap(~state, scales = 'free_y')
+ggplot(df[state %in% my_states], aes(date, new_deaths_avg_7d)) + geom_line() + facet_wrap(~state, scales = 'free_y')
+ggplot(df[state %in% my_states], aes(date, new_cases_avg_7d)) + geom_line() + facet_wrap(~state, scales = 'free_y')
 
-ggplot(df[state %in% my_states], aes(log10(cases), log10(new_cases_avg_14d+1) )) + geom_line() + facet_wrap(~state, scales = 'free')
-ggplot(df[state %in% my_states], aes(log10(cases), log10(new_cases_avg_14d) )) + geom_line() + facet_wrap(~state)
-ggplot(df[state %in% my_states], aes(log10(cases), log10(new_cases_avg_14d), group = state, color = state )) + geom_line()
+ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_cases_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y')
 
-ggplot(df[state %in% my_states], aes(log10(deaths), log10(new_deaths+1) )) + geom_line() + facet_wrap(~state, scales = 'free')
+ggplot(df[state %in% my_states], aes(1e-6*cases, 1e-3*deaths)) + geom_line() + facet_wrap(~state, scales = 'free')
 
-ggplot(df[state %in% my_states], aes(log10(cases+1), log10(new_cases+1) )) + geom_line() + facet_wrap(~state, scales = 'free')
+ggplot(df[state %in% my_states], aes(log10(cases+1), log10(new_cases_avg_7d+1) )) + geom_line() + geom_point(data = df[state %in% my_states & date == max(date)], color = 'red' ) + facet_wrap(~state, scales = 'free')
+
+ggplot(df[state %in% my_states], aes(new_cases_avg_28d, new_deaths_avg_7d )) + geom_path() + geom_point(data = df[state %in% my_states & date == max(date)], color = 'red' ) + facet_wrap(~state, scales = 'free')
+
 ggplot(df[state %in% my_states], aes(cases, deaths )) + geom_line() + facet_wrap(~state, scales = 'free')
-
-ggplot(df[state %in% my_states], aes(date, deaths/cases )) + geom_line() + facet_wrap(~state, scales = 'free')
-
+ggplot(df[state %in% my_states], aes(date, new_deaths_avg_60d/new_cases_avg_60d )) + geom_line() + facet_wrap(~state, scales = 'free')
 ggplot(df[state %in% my_states], aes(date, 1e-3*deaths)) + geom_line() + facet_wrap(~state, scales = 'free_y')
 
 #where cases are increasing
-inc_states = df[date == max(date)][order(-new_cases_avg_14d_inc), head(state,12) ]
-ggplot(df[state %in% inc_states], aes(date, new_cases)) + geom_line() + geom_line(aes(date, new_cases_avg_14d), color = 'red', size = 1) + facet_wrap(~state, scales = 'free_y') #+ geom_smooth(span = 0.3, se = FALSE, color = 'red', alpha = 0.3)
-
+inc_states = df[date == max(date)][order(-new_cases_avg_14d_inc), head(state,16) ]
+ggplot(df[state %in% inc_states], aes(date, new_cases_avg_7d)) + geom_line() + geom_line(aes(date, new_cases_avg_14d), color = 'red', size = 1) + facet_wrap(~state, scales = 'free_y') #+ geom_smooth(span = 0.3, se = FALSE, color = 'red', alpha = 0.3)
 
 ggplot(df[state %in% my_states], aes(date, 1e-3*cases)) + geom_line() +  facet_wrap(~state)
 ggplot(df[state %in% my_states], aes(date, 1e-3*deaths)) + geom_line() +  facet_wrap(~state)
@@ -91,6 +126,83 @@ ggplot(df[state %in% my_states], aes(date, 1e-3*deaths)) + geom_line() +  facet_
 ggplot(df[state %in% my_states], aes(date, 100*deaths/cases)) + geom_line() +  facet_wrap(~state)
 
 ggplot(df[date == max(date),], aes(fct_reorder(state,100*deaths/cases), 100*deaths/cases)) + geom_bar(stat = 'identity') + coord_flip()
+
+```
+
+## Death as function of previous cases 
+
+```{r death_model, echo=FALSE}
+library(glmnet)
+library(plyr)
+
+get_all_coefs<-function(glmnet_obj){
+  res = ldply(glmnet_obj$lambda, function(lambda){
+    temp = data.matrix(coef(glmnet_obj,s=lambda))
+    data.frame(var_name = rownames(temp), coef = as.numeric(temp), lambda)
+  })
+  return(res)
+}
+
+for(i in seq(90)) {
+  vname = sprintf('new_cases_rm_%02d', i)
+  df[order(date), c(vname) := rollmeanr(new_cases, k = i, fill = NA), by =.(state)]  
+}
+
+#ggplot(df[state %in% my_states], aes(date, new_cases_avg_7d)) + geom_line() +  facet_wrap(~state, scales = 'free_y')
+
+model_rm_vars = names(df)[ grep('new_cases_rm_', names(df)) ]
+
+x=data.matrix(df[state != 'USA', c('new_deaths_avg_7d', model_rm_vars), with = FALSE])
+#x=data.matrix(df[state != 'USA', c('new_deaths', model_rm_vars), with = FALSE])
+index = complete.cases(x)
+y = x[index, 1]
+x = x[index,-1]
+
+#corrplot(cor(x), method="ellipse")
+cvob3=cv.glmnet(x, y, family="gaussian", nfolds = 10, relax = FALSE)
+plot(cvob3)
+
+ggplot(data.frame(rms = cvob3$cvm, rms_hi = cvob3$cvup, rms_lo = cvob3$cvlo, lambda = log(cvob3$lambda)) , aes(lambda, rms) ) + geom_line() + geom_point() + 
+  geom_ribbon(aes(ymin = rms_lo, ymax = rms_hi), fill = 'blue', alpha = 0.3) +
+  geom_vline(xintercept =  c(log(cvob3$lambda.min),  log(cvob3$lambda.1se)), linetype = 'dashed') +
+  ggtitle(sprintf('Best RMS %.5f', cvob3$cvm[which(cvob3$lambda == cvob3$lambda.1se)]))
+
+coef_path = data.table(get_all_coefs(cvob3))
+coef_path[order(var_name), weight := seq(0, .N-1),  by =.(lambda)]
+coef_path[order(var_name,  decreasing = TRUE), adj_coef := cumsum(coef / weight),  by =.(lambda)]
+coef_path[, dof:=sum(coef==0), by =.(lambda)]
+coef_path[var_name != '(Intercept)', .( sum(coef),  sum(adj_coef)), by =.(lambda)] #sum of the coefs  -0.013400167
+
+coef_path[var_name != '(Intercept)' & lambda == cvob3$lambda.1se & coef != 0]
+
+imp_vars = as.character(unique( coef_path[lambda >= cvob3$lambda.1se & abs(coef) >0, var_name] ))
+
+ggplot(coef_path[var_name != '(Intercept)'], aes(var_name, log(lambda), fill = atan(1e4*coef) )) + geom_tile() +  
+  theme(axis.text.x  = element_text(angle=90)) + 
+  geom_hline(yintercept = log(c(cvob3$lambda.1se, cvob3$lambda.min)), linetype = 'dashed') + 
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0)
+
+#df[, new_deaths_pred := predict(cvob3, newx=data.matrix(df[,model_rm_vars, with = F]), s= 'lambda.1se')]
+#ggplot(df[state %in% my_states], aes(date, new_deaths)) + geom_line() + geom_line(aes(date, new_deaths_pred), color = 'red') + facet_wrap(~state, scales = 'free_y')
+
+df[, new_deaths_avg_7d_pred := predict(cvob3, newx=data.matrix(df[,model_rm_vars, with = F]), s= 'lambda.1se')]
+ggplot(df[state %in% my_states], aes(date, new_deaths_avg_7d)) + geom_line() + geom_line(aes(date, new_deaths_avg_7d_pred), color = 'red') + facet_wrap(~state, scales = 'free_y')
+
+summary(lm('new_deaths_avg_7d ~ new_deaths_avg_7d_pred', df))
+summary(lm('new_deaths_avg_7d ~ new_cases_rm_55', df))
+
+#summary(lm('new_deaths ~ new_deaths_pred', df))
+#summary(lm('new_deaths ~ new_cases_rm_50', df))
+
+model.lm = lm('new_deaths_avg_7d ~ new_cases_rm_55', df)
+df[, new_deaths_avg_7d_pred := predict(model.lm, df[,model_rm_vars, with = F])]
+ggplot(df[state %in% my_states], aes(date, new_deaths_avg_7d)) + geom_line() + geom_line(aes(date, new_deaths_avg_7d_pred), color = 'red') + facet_wrap(~state, scales = 'free_y')
+
+#model.lm = lm('new_deaths ~ new_cases_rm_50', df)
+#df[, new_deaths_pred := predict(model.lm, df[,model_rm_vars, with = F])]
+#ggplot(df[state %in% my_states], aes(date, new_deaths)) + geom_line() + geom_line(aes(date, new_deaths_pred), color = 'red') + facet_wrap(~state, scales = 'free_y')
+#ggplot(df[state %in% my_states], aes(new_deaths_pred, new_deaths)) + geom_point() + facet_wrap(~state, scales = 'free')
+
 
 ```
 

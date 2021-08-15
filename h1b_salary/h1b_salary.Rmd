@@ -17,6 +17,7 @@ library(ggplot2)
 library(stringi)
 library(forcats)
 library(foreach)
+library(wesanderson)
 
 #memory.limit(36000)
 
@@ -50,10 +51,12 @@ keep_columns = c('CASE_STATUS', 'CASE_SUBMITTED', 'DECISION_DATE', 'VISA_CLASS',
                  'WORKSITE_CITY', 'WORKSITE_COUNTY', 'WORKSITE_STATE','ORIGINAL_CERT_DATE', 'filename')
 
 
-files = list.files(file.path(working_folder,'h1b_salary/data'), glob2rx('H-1B_Disclosure_Data_FY*.xlsx.csv'), full.names = TRUE)
+#files = list.files(file.path(working_folder,'h1b_salary/data'), glob2rx('H-1B_Disclosure_Data_FY1*.xlsx.csv'), full.names = TRUE)
+files = list.files(file.path(working_folder,'h1b_salary/data'), "^H-1B_Disclosure_Data_FY1[89].*\\.xlsx\\.csv$", full.names = TRUE)
 
 df = foreach(file = files, .combine = function(...) rbind(..., fill = TRUE, use.names = TRUE) ) %do% {
-  #df_temp = fread(file, nrows = 10000)
+  print(file)
+  #df_temp = fread(file, nrows = 1000)
   df_temp = fread(file)
   
   if('WAGE_RATE_OF_PAY_FROM_1' %in% names(df_temp)){
@@ -69,10 +72,14 @@ df = foreach(file = files, .combine = function(...) rbind(..., fill = TRUE, use.
   if('NAICS_CODE' %in% names(df_temp)){
     df_temp[, NAIC_CODE := NAICS_CODE]
   }
-  if('NAICS_CODE' %in% names(df_temp)){
-    df_temp[, NAIC_CODE := NAICS_CODE]
-  }
+  df_temp[, DECISION_DATE  := as.character(DECISION_DATE)]
+  df_temp[, CASE_SUBMITTED := as.character(CASE_SUBMITTED)]
   
+  
+  #df_temp[, DECISION_DATE  := as.Date(DECISION_DATE, tryFormats = c("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d"))]
+  #df_temp[, CASE_SUBMITTED := as.Date(CASE_SUBMITTED, tryFormats = c("%Y-%m-%d", "%m/dm/%Y", "%Y/%m/%d"))]
+  
+  #tryFormats = c("%Y-%m-%d", "%Y/%m/%d")
   
   df_temp[, filename := basename(file)]
   
@@ -82,11 +89,11 @@ df = foreach(file = files, .combine = function(...) rbind(..., fill = TRUE, use.
 df[, .(.N, sum(is.na(NAIC_CODE))), by = .(filename)]
 table(df$WILLFUL_VIOLATOR)
 
-
 df[,  WAGE_RATE_OF_PAY_FROM := as.numeric(stri_replace(WAGE_RATE_OF_PAY_FROM, '', regex = '[$,]', mode = 'all'))]
 df[,  WAGE_RATE_OF_PAY_TO   := as.numeric(stri_replace(WAGE_RATE_OF_PAY_TO,   '', regex = '[$,]', mode = 'all'))]
-df[, CASE_SUBMITTED := as.Date(CASE_SUBMITTED)]
-df[, DECISION_DATE := as.Date(DECISION_DATE)]
+df[,  PREVAILING_WAGE       := as.numeric(stri_replace(PREVAILING_WAGE ,   '', regex = '[$,]', mode = 'all'))]
+df[, CASE_SUBMITTED := as.Date(CASE_SUBMITTED, tryFormats = c("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d"))]
+df[, DECISION_DATE := as.Date(DECISION_DATE, tryFormats = c("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d"))]
 
 df[, case_year := year(CASE_SUBMITTED)]
 df[is.na(WAGE_RATE_OF_PAY_FROM), .(.N), by = .(filename)]
@@ -108,6 +115,141 @@ df_meta[, year := factor(Fiscal.Year, ordered  = TRUE)]
 
 gc(reset=TRUE)
 
+```
+
+## JC vs NYC
+
+```{r jc_nyc, echo=FALSE}
+df[, .(.N), by = .(filename)]
+df[, WORKSITE_CITY:= toupper(WORKSITE_CITY)]
+df[WORKSITE_CITY == 'NEW YORK CITY', WORKSITE_CITY:= 'NEW YORK']
+
+
+all_names = unique(df$EMPLOYER_NAME)
+jp_names = all_names[grep('(JPMORGAN)', all_names)]
+citi_names = all_names[grep('(CITIGROUP|CITIBANK)', all_names)]
+
+#dfs = df[VISA_CLASS=='H-1B', .(EMPLOYER_NAME, CASE_SUBMITTED, CASE_STATUS, JOB_TITLE, SOC_TITLE, WORKSITE_CITY, WORKSITE_STATE, 
+#                          WAGE_RATE_OF_PAY_FROM, WAGE_RATE_OF_PAY_TO, WAGE_UNIT_OF_PAY, PREVAILING_WAGE, PW_WAGE_LEVEL)]
+
+dfs = df[VISA_CLASS == "H-1B" & WAGE_UNIT_OF_PAY == 'Year' & EMPLOYER_NAME %in% c(jp_names, citi_names) & WORKSITE_CITY %in% c('JERSEY CITY', 'NEW YORK')]
+dfs[, base_pay := 1e-3*pmax(WAGE_RATE_OF_PAY_FROM, WAGE_RATE_OF_PAY_TO, na.rm = TRUE) ]
+dfs[, bank := ifelse(EMPLOYER_NAME %in% jp_names, "jpm", 'citi')]
+
+dfs[base_pay > 100, .(.N, mean(base_pay, na.rm = TRUE), max(base_pay, na.rm = TRUE)), by = .(bank, WORKSITE_CITY, PW_WAGE_LEVEL)]
+
+ggplot(dfs, aes(WORKSITE_CITY, base_pay)) + geom_boxplot() + facet_grid(PW_WAGE_LEVEL~bank) + coord_flip()
+
+dfs[base_pay>250, .(EMPLOYER_NAME,JOB_TITLE, SOC_NAME, base_pay, PREVAILING_WAGE, WORKSITE_CITY )]
+
+df_plot = dfs[base_pay>=150, .(WORKSITE_CITY, bank, base_pay)]
+ggplot(dfs[base_pay>=200, ], aes(base_pay, group = WORKSITE_CITY, color = WORKSITE_CITY)) + stat_ecdf() + facet_grid(~bank)
+
+dfs[base_pay>=200, .(.N, max_base = max(base_pay), p84_base = quantile(base_pay, 0.84), p85_base = quantile(base_pay, 0.85) ), by =.(WORKSITE_CITY, bank)][order(bank, WORKSITE_CITY)]
+
+dfs[base_pay>=200 & SOC_NAME!="FINANCIAL MANAGERS", .(.N, max_base = max(base_pay), p90_base = quantile(base_pay, 0.92)), by =.(WORKSITE_CITY, bank)][order(bank, WORKSITE_CITY)]
+
+
+jpm_jc_ecdf = df_plot[WORKSITE_CITY == 'JERSEY CITY' & bank == 'jpm', ecdf(base_pay)]
+
+df_plot[,base_pay_ecdf := ecdf(base_pay)(base_pay), by =.(WORKSITE_CITY, bank)]
+df_plot[,base_pay_eq := quantile(base_pay, jpm_jc_ecdf(base_pay)), by =.(WORKSITE_CITY, bank)]
+
+ggplot(df_plot) + geom_step(aes(x = base_pay, y = base_pay_eq,          group = WORKSITE_CITY, color = WORKSITE_CITY)) +  facet_grid(~bank)
+ggplot(df_plot[base_pay<200]) + geom_step(aes(x = base_pay, y = 100*(base_pay_eq/base_pay-1), group = WORKSITE_CITY, color = WORKSITE_CITY)) +  facet_grid(~bank) +  geom_hline(yintercept = 0.0, linetype = 'dashed')
+
+#bootstrap
+df_boot = foreach(i = seq(100),  .combine = rbind) %do% {
+  df_boot_i = df_plot[, .(base_pay_boot = sample(base_pay, .N, replace= TRUE)), by = .(WORKSITE_CITY, bank)]
+  df_boot_i[, i:=i]
+  
+  jpm_jc_ecdf_boot = df_boot_i[WORKSITE_CITY == 'JERSEY CITY' & bank == 'jpm', ecdf(base_pay_boot)]
+  df_boot_i[,base_pay_eq := quantile(base_pay_boot, jpm_jc_ecdf_boot(base_pay_boot), names = FALSE), by =.(WORKSITE_CITY, bank)]
+}
+
+ggplot(df_boot[WORKSITE_CITY == 'NEW YORK']) + geom_step(aes(x = base_pay_boot, y = base_pay_eq/base_pay_boot, group = i), color = 'blue', alpha = 0.2) +  
+  geom_hline(yintercept = 1.0, linetype = 'dashed') +  facet_grid(~bank)
+
+#bootstrap 250
+df_boot = foreach(i = seq(100),  .combine = rbind) %do% {
+  df_boot_i = df_plot[, .(base_pay_boot = sample(base_pay, .N, replace= TRUE)), by = .(WORKSITE_CITY, bank)]
+  
+  jpm_jc_ecdf_boot = df_boot_i[WORKSITE_CITY == 'JERSEY CITY' & bank == 'jpm', ecdf(base_pay_boot)]
+  #df_boot_i[,base_pay_eq := quantile(base_pay_boot, jpm_jc_ecdf_boot(base_pay_boot), names = FALSE), by =.(WORKSITE_CITY, bank)]
+  
+  df_boot_i = df_boot_i[,  .(base_pay_eq=quantile(base_pay_boot, jpm_jc_ecdf_boot(250), names = FALSE)), by =.(WORKSITE_CITY, bank)]
+  df_boot_i[, i:=i]
+}
+ggplot(df_boot[WORKSITE_CITY == 'NEW YORK']) + geom_density(aes(base_pay_eq/250), adjust = 1.0) + geom_rug(aes(base_pay_eq/250)) + facet_grid(~bank)
+df_boot[WORKSITE_CITY == 'NEW YORK', mean(base_pay_eq/250), by =.(bank)]
+
+#
+ggplot(dfs[base_pay>150, ], aes(base_pay, group = WORKSITE_CITY, color = WORKSITE_CITY)) + stat_qq() + facet_grid(~bank)
+
+dfs_agg = dfs[wage > 100, .(.N, avg=mean(wage, na.rm = TRUE), p95 = quantile(wage, p=0.95, na.rm = TRUE), pwage95 = quantile(PREVAILING_WAGE, p=0.95, na.rm = TRUE)), by = .(bank, WORKSITE_CITY, PW_WAGE_LEVEL)]
+
+ggplot(dfs_agg, aes(PW_WAGE_LEVEL, p95, group = WORKSITE_CITY, fill = WORKSITE_CITY)) + geom_bar(stat= 'identity', position = 'dodge') + facet_wrap(~bank)
+
+library(gbm)
+library(gridExtra)
+library(plyr)
+library(forcats)
+
+dfs[, emp_name := factor(bank) ]
+dfs[, location := factor(WORKSITE_CITY) ]
+dfs[, wage_level := factor(PW_WAGE_LEVEL) ]
+dfs[, soc_name_top5 := fct_lump_n(SOC_NAME, 5) ]
+dfs[, job_title_top5 := fct_lump_n(JOB_TITLE, 5) ]
+
+
+formula.all = formula (paste( 'base_pay ~', paste(c('emp_name', 'location', 'wage_level','soc_name_top5', 'job_title_top5'), collapse = '+')) )
+
+dfs_train = dfs[, all.vars(formula.all), with = FALSE] 
+
+model.gbm = gbm(formula.all, 
+                data = dfs_train, 
+                distribution = 'gaussian',
+                n.trees = 2000,
+                shrinkage = 0.01, #0.001
+                bag.fraction = 0.5,
+                interaction.depth = 3,
+                cv.folds = 10,
+                train.fraction = 1.0,
+                n.cores = 4,
+                verbose = FALSE)
+
+best_it = gbm.perf(model.gbm, method = 'cv')
+plot_gbmiterations(model.gbm)
+
+#show importance
+vars.importance = summary(model.gbm, n.trees = best_it, plotit=FALSE) # influence
+plot_gbminfluence(vars.importance)
+print(vars.importance)
+#write.clipboard(vars.importance, sep = '\t')
+
+plots = plot_gbmpartial(model.gbm, best_it, as.character(vars.importance$var), output_type = 'link')
+marrangeGrob(plots, nrow=2, ncol=2)
+
+dfs[, base_pay_pred := predict(model.gbm, n.trees = best_it, newdata = .SD)]
+
+ggplot(dfs, aes(base_pay_pred, base_pay)) + geom_point() + facet_wrap(~location)
+
+plot_profile(dfs$base_pay_pred, dfs$base_pay, dfs$JOB_TITLE, error_band = 'norm')
+
+partial(model.gbm, pred.var = 'location', plot = TRUE, train = dfs_train[base_pay > 200], prob = FALSE,ice = TRUE, plot.engine = "ggplot2", n.trees = best_it)
+partial(model.gbm, pred.var = 'emp_name', plot = TRUE, train = dfs_train[base_pay > 200], prob = FALSE,ice = TRUE, plot.engine = "ggplot2", n.trees = best_it)
+
+df_test    = dfs_train[location == 'JERSEY CITY' & emp_name  == 'jpm' & base_pay > 100]
+df_test_ny = copy(df_test) 
+df_test_ny[, location := 'NEW YORK']
+#df_test_ny[, emp_name := 'citi']
+
+predict(model.gbm, n.trees = best_it, newdata = df_test_ny) / predict(model.gbm, n.trees = best_it, newdata = df_test)
+
+df_test[, wage_pred    :=  predict(model.gbm, n.trees = best_it, newdata = df_test)]
+df_test[, wage_pred_ny :=  predict(model.gbm, n.trees = best_it, newdata = df_test_ny)]
+
+ggplot(df_test, aes(wage_pred, wage_pred_ny/wage_pred - 1)) + geom_point()
 ```
 
 ## Plot statistics

@@ -177,7 +177,9 @@ custom_palettes <- list(
   `mixed` = custom_cols("blue", "green", "yellow", "orange", "red"),
   `grey`  = custom_cols("light grey", "dark grey"),
   `jet`   = c("#000080","#0000ff","#0080ff", "#00ffff", "#80ff80", "#ffff00","#ff8000","#ff0000", "#800000"),
-  `div`   = c("#5548C1","#DDDDDD", "#B10127")
+  `div`   = c("#5548C1","#DDDDDD", "#B10127"),
+  `cubehelix`     = c('#000000','#160c1f','#1a213e','#163d4e','#175a49','#2b6f39','#54792f','#877a3a','#b5795e','#d07e93','#d490c6','#caabe8','#c1caf3','#c8e4f0','#e0f5f0','#ffffff'), #default start=0.5, rot=-1.5, hue=1, gamma=1
+  `cubehelix_hue` = c('#000000','#180926','#17204d','#07425b','#01654c','#177d2b','#4b8313','#907c1b','#cc7149','#eb7190','#e882d4','#d1a3fe','#bcc9ff','#bee8fa','#d9f8f0','#ffffff')  #more hue start=0.5, rot=-1.5, hue=1.5, gamma=1
 )
 
 custom_pal <- function(palette = "main", reverse = FALSE, ...) {

@@ -15,6 +15,8 @@ library(zoo)
 library(ggdendro)
 library(lubridate)
 library(usmap)
+library(plyr)
+library(gridExtra)
 
 working_folder = 'D:/Github/KaggleSandbox/'
 #working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
@@ -84,6 +86,13 @@ plot_usmap(data = df_last, values = 'new_cases_avg_7d_per_capita') + theme(legen
 plot_usmap(data = df_last, values = 'new_cases_avg_7d') + theme(legend.position = "right") + 
   scale_fill_custom('mixed', discrete = FALSE)
 
+div_palettes  = c('BrBG', 'PiYG', 'PRGn', 'PuOr', 'RdBu', 'RdGy', 'RdYlBu', 'RdYlGn', 'Spectral')
+seq_palettes  = c('Blues', 'BuGn', 'BuPu', 'GnBu', 'Greens', 'Greys', 'Oranges', 'OrRd', 'PuBu', 'PuBuGn', 'PuRd', 'Purples', 'RdPu','Reds', 'YlGn', 'YlGnBu', 'YlOrBr', 'YlOrRd')
+plots = llply(seq_palettes, function(pal) {
+  plot_usmap(data = df_last, values = 'new_cases_avg_7d_per_capita') + theme(legend.position = "right") + 
+  scale_fill_distiller(palette = pal) + ggtitle(pal)
+})
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 
 ```
 
@@ -170,10 +179,11 @@ ggplot(data.frame(rms = cvob3$cvm, rms_hi = cvob3$cvup, rms_lo = cvob3$cvlo, lam
 coef_path = data.table(get_all_coefs(cvob3))
 coef_path[order(var_name), weight := seq(0, .N-1),  by =.(lambda)]
 coef_path[order(var_name,  decreasing = TRUE), adj_coef := cumsum(coef / weight),  by =.(lambda)]
-coef_path[, dof:=sum(coef==0), by =.(lambda)]
+coef_path[, dof:=sum(coef!=0), by =.(lambda)]
 coef_path[var_name != '(Intercept)', .( sum(coef),  sum(adj_coef)), by =.(lambda)] #sum of the coefs  -0.013400167
 
 coef_path[var_name != '(Intercept)' & lambda == cvob3$lambda.1se & coef != 0]
+coef_path[var_name != '(Intercept)' & dof == 4 & coef != 0]
 
 imp_vars = as.character(unique( coef_path[lambda >= cvob3$lambda.1se & abs(coef) >0, var_name] ))
 
@@ -187,6 +197,7 @@ ggplot(coef_path[var_name != '(Intercept)'], aes(var_name, log(lambda), fill = a
 
 df[, new_deaths_avg_7d_pred := predict(cvob3, newx=data.matrix(df[,model_rm_vars, with = F]), s= 'lambda.1se')]
 ggplot(df[state %in% my_states], aes(date, new_deaths_avg_7d)) + geom_line() + geom_line(aes(date, new_deaths_avg_7d_pred), color = 'red') + facet_wrap(~state, scales = 'free_y')
+ggplot(df[state %in% my_states], aes(new_deaths_avg_7d, new_deaths_avg_7d_pred)) + geom_point() + facet_wrap(~state, scales = 'free')
 
 summary(lm('new_deaths_avg_7d ~ new_deaths_avg_7d_pred', df))
 summary(lm('new_deaths_avg_7d ~ new_cases_rm_55', df))
@@ -197,6 +208,7 @@ summary(lm('new_deaths_avg_7d ~ new_cases_rm_55', df))
 model.lm = lm('new_deaths_avg_7d ~ new_cases_rm_55', df)
 df[, new_deaths_avg_7d_pred := predict(model.lm, df[,model_rm_vars, with = F])]
 ggplot(df[state %in% my_states], aes(date, new_deaths_avg_7d)) + geom_line() + geom_line(aes(date, new_deaths_avg_7d_pred), color = 'red') + facet_wrap(~state, scales = 'free_y')
+ggplot(df[state %in% my_states], aes(new_deaths_avg_7d, new_deaths_avg_7d_pred)) + geom_point() + facet_wrap(~state, scales = 'free')
 
 #model.lm = lm('new_deaths ~ new_cases_rm_50', df)
 #df[, new_deaths_pred := predict(model.lm, df[,model_rm_vars, with = F])]

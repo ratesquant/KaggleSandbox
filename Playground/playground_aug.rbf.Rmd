@@ -62,9 +62,19 @@ df[, is_test:= is.na(loss)]
 #df[, cat10_1_ex  :=  fct_infreq(fct_lump_prop(stri_sub(cat10,1,1), 0.005, other_level = "OT")) ]
 #df[, cat10_2_ex  :=  fct_infreq(fct_lump_prop(stri_sub(cat10,2,2), 0.005, other_level = "OT")) ]
 
+convert_to_prob <-function(x, train_index){
+  ecdf(x[train_index])(x)
+}
+
+convert_to_normal_prob <-function(x, train_index){
+  qnorm(pmin(1-1e-9,pmax(1e-9, ecdf(x[train_index])(x))) )
+}
 #percentile transform - not useful
 p_vars = stri_join('p_', all_vars)
 df[, (p_vars):=lapply(.SD, function(x) ecdf(x[train_index])(x) ), .SDcols = all_vars]
+
+n_vars = stri_join('n_', all_vars)
+df[, (n_vars):=lapply(.SD, function(x) convert_to_normal_prob(x, train_index)), .SDcols = all_vars]
 
 #w_vars = stri_join('w_', all_vars)
 #df[, (w_vars):=lapply(.SD, function(x) winsoraze(x, x[train_index], 0.001) ), .SDcols = all_vars]
@@ -92,8 +102,9 @@ plot_cormat(df[train_index, all_vars, with = FALSE ])
 ## RBF
 7.895165 - rbf_linear_kernel, L2
 ```{r default_run, echo=FALSE}
+set.seed(12789)
 
-rfb_vars = c(p_vars)
+rfb_vars = c(n_vars)
 
 #my_index = sample( which(train_index & df$target > 4), 1.0*sum(train_index))
 dfs = data.matrix(df[train_index, rfb_vars, with = FALSE])
@@ -101,12 +112,12 @@ target = df$loss[train_index]
 
 #0.5*(1 + sqrt(5))
 
-models_boost =  rbf_boost.create(dfs, target, 4, max_nodes = 8*1024, n_runs = 3, max_it = 15, growth_rate = 0.5*(1 + sqrt(5)), kernel_fun = rbf_mquad_kernel, dist_fun = 'L2', adaptive = TRUE)
+models_boost =  rbf_boost.create(dfs, target, 2, max_nodes = 1024, n_runs = 10, max_it = 15, growth_rate = 2, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1', adaptive = TRUE)
 res = rbf_boost.predict(models_boost, df[,rfb_vars, with = FALSE], combine_boots = TRUE)
 setDT(res)
 df[, target_rbf := res[order(id)][model_id1 == max(model_id1), y_pred_cum]] 
 
-rms(df$loss[train_index], df$target_rbf[train_index] )
+rms(df$loss[train_index], df$target_rbf[train_index])
 
 #ggplot(df[train_index,], aes(round(target_rbf))) + geom_bar()
 
@@ -114,20 +125,30 @@ rms(df$loss[train_index], df$target_rbf[train_index] )
 res_sum = res[, .(y_pred = mean(y_pred_cum)), by =.(id, model_id1 )]
 ggplot(res_sum[, .(error = rms(y_pred[train_index], df$loss[train_index])), by =.(model_id1)], aes(model_id1, error)) + geom_line() + geom_point()
 
-
 #ggplot(res_sum, aes(x, y_pred, group = model_id1 )) + geom_line()  + facet_wrap(~model_id1 )
 
- plots = llply(rfb_vars, function(var_name) { #lgb_vars
-    p = plot_profile(df$target_rbf[train_index],  df$loss[train_index], df[[var_name]][train_index], bucket_count = 20, error_band = 'normal') +
-      ggtitle(var_name) +  theme(title =element_text(size=8))
-    return( ggplotGrob(p) )
-  })
-  marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
-  ggsave(filename = file.path(working_folder,"Playground/Aug2021/profiles_rbf.pdf"), plot = marrangeGrob(plots, nrow=4, ncol=4), device = 'pdf', width = 14, height = 8.5, dpi = 360)
-  
-  plot_profile(df$target_rbf[train_index],  df$loss[train_index], df[['f81']][train_index], bucket_count = 50, error_band = 'normal') +  theme(title =element_text(size=8))
-  plot_profile(df$target_rbf[train_index],  df$loss[train_index], df[['f52']][train_index], bucket_count = 50, error_band = 'normal') +  theme(title =element_text(size=8))
-  
+plots = llply(rfb_vars, function(var_name) { #lgb_vars
+  p = plot_profile(df$target_rbf[train_index],  df$loss[train_index], df[[var_name]][train_index], bucket_count = 20, error_band = 'normal') +
+    ggtitle(var_name) +  theme(title =element_text(size=8))
+  return( ggplotGrob(p) )
+})
+marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
+ggsave(filename = file.path(working_folder,"Playground/Aug2021/profiles_rbf.pdf"), plot = marrangeGrob(plots, nrow=4, ncol=4), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+
+plot_profile(df$target_rbf[train_index],  df$loss[train_index], df[['f81']][train_index], bucket_count = 50, error_band = 'normal') +  theme(title =element_text(size=8))
+plot_profile(df$target_rbf[train_index],  df$loss[train_index], df[['f52']][train_index], bucket_count = 50, error_band = 'normal') +  theme(title =element_text(size=8))
+
+#--- CV ------------
+# 1024 - nodes max
+#7.889247: 2, max_nodes = 1024, n_runs = 10, max_it = 20, growth_rate = 2, nfolds = 5, kernel_fun = rbf_linear_kernel, dist_fun = 'L2', adaptive = FALSE
+#7.857915  2, max_nodes = 1024, n_runs = 10, max_it = 20, growth_rate = 2, nfolds = 5, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1', adaptive = TRUE
+#7.857689  2, max_nodes = 1024, n_runs = 10, max_it = 20, growth_rate = 2, nfolds = 5, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1', adaptive = FALSE
+#7.858613  2, max_nodes = 1024, n_runs = 10, max_it = 20, growth_rate = 2, nfolds = 5, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1', adaptive = FALSE
+cv_res = rbf_boost.create_cv(dfs, target, 2, max_nodes = 4096, n_runs = 10, max_it = 50, growth_rate = 1.5, nfolds = 5, kernel_fun = rbf_mquad_kernel, dist_fun = 'L2', adaptive = FALSE )
+df_cv_res = data.table(it = seq(nrow(cv_res)), avg = apply(cv_res, 1, mean ), sigma = apply(cv_res, 1, sd ), cv_res )
+ggplot(df_cv_res[avg>0], aes(it, avg)) + geom_line() + geom_point() + geom_ribbon(aes(it, ymin = avg - sigma, ymax = avg + sigma), alpha = 0.2, fill = 'blue')
+#+ geom_hline(yintercept = c(7.8), color = 'red', linetype = 'dashed')
+
 ```
 
 ## RBF 1D
@@ -175,7 +196,7 @@ df[, target_rbf := predict(model.lm, .SD)]
 v1  - 7.93674 baseline (no optimization, no pre-processing)
 v2  - 7.93643 lm model based on RBF 1D
 v3 -  7.95343 lm model based on RBF 1D, 128_50
-
+v4 - 7.89885
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Apr2021/data/df.csv'))
  

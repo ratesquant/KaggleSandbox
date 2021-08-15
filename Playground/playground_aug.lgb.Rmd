@@ -60,7 +60,8 @@ convert_to_prob <-function(x, train_index){
 }
 
 convert_to_normal_prob <-function(x, train_index){
-  qnorm(pmin(1-1e-9,pmax(1e-9, ecdf(x[train_index])(x))) )
+  six_sigma = pnorm(-6)
+  qnorm(pmin(1-six_sigma,pmax(six_sigma, ecdf(x[train_index])(x))) )
 }
 
 #pre-preprocess
@@ -68,22 +69,30 @@ convert_to_normal_prob <-function(x, train_index){
 #df[, cat10_2_ex  :=  fct_infreq(fct_lump_prop(stri_sub(cat10,2,2), 0.005, other_level = "OT")) ]
 
 #percentile transform - not useful
-#p_vars = stri_join('p_', all_vars)
-#df[, (p_vars):=lapply(.SD, function(x) ecdf(x[train_index])(x) ), .SDcols = all_vars]
+p_vars = stri_join('p_', all_vars)
+df[, (p_vars):=lapply(.SD, function(x) convert_to_prob(x, train_index)), .SDcols = all_vars]
+
+#p50_vars = stri_join('p50_', all_vars)
+#df[, (p50_vars):=lapply(.SD, function(x) floor(50*convert_to_prob(x, train_index))/50), .SDcols = all_vars]
 
 #normal transform - not useful
 n_vars = stri_join('n_', all_vars)
 df[, (n_vars):=lapply(.SD, function(x) convert_to_normal_prob(x, train_index)), .SDcols = all_vars]
 
-
 w_vars = stri_join('w_', all_vars)
 df[, (w_vars):=lapply(.SD, function(x) winsoraze(x, x[train_index], 0.001) ), .SDcols = all_vars]
 
+df[, is_loss := as.numeric(loss > 0) ]
 ```
 
 ## Plots
 
 ```{r plots, echo=FALSE}
+
+table(df[train_index, loss])
+
+ggplot(df[train_index], aes(loss)) + geom_bar()
+
 imp_vars= c('f81','f52','f25','f77','f3','f96','f50','f69','f13')
 s_index = sample.int(nrow(df),10000)
 #plots = llply(all_vars %!in_set% c('id'), function(var_name){
@@ -92,9 +101,13 @@ plots = llply(imp_vars %!in_set% c('id'), function(var_name){
   })
 marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 
-small_index = sample.int(nrow(df), 5000)
+small_index = sample.int(nrow(df), 10000)
 ggplot(df[small_index], aes(f81, loss)) + geom_point(alpha = 0.3) + geom_smooth(span = 0.1, method = 'loess', se = FALSE)
 ggplot(df[small_index], aes(f52, loss)) + geom_point(alpha = 0.3)
+ggplot(df[small_index], aes(f81, loss)) + geom_point(alpha = 0.3, shape = '.')
+ggplot(df[small_index], aes(p50_f81, loss)) + geom_point(alpha = 0.3) + geom_smooth(span = 0.1, method = 'loess', se = FALSE)
+
+ggplot(df[loss %in% seq(0, 40)], aes(f81, group = loss, color = factor(loss) )) + geom_density()
 
 #decimal point
 ggplot(df[small_index], aes(f52-floor(f52), loss)) + geom_point(alpha = 0.3)
@@ -107,8 +120,36 @@ plots = llply(all_vars %!in_set% c('id'), function(var_name){
   })
 marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
 
-plot_profile(df$loss[train_index],  df$loss[train_index], df[["f81"]][train_index], bucket_count = 25, error_band = 'normal')
+plot_profile(df$loss[train_index],  df$loss[train_index], df[["f81"]][train_index], bucket_count = 20, error_band = 'normal')
+plot_profile(df$loss[train_index],  df$loss[train_index], df[["f52"]][train_index], bucket_count = 20, error_band = 'normal')
 plot_profile(df$loss[train_index],  df$loss[train_index], df[["f81"]][train_index] - floor( df[["f81"]][train_index]), bucket_count = 10, error_band = 'normal')
+
+ggplot(df[train_index, ], aes_string('n_f81', 'n_f52')) + stat_bin_2d() + 
+  scale_fill_distiller(palette = "YlOrRd") + facet_wrap(~loss)
+
+ggplot(df[train_index, ], aes_string('n_f81', 'n_f52', z = 'loss')) + stat_summary_2d(fun = function(x) mean(x, na.rm = TRUE), bins = 100) + 
+  scale_fill_distiller(palette = "YlOrRd")# + scale_fill_custom(discrete = FALSE)
+
+ggplot(df[train_index, ], aes_string('n_f81', 'n_f52', z = 'loss')) + stat_summary_2d(fun = function(x) mean(x, na.rm = TRUE), bins = 100) + 
+  scale_fill_distiller(palette = "YlOrRd")# + scale_fill_custom(discrete = FALSE)
+
+ggplot(df[train_index, ], aes_string('p_f81', 'p_f52', z = 'loss')) + stat_summary_2d(fun = function(x) ifelse(length(x)<3, NA, mean(x, na.rm = TRUE)), bins = 100) + 
+  scale_fill_distiller(palette = "YlOrRd")# + scale_fill_custom(discrete = FALSE)
+
+ggplot(df[train_index, ], aes_string('n_f81', 'n_f52', z = 'target_lgb')) + stat_summary_2d(fun = function(x) mean(x, na.rm = TRUE), bins = 100) + 
+  scale_fill_distiller(palette = "YlOrRd")# + scale_fill_custom(discrete = FALSE)
+
+ggplot(df[train_index, ], aes_string('n_f52', 'n_f25', z = 'loss')) + stat_summary_2d(fun = function(x) ifelse(length(x)<3, NA, mean(x, na.rm = TRUE)), bins = 100) + 
+  scale_fill_distiller(palette = "YlOrRd")# + scale_fill_custom(discrete = FALSE)
+  
+all_combinations = combn(as.vector(stri_join('n_', imp_vars)), 2, simplify = TRUE)
+plots_2d = llply(seq(dim(all_combinations)[2]), function(i) {
+  #ggplot(df[train_index, ], aes_string(all_combinations[1,i],all_combinations[2,i], z = 'loss')) + stat_summary_2d(fun = function(x) ifelse(length(x)<3, NA, mean(x, na.rm = TRUE)), bins = 100) + 
+  #scale_fill_distiller(palette = "YlOrRd") + theme(legend.position = 'None')
+  ggplot(df[train_index, ], aes_string(all_combinations[1,i],all_combinations[2,i], z = 'loss')) + stat_summary_2d(fun = function(x) mean(x, na.rm = TRUE), bins = 100) + 
+  scale_fill_distiller(palette = "YlOrRd") + theme(legend.position = 'None')
+})
+marrangeGrob(plots_2d, nrow = 6, ncol = 6, top = NULL)
 
 #df[, c('loss', imp_vars), with= FALSE]
 plot_cormat(df[train_index, all_vars, with = FALSE ])
@@ -135,7 +176,11 @@ t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
 #lgb_vars = c(w_vars) %!in_set% c('id')
 #lgb_vars = c(p_vars) %!in_set% c('id')
 #lgb_vars = c(rbf_vars) %!in_set% c('id')
-lgb_vars = c(n_vars) %!in_set% c('id')
+lgb_vars = c(n_vars) %!in_set% c('id') #best performance
+#lgb_vars = c(p50_vars) %!in_set% c('id') 
+#lgb_vars = c(n_vars, r_vars) %!in_set% c('id')
+#lgb_vars = names(df)[grep('f[0-9]*_lgb', names(df))]
+
 
 my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
 
@@ -212,6 +257,124 @@ plot_profile(df$target_lgb[train_index],  df$loss[train_index], df[['f81']][trai
 
 ```
 
+## LightGBM - TWO stage
+Binomial regression for loss == 0
+Regression for loss > 0
+```{r two_state_model, echo=FALSE}
+
+set.seed(1321)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+#lgb_vars = c(all_vars) %!in_set% c('id')
+#lgb_vars = c(w_vars) %!in_set% c('id')
+#lgb_vars = c(p_vars) %!in_set% c('id')
+#lgb_vars = c(rbf_vars) %!in_set% c('id')
+lgb_vars = c(n_vars) %!in_set% c('id') #best performance
+#lgb_vars = c(p50_vars) %!in_set% c('id') 
+#lgb_vars = c(n_vars, r_vars) %!in_set% c('id')
+#lgb_vars = names(df)[grep('f[0-9]*_lgb', names(df))]
+
+my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
+
+dfs = df[t_index_v1, c(obj_var,lgb_vars), with = FALSE][loss>0]
+
+dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
+params <- list(objective = "regression", metric = "rmse")
+
+model.lgb <- lgb.cv(
+  params = params,
+  data = dtrain,
+  nrounds = 4000,
+  nfold = 10,
+  num_threads = 5, 
+  
+  min_data = 850, #default = 20
+  learning_rate = 0.008,
+  num_leaves = 90,
+  bagging_fraction = 0.95,
+  min_data_in_bin = 3,
+
+  boost_from_average = TRUE,
+  eval_freq = 100,
+  early_stopping_rounds = 100,
+  force_col_wise=TRUE
+)
+
+#saveRDS(model.lgb, file.path(working_folder,'Playground/Aug2021/data/model_lgb.rds'))
+
+cv_error = as.numeric(model.lgb$record_evals$valid$rmse$eval)
+ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line() 
+
+min(cv_error) #7.841514
+
+dm_all = data.matrix(df[,lgb_vars, with = F])
+pred.lgb_cvi = ldply(seq(length(model.lgb$boosters)), function(i){ data.frame(cv = i, id = df$id, pred= predict(model.lgb$boosters[[i]]$booster, dm_all)) } )
+setDT(pred.lgb_cvi)
+
+pred.lgb_cv_summary = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(cv)]
+pred.lgb_cv         = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(id)]
+
+#%% Plot -----
+#plot_profiles(df$target_lgb[train_index], df[train_index,])
+#plot_profiles_2d(df$target_lgb[p_index], df[p_index,])
+
+df[pred.lgb_cv, target_lgb :=  i.avg, on=.(id)]
+
+lgb_importance = lgb.importance(model.lgb$boosters[[1]][[1]], percentage = TRUE)
+ggplot(lgb_importance, aes(fct_reorder(Feature,Gain), Gain)) + geom_bar(stat = 'identity') + coord_flip()
+#lgb.plot.interpretation(lgb_importance)
+
+### - logistic regression for loss > 0 -----------
+dfs = df[t_index_v1, c('is_loss',lgb_vars), with = FALSE]
+
+dtrain_bin <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[['is_loss']], categorical_feature = my_cat_vars)
+params_bin <- list(objective = "binary", metric = "binary_logloss")
+
+
+model.lgb_bin <- lgb.cv(
+  params = params_bin,
+  data = dtrain_bin,
+  nrounds = 4000,
+  nfold = 10,
+  num_threads = 5, 
+  
+  min_data = 20, #default = 20
+  learning_rate = 0.008,
+  num_leaves = 90,
+  bagging_fraction = 0.95,
+  min_data_in_bin = 3,
+
+  boost_from_average = TRUE,
+  eval_freq = 100,
+  early_stopping_rounds = 100,
+  force_col_wise=TRUE
+)
+
+#saveRDS(model.lgb_bin, file.path(working_folder,'Playground/Aug2021/data/model_lgb_bin.rds'))
+cv_error = as.numeric(model.lgb_bin$record_evals$valid$binary_logloss$eval)
+ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line()
+
+min(cv_error) #7.841514
+
+dm_all = data.matrix(df[,lgb_vars, with = F])
+pred.lgb_cvi_bin = ldply(seq(length(model.lgb_bin$boosters)), function(i){ data.frame(cv = i, id = df$id, pred= predict(model.lgb_bin$boosters[[i]]$booster, dm_all)) } )
+setDT(pred.lgb_cvi_bin)
+
+pred.lgb_cv_summary_bin = pred.lgb_cvi_bin[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(cv)]
+pred.lgb_cv_bin         = pred.lgb_cvi_bin[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(id)]
+
+#%% Plot -----
+#plot_profiles(df$target_lgb[train_index], df[train_index,])
+#plot_profiles_2d(df$target_lgb[p_index], df[p_index,])
+
+df[pred.lgb_cv_bin, loss_prob :=  i.avg, on=.(id)]
+df[, loss_pred := loss_prob * target_lgb]
+
+plot_binmodel_predictions(df$is_loss[train_index], df$loss_prob[train_index])
+```
+
 ##Submit 
       7.85832
 v1  - 7.88803 baseline (no optimization, no pre-processing)
@@ -221,13 +384,14 @@ v4  - 7.87727  (params optimization, winzoring 0.1% for each variable)
 v5  - 7.87703  (further params optimization, winzoring 0.1% for each variable, cv = 7.839697)
 v6  - 7.87689  (further params optimization, no winzoring, cv = 7.839599)
 v7  - 7.87606  (params optimization, and normal variables)
+      
 
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Apr2021/data/df.csv'))
  
-  file = file.path(working_folder, "Playground/Aug2021/submit_v8.lgb.csv")
+  file = file.path(working_folder, "Playground/Aug2021/submit_v13.lgb.csv")
   #fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
-  fwrite(df[test_index, .(id, loss = target_lgb)], file = file, row.names = FALSE)
+  fwrite(df[test_index, .(id, loss = loss_pred)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)
 
@@ -247,18 +411,18 @@ lgb_vars = c(w_vars) %!in_set% c('id')
 
 my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
 
-dfs = df[t_index_v1, c(obj_var,lgb_vars), with = FALSE]
-
 params <- list(objective = "regression", metric = "rmse")
 
 my_params = data.table(expand.grid(
+                       winsor_rate = c(0, 0.001, 0.01, 0.02),
                        learning_rate = c(0.008), 
-                       bagging_fraction = c(0.975), 
-                       min_data = seq(500, 800, by = 25), #default = 20
+                       bagging_fraction = c(0.95), 
+                       min_data = c(850), #default = 20
                        min_data_in_bin = c(3), #default = 3
-                       num_leaves = c(78) )) #default = 31
+                       num_leaves = c(90),
+                       max_depth = -1)) #default = 31
 
-if(TRUE){
+if(FALSE){
   n_runs = 100 # 10 runs per hour
   my_params = data.table(
                          learning_rate = runif(n_runs, 0.005, 0.01), 
@@ -277,6 +441,10 @@ param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   
   start_time <- Sys.time()
   
+  df[, (w_vars):=lapply(.SD, function(x) winsoraze(x, x[train_index], my_params$winsor_rate[run_index] ) ), .SDcols = all_vars]
+  
+  dfs = df[t_index_v1, c(obj_var,lgb_vars), with = FALSE]
+
   dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
   
   model.lgb <- lgb.cv(
@@ -316,6 +484,7 @@ param_res[best_score  == min(best_score)]
 #   best_it best_score  elapsed learning_rate bagging_fraction min_data min_data_in_bin num_leaves
 #1:    2121    7.83797 11.89034   0.007467573        0.9575782      861               7         99
 
+ggplot(param_res, aes(winsor_rate , best_score)) + geom_point()
 ggplot(param_res, aes(best_it, elapsed)) + geom_point()
 ggplot(param_res, aes(best_it, learning_rate)) + geom_point()
 
@@ -436,5 +605,73 @@ ggplot(param_res, aes(min_age, best_score)) + geom_point()
 
 ```
 
+## LightGBM 1D
 
+```{r default_run_1d, echo=FALSE}
+
+set.seed(1321)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+lgb_vars = c(all_vars) %!in_set% c('id')
+#lgb_vars = c(w_vars) %!in_set% c('id')
+#lgb_vars = c(p_vars) %!in_set% c('id')
+#lgb_vars = c(rbf_vars) %!in_set% c('id')
+#lgb_vars = c(n_vars) %!in_set% c('id')
+
+for(my_vars in lgb_vars){
+  
+  print(my_vars)
+
+my_cat_vars =  names(which(sapply(df[,my_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
+
+dfs = df[t_index_v1, c(obj_var,my_vars), with = FALSE]
+
+dtrain <- lgb.Dataset(data.matrix(dfs[, my_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
+params <- list(objective = "regression", metric = "rmse")
+
+model.lgb <- lgb.cv(
+  params = params,
+  data = dtrain,
+  nrounds = 4000,
+  nfold = 10,
+  num_threads = 5, 
+  
+  min_data = 850, #default = 20
+  learning_rate = 0.008,
+  num_leaves = 90,
+  bagging_fraction = 0.95,
+  min_data_in_bin = 3,
+
+  boost_from_average = TRUE,
+  eval_freq = 10,
+  early_stopping_rounds = 100,
+  force_row_wise=TRUE
+)
+
+#saveRDS(model.lgb, file.path(working_folder,'Playground/Aug2021/data/model_lgb.rds'))
+
+cv_error = as.numeric(model.lgb$record_evals$valid$rmse$eval)
+ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line() 
+
+min(cv_error) #7.841514
+
+dm_all = data.matrix(df[,my_vars, with = F])
+pred.lgb_cvi = ldply(seq(length(model.lgb$boosters)), function(i){ data.frame(cv = i, id = df$id, pred= predict(model.lgb$boosters[[i]]$booster, dm_all)) } )
+setDT(pred.lgb_cvi)
+
+pred.lgb_cv_summary = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(cv)]
+pred.lgb_cv         = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(id)]
+
+
+my_vars_lgb =  stri_join(my_vars, '_lgb')
+df[pred.lgb_cv, c(my_vars_lgb) :=  i.avg, on=.(id)]
+
+#plot_profile(df$f81_lgb[train_index],  df$loss[train_index], df[['f81']][train_index], bucket_count = 20, error_band = 'normal')
+}
+
+fwrite(df, file.path(working_folder,'Playground/Aug2021/data/df_lgb_vars.csv'))
+
+```
 

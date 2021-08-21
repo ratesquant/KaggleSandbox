@@ -257,6 +257,95 @@ plot_profile(df$target_lgb[train_index],  df$loss[train_index], df[['f81']][trai
 
 ```
 
+## LightGBM Multi-Class
+
+```{r default_run_mc, echo=FALSE}
+
+set.seed(1321)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+#lgb_vars = c(all_vars) %!in_set% c('id')
+#lgb_vars = c(w_vars) %!in_set% c('id')
+#lgb_vars = c(p_vars) %!in_set% c('id')
+#lgb_vars = c(rbf_vars) %!in_set% c('id')
+lgb_vars = c(n_vars) %!in_set% c('id') #best performance
+#lgb_vars = c(p50_vars) %!in_set% c('id') 
+#lgb_vars = c(n_vars, r_vars) %!in_set% c('id')
+#lgb_vars = names(df)[grep('f[0-9]*_lgb', names(df))]
+
+
+my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
+
+dfs = df[t_index_v1, c(obj_var,lgb_vars), with = FALSE]
+
+class_count = length(unique(dfs[[obj_var]]))
+
+dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
+params <- list(objective = "multiclass", metric = "multi_logloss", num_class = class_count)
+
+model.lgb <- lgb.cv(
+  params = params,
+  data = dtrain,
+  nrounds = 4000,
+  nfold = 10,
+  num_threads = 5, 
+  
+  min_data = 100, #default = 20
+  learning_rate = 0.008,
+  num_leaves = 90,
+  bagging_fraction = 0.95,
+  min_data_in_bin = 3,
+
+  boost_from_average = TRUE,
+  eval_freq = 100,
+  early_stopping_rounds = 100
+)
+
+#saveRDS(model.lgb, file.path(working_folder,'Playground/Aug2021/data/model_lgb.rds'))
+
+cv_error = as.numeric(model.lgb$record_evals$valid$multi_logloss$eval_err)
+ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line() 
+
+min(cv_error) #7.841514
+
+dm_all = data.matrix(df[,lgb_vars, with = F])
+class_map = data.table(expand.grid(class_id =seq(class_count) - 1, id = df$id))
+pred.lgb_cvi = ldply(seq(length(model.lgb$boosters)), function(i){  data.frame(cv = i, id = class_map$id, class_id =class_map$class_id,  pred= predict(model.lgb$boosters[[i]]$booster, dm_all)) } )
+setDT(pred.lgb_cvi)
+
+pred.lgb_cv         = pred.lgb_cvi[, .(.N, avg=0.1*sum(pred * class_id)), by =.(id)]
+
+#%% Plot -----
+#plot_profiles(df$target_lgb[train_index], df[train_index,])
+#plot_profiles_2d(df$target_lgb[p_index], df[p_index,])
+
+df[pred.lgb_cv, loss_pred_mc :=  i.avg, on=.(id)]
+
+lgb_importance = lgb.importance(model.lgb$boosters[[1]][[1]], percentage = TRUE)
+ggplot(lgb_importance, aes(fct_reorder(Feature,Gain), Gain)) + geom_bar(stat = 'identity') + coord_flip()
+#lgb.plot.interpretation(lgb_importance)
+
+ plots = llply(lgb_importance$Feature, function(var_name) { #lgb_vars
+    p = plot_profile(df$target_lgb[train_index],  df$loss[train_index], df[[var_name]][train_index], bucket_count = 20, error_band = 'normal') +
+      ggtitle(var_name) +  theme(title =element_text(size=8))
+    return( ggplotGrob(p) )
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
+  ggsave(filename = file.path(working_folder,"Playground/Aug2021/profiles_mc.pdf"), plot = marrangeGrob(plots, nrow=4, ncol=4), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+  
+  plot_profile(df$target_lgb[train_index],  df$loss[train_index], df[['f81']][train_index], bucket_count = 50, error_band = 'normal') +  theme(title =element_text(size=8))
+  
+plot_profile(df$loss_pred_mc[train_index],  df$loss[train_index], df[['n_f81']][train_index], bucket_count = 20, error_band = 'normal')
+
+#ggplot(df[train_index,], aes(loss)) + geom_bar()
+#ggplot(df[train_index,], aes(round(target_lgb))) + geom_bar()
+
+#ggplot(df[train_index ], aes(loss)) + geom_density(adjust = 0.6) + geom_density(aes(loss_pred_mc), adjust = 0.1, color = 'red') 
+
+```
+
 ## LightGBM - TWO stage (PD, LGD model)
 Binomial regression for loss == 0
 Regression for loss > 0
@@ -278,7 +367,7 @@ lgb_vars = c(n_vars) %!in_set% c('id') #best performance
 
 my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
 
-dfs = df[t_index_v1, c(obj_var,lgb_vars), with = FALSE][loss>0]
+dfs = df[t_index_v1, c(obj_var,lgb_vars), with = FALSE][loss>0,]
 
 dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
 params <- list(objective = "regression", metric = "rmse")
@@ -302,7 +391,7 @@ model.lgb <- lgb.cv(
   force_col_wise=TRUE
 )
 
-#saveRDS(model.lgb, file.path(working_folder,'Playground/Aug2021/data/model_lgb.rds'))
+saveRDS(model.lgb, file.path(working_folder,'Playground/Aug2021/data/model_lgb_lgd.rds'))
 
 cv_error = as.numeric(model.lgb$record_evals$valid$rmse$eval)
 ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line() 
@@ -336,14 +425,14 @@ params_bin <- list(objective = "binary", metric = "binary_logloss")
 model.lgb_bin <- lgb.cv(
   params = params_bin,
   data = dtrain_bin,
-  nrounds = 4000,
+  nrounds = 6000,
   nfold = 10,
   num_threads = 5, 
   
-  min_data = 20, #default = 20
+  min_data = 550, #default = 20
   learning_rate = 0.008,
-  num_leaves = 90,
-  bagging_fraction = 0.95,
+  num_leaves = 125,
+  bagging_fraction = 0.97,
   min_data_in_bin = 3,
 
   boost_from_average = TRUE,
@@ -352,7 +441,7 @@ model.lgb_bin <- lgb.cv(
   force_col_wise=TRUE
 )
 
-#saveRDS(model.lgb_bin, file.path(working_folder,'Playground/Aug2021/data/model_lgb_bin.rds'))
+saveRDS(model.lgb_bin, file.path(working_folder,'Playground/Aug2021/data/model_lgb_bin.rds'))
 cv_error = as.numeric(model.lgb_bin$record_evals$valid$binary_logloss$eval)
 ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line()
 
@@ -370,9 +459,54 @@ pred.lgb_cv_bin         = pred.lgb_cvi_bin[, .(.N, avg=mean(pred), sigma = sd(pr
 #plot_profiles_2d(df$target_lgb[p_index], df[p_index,])
 
 df[pred.lgb_cv_bin, loss_prob :=  i.avg, on=.(id)]
+df[, loss_logodds := logit(loss_prob) ]
 df[, loss_pred := loss_prob * lgd_pred]
 
+#correct prob
+model.glm_bin = glm('is_loss ~ loss_logodds', family = binomial(link = "logit"), data = df[train_index])
+summary(model.glm_bin)
+
+df[, loss_prob_glm := predict(model.glm_bin, df,  type = 'response')]
+
 plot_binmodel_predictions(df$is_loss[train_index], df$loss_prob[train_index])
+plot_binmodel_predictions(df$is_loss[train_index], df$loss_prob_glm[train_index])
+
+plot_binmodel_percentiles(df$is_loss[train_index], df$loss_prob[train_index], 10)
+plot_binmodel_percentiles(df$is_loss[train_index], df$loss_prob_glm[train_index], 10)
+
+df[, loss_pred_glm := loss_prob_glm * lgd_pred] #does not work!!
+
+df[train_index, .(mean(loss), mean(loss_pred), mean(loss_pred_glm), sqrt(mean((loss - loss_pred)^2)), sqrt(mean((loss - loss_pred_glm)^2))  )]
+
+df[is.na(loss_pred)]
+df[is.na(loss_pred_glm)]
+
+if(FALSE){
+plots = llply(lgb_importance$Feature, function(var_name) { #lgb_vars
+    p = plot_profile(df$loss_pred[train_index],  df$loss[train_index], df[[var_name]][train_index], bucket_count = 20, error_band = 'normal') +
+      ggtitle(var_name) +  theme(title =element_text(size=8))
+    return( ggplotGrob(p) )
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
+  ggsave(filename = file.path(working_folder,"Playground/Aug2021/profiles_lgd.pdf"), plot = marrangeGrob(plots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+  
+  plot_profile(df$loss_prob[train_index],      df$is_loss[train_index], df[['f52']][train_index], bucket_count = 20, error_band = 'binom')
+  plot_profile(df$loss_prob_glm[train_index],  df$is_loss[train_index], df[['f52']][train_index], bucket_count = 20, error_band = 'binom')
+  
+  plot_profile(df$loss_pred[train_index],  df$loss[train_index], df[['f81']][train_index], bucket_count = 20, error_band = 'normal')
+  plot_profile(df$loss_pred_glm[train_index],  df$loss[train_index], df[['f81']][train_index], bucket_count = 20, error_band = 'normal')
+
+  
+  s_index = sample.int(nrow(df),10000)
+  ggplot(df[s_index ], aes(loss_prob, loss_prob_glm)) + geom_point()
+  
+  ggplot(df[train_index ], aes(loss)) + geom_density(adjust = 0.1)
+  ggplot(df[train_index ], aes(loss_pred)) + geom_density(adjust = 0.1) + 
+    geom_density(aes(loss_pred_glm), adjust = 0.1) +  
+    geom_density(aes(loss), adjust = 0.7, color = 'red')
+  
+}
+#df[,.(loss_prob_glm, loss_prob, lgd_pred, loss_prob_glm * lgd_pred, loss_prob * lgd_pred, loss, is_loss)]
 ```
 
 ##Submit 
@@ -384,14 +518,15 @@ v4  - 7.87727  (params optimization, winzoring 0.1% for each variable)
 v5  - 7.87703  (further params optimization, winzoring 0.1% for each variable, cv = 7.839697)
 v6  - 7.87689  (further params optimization, no winzoring, cv = 7.839599)
 v7  - 7.87606  (params optimization, and normal variables)
+v13 - 7.87027 (pd lgd model)
       
 
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Apr2021/data/df.csv'))
  
-  file = file.path(working_folder, "Playground/Aug2021/submit_v13.lgb.csv")
+  file = file.path(working_folder, "Playground/Aug2021/submit_v15.lgb.csv")
   #fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
-  fwrite(df[test_index, .(id, loss = loss_pred)], file = file, row.names = FALSE)
+  fwrite(df[test_index, .(id, loss = loss_pred_glm)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)
 
@@ -660,13 +795,13 @@ my_params = data.table(expand.grid(
                        num_leaves = c(90))) #default = 31
 
 if(TRUE){
-  n_runs = 100 # 10 runs per hour
+  n_runs = 20 # 10 runs per hour
   my_params = data.table(
-                         learning_rate = runif(n_runs, 0.007, 0.009), 
-                         bagging_fraction = runif(n_runs, 0.94, 0.98), 
-                         min_data = sample(seq(from = 100, to = 500),n_runs, TRUE), #default = 20
-                         min_data_in_bin = sample(seq(3, 5),n_runs, TRUE), #default = 3
-                         num_leaves = sample(seq(90, 150),n_runs, TRUE)) #default = 31
+                         learning_rate = runif(n_runs, 0.007, 0.008), 
+                         bagging_fraction = runif(n_runs, 0.95, 0.97), 
+                         min_data = sample(seq(from = 450, to = 650),n_runs, TRUE), #default = 20
+                         min_data_in_bin = sample(c(3),n_runs, TRUE), #default = 3
+                         num_leaves = sample(seq(110, 130),n_runs, TRUE)) #default = 31
 }
 
 param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
@@ -714,8 +849,8 @@ setDT(param_res)
 setorder(param_res, best_score)
 param_res[best_score  == min(best_score)]
 
-#  best_it best_score  elapsed learning_rate bagging_fraction min_data min_data_in_bin num_leaves
-# 1:    1038   7.939185 5.151993   0.007876834        0.9506988      159               6        114
+#   best_it best_score  elapsed learning_rate bagging_fraction min_data min_data_in_bin num_leaves
+#1:    3987  0.5105651 25.11452    0.00794818        0.9733459      475               3        129
 
 ggplot(param_res, aes(best_it, elapsed)) + geom_point()
 ggplot(param_res, aes(best_it, learning_rate)) + geom_point()
@@ -738,6 +873,7 @@ model.gbm = gbm(formula.gbm,
                 shrinkage = 0.002,#0.005
                 bag.fraction = 1.0,
                 interaction.depth = 2,
+                n.minobsinnode = 1,
                 cv.folds = 10,
                 n.cores = 6,
                 verbose =  TRUE)

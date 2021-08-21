@@ -69,6 +69,95 @@ ggplot(df_county[state ==  'North Carolina'], aes(date, new_deaths)) + geom_line
 
 ```
 
+
+## Load Global Data
+
+```{r load_global_Data}
+
+#Load cases
+df_glob        = fread('https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv')
+df_glob = melt(df_glob, id.vars = c('Province/State','Country/Region','Lat','Long'))
+df_glob[, date := as.Date(variable, format = '%m/%d/%y')]
+setnames(df_glob, c('Country/Region','Province/State','value'), c('region', 'state', 'cases'), skip_absent=TRUE)
+
+#Load deaths
+df_glob_deaths = fread('https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv')
+df_glob_deaths = melt(df_glob_deaths, id.vars = c('Province/State','Country/Region','Lat','Long'))
+df_glob_deaths[, date := as.Date(variable, format = '%m/%d/%y')]
+setnames(df_glob_deaths, c('Country/Region','Province/State','value'), c('region', 'state', 'deaths'), skip_absent=TRUE)
+
+df_glob[df_glob_deaths, deaths:=i.deaths, on = .(region, state, date)]
+
+df_glob[order(date), new_cases  := cases  - shift(cases), by = .(region, state)]
+df_glob[order(date), new_deaths  := deaths  - shift(deaths), by = .(region, state)]
+df_glob[order(date), new_cases_avg_7d    := rollmeanr(new_cases,  k = 7, na.pad = TRUE), by = .(region, state)]
+df_glob[order(date), new_deaths_avg_7d   := rollmeanr(new_deaths, k = 7, na.pad = TRUE), by = .(region, state)]
+
+
+my_regions = c('United Kingdom','Ukraine', 'Russia','Israel', 'US', 'India', 'Germany', 'Brazil', 'Mexico', 'Sweden', 'Japan', 'Argentina')
+ggplot(df_glob[region %in% my_regions & state  == '' ], aes(date, new_cases_avg_7d)) + geom_line() + facet_wrap(~region, scales = 'free_y')
+
+ggplot(df_glob[region %in% my_regions & state  == '' ], aes(date, new_deaths_avg_7d)) + geom_line() + facet_wrap(~region, scales = 'free_y')
+
+
+##--- Global Case to Deaths model
+
+library(glmnet)
+library(plyr)
+
+get_all_coefs<-function(glmnet_obj){
+  res = ldply(glmnet_obj$lambda, function(lambda){
+    temp = data.matrix(coef(glmnet_obj,s=lambda))
+    data.frame(var_name = rownames(temp), coef = as.numeric(temp), lambda)
+  })
+  return(res)
+}
+
+for(i in seq(90)) {
+  vname = sprintf('new_cases_rm_%02d', i)
+  df_glob[order(date), c(vname) := rollmeanr(new_cases, k = i, fill = NA), by =.(region, state)]  
+}
+
+model_rm_vars = names(df_glob)[ grep('new_cases_rm_', names(df_glob)) ]
+
+x=data.matrix(df_glob[date < '2021-07-01' & date > '2020-07-01', c('new_deaths_avg_7d', model_rm_vars), with = FALSE])
+index = complete.cases(x)
+y = x[index, 1]
+x = x[index,-1]
+
+cvob3=cv.glmnet(x, y, family="gaussian", nfolds = 10, relax = FALSE)
+plot(cvob3)
+
+coef_path = data.table(get_all_coefs(cvob3))
+coef_path[order(var_name), weight := seq(0, .N-1),  by =.(lambda)]
+coef_path[order(var_name,  decreasing = TRUE), adj_coef := cumsum(coef / weight),  by =.(lambda)]
+coef_path[, dof:=sum(coef!=0), by =.(lambda)]
+coef_path[var_name != '(Intercept)', .( sum(coef),  sum(adj_coef)), by =.(lambda)] #sum of the coefs  -0.013400167
+coef_path[var_name != '(Intercept)' & lambda == cvob3$lambda.1se & coef != 0]
+coef_path[var_name != '(Intercept)' & dof == 4 & coef != 0]
+
+imp_vars = as.character(unique( coef_path[lambda >= cvob3$lambda.1se & abs(coef) >0, var_name] ))
+
+ggplot(coef_path[var_name != '(Intercept)'], aes(var_name, log(lambda), fill = atan(1e4*coef) )) + geom_tile() +  
+  theme(axis.text.x  = element_text(angle=90)) + 
+  geom_hline(yintercept = log(c(cvob3$lambda.1se, cvob3$lambda.min)), linetype = 'dashed') + 
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0)
+
+summary(lm('new_deaths_avg_7d ~ new_deaths_avg_7d_pred', df_glob))
+summary(lm('new_deaths_avg_7d ~ new_cases_rm_36', df_glob))
+
+#summary(lm('new_deaths ~ new_deaths_pred', df))
+#summary(lm('new_deaths ~ new_cases_rm_50', df))
+
+model.lm = lm('new_deaths_avg_7d ~ new_cases_rm_36', df_glob)
+df_glob[, new_deaths_avg_7d_pred := predict(model.lm, df_glob[,model_rm_vars, with = F])]
+ggplot(df_glob[region %in% my_regions & state  == '' ], aes(date, new_deaths_avg_7d)) + geom_line() + geom_line(aes(date, new_deaths_avg_7d_pred), color = 'red') + facet_wrap(~region, scales = 'free_y')
+ggplot(df_glob[region %in% my_regions & state  == '' ], aes(new_deaths_avg_7d, new_deaths_avg_7d_pred)) + geom_point() + facet_wrap(~region, scales = 'free')
+
+ggplot(df_glob[region %in% my_regions & state  == '' ], aes(date, new_deaths_avg_7d)) + geom_line() + geom_line(aes(date, new_deaths_avg_7d_pred), color = 'red') + facet_wrap(~region)
+```
+
+
 ## Map
 
 ```{r maps, echo=FALSE}

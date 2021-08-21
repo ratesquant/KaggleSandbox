@@ -198,10 +198,11 @@ v2  - 7.93643 lm model based on RBF 1D
 v3 -  7.95343 lm model based on RBF 1D, 128_50
 v4 -  7.89885
 v5 -  7.89798
+v6 -  7.89717
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Apr2021/data/df.csv'))
  
-  file = file.path(working_folder, "Playground/Aug2021/submit_v5.rbf.csv")
+  file = file.path(working_folder, "Playground/Aug2021/submit_v6.rbf.csv")
   #fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
   fwrite(df[test_index, .(id, loss = target_rbf)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')

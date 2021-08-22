@@ -60,8 +60,8 @@ convert_to_prob <-function(x, train_index){
 }
 
 convert_to_normal_prob <-function(x, train_index){
-  six_sigma = pnorm(-6)
-  qnorm(pmin(1-six_sigma,pmax(six_sigma, ecdf(x[train_index])(x))) )
+  max_sigma = pnorm(-5) #2.866516e-07
+  qnorm(pmin(1-max_sigma,pmax(max_sigma, ecdf(x[train_index])(x))) )
 }
 
 #pre-preprocess
@@ -127,6 +127,7 @@ plot_profile(df$loss[train_index],  df$loss[train_index], df[["f81"]][train_inde
 ggplot(df[train_index, ], aes_string('n_f81', 'n_f52')) + stat_bin_2d() + 
   scale_fill_distiller(palette = "YlOrRd") + facet_wrap(~loss)
 
+
 ggplot(df[train_index, ], aes_string('n_f81', 'n_f52', z = 'loss')) + stat_summary_2d(fun = function(x) mean(x, na.rm = TRUE), bins = 100) + 
   scale_fill_distiller(palette = "YlOrRd")# + scale_fill_custom(discrete = FALSE)
 
@@ -153,6 +154,8 @@ marrangeGrob(plots_2d, nrow = 6, ncol = 6, top = NULL)
 
 #df[, c('loss', imp_vars), with= FALSE]
 plot_cormat(df[train_index, all_vars, with = FALSE ])
+
+plot_cormat(df[train_index, n_vars, with = FALSE ])
 ```
 
 ## Load RBF Vars
@@ -162,6 +165,61 @@ df = fread(file.path(working_folder,'Playground/Aug2021/data/df_rbf_128_50.csv')
 rbf_vars = names(df)[grep('rbf_p_', names(df))]
 
 ```
+
+## GAM
+
+```{r gam, echo=FALSE, eval = FALSE}
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+
+#s or lo
+gam.formula= formula(stri_join('loss ~', stri_join(sprintf('s(%s, df=6)',n_vars), collapse = '+') ))
+model.gam = gam(gam.formula, data=df[t_index_v1,c('loss',n_vars), with = FALSE], family=gaussian)
+
+summary(model.gam)
+
+df[, loss_pred_gam:=predict(model.gam, df) ]
+
+plots = llply(n_vars, function(var_name) { #lgb_vars
+    p = plot_profile(df$loss_pred_gam[train_index],  df$loss[train_index], df[[var_name]][train_index], bucket_count = 10, error_band = 'normal') +
+      ggtitle(var_name) +  theme(title =element_text(size=8))
+    return( ggplotGrob(p) )
+  })
+  marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
+#  ggsave(filename = file.path(working_folder,"Playground/Aug2021/profiles_gam.pdf"), plot = marrangeGrob(plots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+
+rms(df$loss[train_index], df$loss_pred_gam[train_index])
+```
+
+## Caret
+
+```{r caret, echo=FALSE, eval = FALSE}
+library(caret)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 1.00*length(t_index_v))
+
+formula.caret    = formula(stri_join( "loss", ' ~ ', stri_join(n_vars, collapse = ' + ')))
+
+set.seed(1234)
+control = trainControl(method = "repeatedcv",
+                 number = 10,
+                 repeats = 3)
+
+#KNN
+#gamboost (mstop, prune), gamLoess (span, degree), gam(	select, method), gamSpline (df)
+model.knn <- train(formula.caret, data = df[t_index_v1, all.vars(formula.caret), with = FALSE], 
+                   method = "knn",
+                   trControl =control,
+                   tuneGrid = data.frame(k = c(50, 60, 70))
+                   #tuneLength = 10
+                   )
+plot(model.knn)
+
+pred.knn = predict(model.knn, df, type = 'raw')
+```
+
 
 ## LightGBM
 
@@ -491,6 +549,8 @@ plots = llply(lgb_importance$Feature, function(var_name) { #lgb_vars
   ggsave(filename = file.path(working_folder,"Playground/Aug2021/profiles_lgd.pdf"), plot = marrangeGrob(plots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 360)
   
   plot_profile(df$loss_prob[train_index],      df$is_loss[train_index], df[['f52']][train_index], bucket_count = 20, error_band = 'binom')
+  plot_profile(df$loss_prob[train_index],      df$is_loss[train_index], df[['f81']][train_index], bucket_count = 20, error_band = 'binom')
+  
   plot_profile(df$loss_prob_glm[train_index],  df$is_loss[train_index], df[['f52']][train_index], bucket_count = 20, error_band = 'binom')
   
   plot_profile(df$loss_pred[train_index],  df$loss[train_index], df[['f81']][train_index], bucket_count = 20, error_band = 'normal')
@@ -519,14 +579,14 @@ v5  - 7.87703  (further params optimization, winzoring 0.1% for each variable, c
 v6  - 7.87689  (further params optimization, no winzoring, cv = 7.839599)
 v7  - 7.87606  (params optimization, and normal variables)
 v13 - 7.87027 (pd lgd model)
-      
+v16 - 7.89543 s-6 (7.89844 s-5) (7.90333 GAM s-4)      
 
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Apr2021/data/df.csv'))
  
-  file = file.path(working_folder, "Playground/Aug2021/submit_v15.lgb.csv")
+  file = file.path(working_folder, "Playground/Aug2021/submit_v16.lgb.csv")
   #fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
-  fwrite(df[test_index, .(id, loss = loss_pred_glm)], file = file, row.names = FALSE)
+  fwrite(df[test_index, .(id, loss = loss_pred_gam)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)
 

@@ -79,4 +79,3 @@ gapmap(m = as.matrix(distxy), d_row= rev(dend), d_col=dend)
 
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

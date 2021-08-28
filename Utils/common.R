@@ -16,6 +16,17 @@ logit <- function(x){
   return ( log(x/(1-x)))
 }
 
+rms <-function(y1, y2) sqrt( mean( (y1 - y2)^2 ))
+
+to_prob <-function(x, train_index){
+  xt = x[train_index]
+  ecdf(xt)(x) - 0.5/length(xt)
+}
+
+to_normal_prob <-function(x, train_index){
+  max_sigma = pnorm(-5) #2.866516e-07
+  qnorm(pmin(1-max_sigma,pmax(max_sigma, to_prob(x, train_index)  )) )
+}
 
 # expand_dublicates - the same x values will produce different y values 
 ecdf_norm<-function(x, normal = TRUE, expand_dublicates = FALSE) {
@@ -274,9 +285,13 @@ partialPlot <- function(obj, pred.data, xname, n.pt = 19, discrete.x = FALSE,
   data.frame(x = x, y = y)
 }
 
-plot_cormat <- function(df_in){
+plot_cormat <- function(df_in, show_diagonal = TRUE){
 corr_matrix = cor(data.matrix(df_in), use="pairwise.complete.obs")
-p = ggplot(reshape2::melt(corr_matrix), aes(Var1, Var2, fill = value)) + geom_tile() + 
+corr_matrix_df = data.table(reshape2::melt(corr_matrix))
+
+if(!show_diagonal) corr_matrix_df[Var1==Var2, value := NA]
+
+p = ggplot(corr_matrix_df, aes(Var1, Var2, fill = value)) + geom_tile() + 
   theme(axis.text.x = element_text(angle = 90, size = 5), axis.text.y = element_text(size = 5), axis.title.x = element_blank(), axis.title.y = element_blank()) + 
   scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0)
 return (p)

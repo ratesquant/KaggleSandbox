@@ -16,6 +16,7 @@ library(ggplot2)
 library(gridExtra)
 library(plyr)
 library(forcats)
+#library(mclust)
 
 #setDTthreads(6)
 #getDTthreads()
@@ -55,14 +56,6 @@ con_vars = names(which(sapply(df[,all_vars, with = FALSE], function(x) is.numeri
 
 df[, is_test:= is.na(loss)]
 
-convert_to_prob <-function(x, train_index){
-  ecdf(x[train_index])(x)
-}
-
-convert_to_normal_prob <-function(x, train_index){
-  max_sigma = pnorm(-5) #2.866516e-07
-  qnorm(pmin(1-max_sigma,pmax(max_sigma, ecdf(x[train_index])(x))) )
-}
 
 #pre-preprocess
 #df[, cat10_1_ex  :=  fct_infreq(fct_lump_prop(stri_sub(cat10,1,1), 0.005, other_level = "OT")) ]
@@ -70,17 +63,36 @@ convert_to_normal_prob <-function(x, train_index){
 
 #percentile transform - not useful
 p_vars = stri_join('p_', all_vars)
-df[, (p_vars):=lapply(.SD, function(x) convert_to_prob(x, train_index)), .SDcols = all_vars]
+df[, (p_vars):=lapply(.SD, function(x) to_prob(x, train_index)), .SDcols = all_vars]
 
 #p50_vars = stri_join('p50_', all_vars)
 #df[, (p50_vars):=lapply(.SD, function(x) floor(50*convert_to_prob(x, train_index))/50), .SDcols = all_vars]
 
 #normal transform - not useful
 n_vars = stri_join('n_', all_vars)
-df[, (n_vars):=lapply(.SD, function(x) convert_to_normal_prob(x, train_index)), .SDcols = all_vars]
+df[, (n_vars):=lapply(.SD, function(x) to_normal_prob(x, train_index)), .SDcols = all_vars]
 
-w_vars = stri_join('w_', all_vars)
-df[, (w_vars):=lapply(.SD, function(x) winsoraze(x, x[train_index], 0.001) ), .SDcols = all_vars]
+#w_vars = stri_join('w_', all_vars)
+#df[, (w_vars):=lapply(.SD, function(x) winsoraze(x, x[train_index], 0.001) ), .SDcols = all_vars]
+
+if (FALSE){
+  #add gaussian mixture clusters
+  for(my_var in all_vars) {
+  
+    n_clust = 3
+    mcl.model <- Mclust(df[train_index,my_var, with = FALSE], verbose = FALSE, G = n_clust)
+    #summary(mcl.model)
+    
+    c_res = predict(mcl.model, df[,my_var, with = FALSE])
+    
+    for(k in 1:n_clust){
+      c_var = sprintf('c%d_%s', k, my_var)
+      df[, (c_var):=c_res$z[,k]]
+    }
+  }
+  
+  c_vars = names(df)[grep('c[0-9]_', names(df) )]
+}
 
 df[, is_loss := as.numeric(loss > 0) ]
 ```
@@ -104,6 +116,8 @@ marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 small_index = sample.int(nrow(df), 10000)
 ggplot(df[small_index], aes(f81, loss)) + geom_point(alpha = 0.3) + geom_smooth(span = 0.1, method = 'loess', se = FALSE)
 ggplot(df[small_index], aes(f52, loss)) + geom_point(alpha = 0.3)
+ggplot(df[small_index], aes(f82, f97)) + geom_point(alpha = 0.3)
+ggplot(df[small_index], aes(f55, f3)) + geom_point(alpha = 0.3)
 ggplot(df[small_index], aes(f81, loss)) + geom_point(alpha = 0.3, shape = '.')
 ggplot(df[small_index], aes(p50_f81, loss)) + geom_point(alpha = 0.3) + geom_smooth(span = 0.1, method = 'loess', se = FALSE)
 
@@ -119,6 +133,13 @@ plots = llply(all_vars %!in_set% c('id'), function(var_name){
   ggplot(df[small_index], aes_string(sprintf("%s-floor(%s)", var_name,var_name), 'loss')) + geom_point(alpha = 0.3)
   })
 marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
+
+#density plots
+plots = llply(all_vars %!in_set% c('id'), function(var_name){
+  ggplot(df[train_index,], aes_string(var_name)) + geom_density(adjust = 0.1)
+  })
+marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
+
 
 plot_profile(df$loss[train_index],  df$loss[train_index], df[["f81"]][train_index], bucket_count = 20, error_band = 'normal')
 plot_profile(df$loss[train_index],  df$loss[train_index], df[["f52"]][train_index], bucket_count = 20, error_band = 'normal')
@@ -156,6 +177,22 @@ marrangeGrob(plots_2d, nrow = 6, ncol = 6, top = NULL)
 plot_cormat(df[train_index, all_vars, with = FALSE ])
 
 plot_cormat(df[train_index, n_vars, with = FALSE ])
+```
+
+## Gaussian Mixture models for variables
+
+```{r gauss_vars, echo=FALSE, eval = FALSE}
+#library(mixtools)
+library(mclust)
+
+mcl.model <- Mclust(df[train_index,f55], verbose = FALSE, G = 3)
+summary(mcl.model)
+
+predict(mcl.model,df[train_index,f55][1:10] )
+
+ggplot(data.table(mcl.model$z, f55 = df[train_index,f55])[small_index], aes(f55,V3)) + geom_point()
+
+ggplot(df[train_index,], aes(f55)) + geom_density(adjust = 0.1)
 ```
 
 ## Load RBF Vars
@@ -422,6 +459,7 @@ lgb_vars = c(n_vars) %!in_set% c('id') #best performance
 #lgb_vars = c(p50_vars) %!in_set% c('id') 
 #lgb_vars = c(n_vars, r_vars) %!in_set% c('id')
 #lgb_vars = names(df)[grep('f[0-9]*_lgb', names(df))]
+#lgb_vars = c(n_vars, c_vars) %!in_set% c('id')
 
 my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
 
@@ -433,7 +471,7 @@ params <- list(objective = "regression", metric = "rmse")
 model.lgb <- lgb.cv(
   params = params,
   data = dtrain,
-  nrounds = 4000,
+  nrounds = 6000,
   nfold = 10,
   num_threads = 5, 
   
@@ -541,24 +579,26 @@ df[is.na(loss_pred_glm)]
 
 if(FALSE){
 plots = llply(lgb_importance$Feature, function(var_name) { #lgb_vars
-    p = plot_profile(df$loss_pred[train_index],  df$loss[train_index], df[[var_name]][train_index], bucket_count = 20, error_band = 'normal') +
+    p = plot_profile(df$loss_pred[train_index],  df$loss[train_index], df[[var_name]][train_index], bucket_count = 10, error_band = 'normal') +
       ggtitle(var_name) +  theme(title =element_text(size=8))
     return( ggplotGrob(p) )
   })
   marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
   ggsave(filename = file.path(working_folder,"Playground/Aug2021/profiles_lgd.pdf"), plot = marrangeGrob(plots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 360)
   
-  plot_profile(df$loss_prob[train_index],      df$is_loss[train_index], df[['f52']][train_index], bucket_count = 20, error_band = 'binom')
+  plot_profile(df$loss_prob[train_index],      df$is_loss[train_index], df[['f55']][train_index], bucket_count = 20, error_band = 'binom')
   plot_profile(df$loss_prob[train_index],      df$is_loss[train_index], df[['f81']][train_index], bucket_count = 20, error_band = 'binom')
   
   plot_profile(df$loss_prob_glm[train_index],  df$is_loss[train_index], df[['f52']][train_index], bucket_count = 20, error_band = 'binom')
   
   plot_profile(df$loss_pred[train_index],  df$loss[train_index], df[['f81']][train_index], bucket_count = 20, error_band = 'normal')
   plot_profile(df$loss_pred_glm[train_index],  df$loss[train_index], df[['f81']][train_index], bucket_count = 20, error_band = 'normal')
-
+  
   
   s_index = sample.int(nrow(df),10000)
   ggplot(df[s_index ], aes(loss_prob, loss_prob_glm)) + geom_point()
+  
+  ggplot(df[train_index ], aes(f55)) + geom_density(adjust = 0.01)
   
   ggplot(df[train_index ], aes(loss)) + geom_density(adjust = 0.1)
   ggplot(df[train_index ], aes(loss_pred)) + geom_density(adjust = 0.1) + 
@@ -580,13 +620,14 @@ v6  - 7.87689  (further params optimization, no winzoring, cv = 7.839599)
 v7  - 7.87606  (params optimization, and normal variables)
 v13 - 7.87027 (pd lgd model)
 v16 - 7.89543 s-6 (7.89844 s-5) (7.90333 GAM s-4)      
+v19 - 7.86952 (best score so far)
 
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Apr2021/data/df.csv'))
  
-  file = file.path(working_folder, "Playground/Aug2021/submit_v16.lgb.csv")
+  file = file.path(working_folder, "Playground/Aug2021/submit_v19.lgb.csv")
   #fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
-  fwrite(df[test_index, .(id, loss = loss_pred_gam)], file = file, row.names = FALSE)
+  fwrite(df[test_index, .(id, loss = loss_pred)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)
 
@@ -720,8 +761,6 @@ marrangeGrob(plots, nrow = 2, ncol = 3, top = NULL)
 
 ```{r grid_tune_LGD, echo=FALSE, eval = FALSE}
 
-set.seed(1321)
-
 t_index_v = which(train_index)
 t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
 
@@ -739,13 +778,13 @@ my_params = data.table(expand.grid(
                        num_leaves = c(90))) #default = 31
 
 if(TRUE){
-  n_runs = 25 # 10 runs per hour
+  n_runs = 100 # 10 runs per hour
   my_params = data.table(
                          learning_rate = runif(n_runs, 0.007, 0.009), 
                          bagging_fraction = runif(n_runs, 0.94, 0.98), 
-                         min_data = sample(seq(from = 350, to = 500),n_runs, TRUE), #default = 20
+                         min_data = sample(seq(from = 350, to = 550),n_runs, TRUE), #default = 20
                          min_data_in_bin = sample(seq(3, 5),n_runs, TRUE), #default = 3
-                         num_leaves = sample(seq(90, 150),n_runs, TRUE)) #default = 31
+                         num_leaves = sample(seq(85, 150),n_runs, TRUE)) #default = 31
 }
 
 param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
@@ -774,7 +813,7 @@ param_res_raw = ldply(seq(nrow(my_params)), function(run_index){
   num_leaves = my_params$num_leaves[run_index],
   min_data_in_bin = my_params$min_data_in_bin[run_index],
   
-  nrounds = 6000,
+  nrounds = 7000,
   boost_from_average = TRUE,
   eval_freq = 100,
   early_stopping_rounds = 100,

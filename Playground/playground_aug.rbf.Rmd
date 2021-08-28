@@ -62,20 +62,22 @@ df[, is_test:= is.na(loss)]
 #df[, cat10_1_ex  :=  fct_infreq(fct_lump_prop(stri_sub(cat10,1,1), 0.005, other_level = "OT")) ]
 #df[, cat10_2_ex  :=  fct_infreq(fct_lump_prop(stri_sub(cat10,2,2), 0.005, other_level = "OT")) ]
 
-convert_to_prob <-function(x, train_index){
-  ecdf(x[train_index])(x)
+to_prob <-function(x, train_index){
+  xt = x[train_index]
+  ecdf(xt)(x) - 0.5/length(xt)
 }
 
-convert_to_normal_prob <-function(x, train_index){
+to_normal_prob <-function(x, train_index){
   max_sigma = pnorm(-5) #2.866516e-07
-  qnorm(pmin(1-max_sigma,pmax(max_sigma, ecdf(x[train_index])(x))) )
+  qnorm(pmin(1-max_sigma,pmax(max_sigma, to_prob(x, train_index)  )) )
 }
+
 #percentile transform - not useful
 p_vars = stri_join('p_', all_vars)
-df[, (p_vars):=lapply(.SD, function(x) ecdf(x[train_index])(x) ), .SDcols = all_vars]
+df[, (p_vars):=lapply(.SD, function(x) to_prob(x, train_index) ), .SDcols = all_vars]
 
 n_vars = stri_join('n_', all_vars)
-df[, (n_vars):=lapply(.SD, function(x) convert_to_normal_prob(x, train_index)), .SDcols = all_vars]
+df[, (n_vars):=lapply(.SD, function(x) to_normal_prob(x, train_index)), .SDcols = all_vars]
 
 #w_vars = stri_join('w_', all_vars)
 #df[, (w_vars):=lapply(.SD, function(x) winsoraze(x, x[train_index], 0.001) ), .SDcols = all_vars]
@@ -114,7 +116,7 @@ rms(df$loss[train_index], df$loss_pred_gam[train_index])
 
 ```{r caret, echo=FALSE, eval = FALSE}
 library(caret)
-#library(doParallel)
+library(doParallel)
 #detach("package:doParallel", unload = TRUE)
 
 t_index_v = which(train_index)
@@ -123,31 +125,33 @@ t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
 formula.caret    = formula(stri_join( "loss", ' ~ ', stri_join(n_vars, collapse = ' + ')))
 
 set.seed(1234)
-control = trainControl(method = "repeatedcv", number = 10, repeats = 3)
+control = trainControl(method = "repeatedcv", number = 5, repeats = 1)
 
 #KNN
 #gamboost (mstop, prune), 
 #gamLoess (span, degree), 
 #gam(	select, method), 
-#gamSpline (df)
+#gamSpline (df = best 9)
 
-#cl <- makePSOCKcluster(2)
-#registerDoParallel(cl)
-
+cl <- makePSOCKcluster(2)
+registerDoParallel(cl)
+#S9 is the best CV ()
 a = system.time(
 model.gam <- train(formula.caret, data = df[t_index_v1, all.vars(formula.caret), with = FALSE], 
-                   method = "gamSpline",
+                   method = "gamboost",
                    trControl = control,
-                   tuneGrid = data.frame(df = c(3, 4, 5))
+                   #tuneLength = 3
+                   tuneGrid = data.frame(mstop = c(3000, 4000, 5000, 6000), prune = 'no')
+                   #tuneGrid = data.frame(df = seq(7,11))
                    ))
 print(a)
-#stopCluster(cl)
+stopCluster(cl)
 
 plot(model.gam)
 
 pred.gam = predict(model.gam, df, type = 'raw')
 
-df[, loss_pred_gam := predict(model.gam, df) ]
+df[, loss_pred_gam := pred.gam ]
 
 ```
 
@@ -177,9 +181,9 @@ v1  - 7.93674 baseline (no optimization, no pre-processing)
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Apr2021/data/df.csv'))
  
-  file = file.path(working_folder, "Playground/Aug2021/submit_v1.gam.csv")
+  file = file.path(working_folder, "Playground/Aug2021/submit_v2.gam.csv")
   #fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
-  fwrite(df[test_index, .(id, loss = loss_pred_gam)], file = file, row.names = FALSE)
+  fwrite(df[test_index, .(id, loss = loss_pred_gam )], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)
 
@@ -209,6 +213,7 @@ plot(model.knn)
 pred.knn = predict(model.knn, df, type = 'raw')
 
 plot_profile(pred.knn[train_index],  df$loss[train_index], df[['f81']][train_index], bucket_count = 100, error_band = 'normal')
+plot_profile(df$loss_pred_gam[train_index],  df$loss[train_index], df[['n_f81']][train_index], bucket_count = 100, error_band = 'normal')
 
 ```
 

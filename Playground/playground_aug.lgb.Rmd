@@ -468,6 +468,7 @@ dfs = df[t_index_v1, c(obj_var,lgb_vars), with = FALSE][loss>0,]
 dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
 params <- list(objective = "regression", metric = "rmse")
 
+#LGD Model
 model.lgb <- lgb.cv(
   params = params,
   data = dtrain,
@@ -475,10 +476,10 @@ model.lgb <- lgb.cv(
   nfold = 10,
   num_threads = 5, 
   
-  min_data = 425, #default = 20
+  min_data = 500, #default = 20
   learning_rate = 0.008,
-  num_leaves = 90,
-  bagging_fraction = 0.95,
+  num_leaves = 110,
+  bagging_fraction = 0.97,
   min_data_in_bin = 3,
 
   boost_from_average = TRUE,
@@ -525,7 +526,7 @@ model.lgb_bin <- lgb.cv(
   nfold = 10,
   num_threads = 5, 
   
-  min_data = 550, #default = 20
+  min_data = 600, #default = 20
   learning_rate = 0.008,
   num_leaves = 125,
   bagging_fraction = 0.97,
@@ -625,7 +626,7 @@ v19 - 7.86952 (best score so far)
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Apr2021/data/df.csv'))
  
-  file = file.path(working_folder, "Playground/Aug2021/submit_v19.lgb.csv")
+  file = file.path(working_folder, "Playground/Aug2021/submit_v20.lgb.csv")
   #fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
   fwrite(df[test_index, .(id, loss = loss_pred)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
@@ -874,9 +875,6 @@ marrangeGrob(plots, nrow = 2, ncol = 3, top = NULL)
 ## LightGBM Grid Tune - PD model
 
 ```{r grid_tune_PD, echo=FALSE, eval = FALSE}
-
-set.seed(1321)
-
 t_index_v = which(train_index)
 t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
 
@@ -888,19 +886,19 @@ params_bin <- list(objective = "binary", metric = "binary_logloss")
 
 my_params = data.table(expand.grid(
                        learning_rate = c(0.008), 
-                       bagging_fraction = c(0.95), 
-                       min_data = c(850), #default = 20
+                       bagging_fraction = c(0.97), 
+                       min_data = c(550, 550, 600, 650), #default = 20
                        min_data_in_bin = c(3), #default = 3
-                       num_leaves = c(90))) #default = 31
+                       num_leaves = c(125))) #default = 31
 
-if(TRUE){
-  n_runs = 20 # 10 runs per hour
+if(FALSE){
+  n_runs = 50 # 10 runs per hour
   my_params = data.table(
-                         learning_rate = runif(n_runs, 0.007, 0.008), 
-                         bagging_fraction = runif(n_runs, 0.95, 0.97), 
+                         learning_rate = runif(n_runs, 0.007, 0.009), 
+                         bagging_fraction = runif(n_runs, 0.95, 0.98), 
                          min_data = sample(seq(from = 450, to = 650),n_runs, TRUE), #default = 20
-                         min_data_in_bin = sample(c(3),n_runs, TRUE), #default = 3
-                         num_leaves = sample(seq(110, 130),n_runs, TRUE)) #default = 31
+                         min_data_in_bin = sample(c(3, 5),n_runs, TRUE), #default = 3
+                         num_leaves = sample(seq(100, 150),n_runs, TRUE)) #default = 31
 }
 
 param_res_raw = ldply(seq(nrow(my_params)), function(run_index){

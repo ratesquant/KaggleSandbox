@@ -603,7 +603,7 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
   df_temp = data.table(actual = act, model = mod, bucket = buckets, profile)
   res = df_temp[complete.cases(act, mod),agg_buckets(.SD), by = .(bucket)]
   
-  res = res[count >= min_obs,]
+  res = res[count >= min_obs & !is.na(profile),]
   
   y_min = min(res$actual, res$model)
   y_max = max(res$actual, res$model)

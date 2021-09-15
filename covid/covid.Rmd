@@ -175,14 +175,19 @@ plot_usmap(data = df_last, values = 'new_cases_avg_7d_per_capita') + theme(legen
 plot_usmap(data = df_last, values = 'new_cases_avg_7d') + theme(legend.position = "right") + 
   scale_fill_custom('mixed', discrete = FALSE)
 
+#test palettes
+df_p = data.table(expand.grid(y = seq(32), x = seq(256)))
 div_palettes  = c('BrBG', 'PiYG', 'PRGn', 'PuOr', 'RdBu', 'RdGy', 'RdYlBu', 'RdYlGn', 'Spectral')
 seq_palettes  = c('Blues', 'BuGn', 'BuPu', 'GnBu', 'Greens', 'Greys', 'Oranges', 'OrRd', 'PuBu', 'PuBuGn', 'PuRd', 'Purples', 'RdPu','Reds', 'YlGn', 'YlGnBu', 'YlOrBr', 'YlOrRd')
-plots = llply(seq_palettes, function(pal) {
-  plot_usmap(data = df_last, values = 'new_cases_avg_7d_per_capita') + theme(legend.position = "right") + 
+qual_palettes =c('Accent', 'Dark2', 'Paired', 'Pastel1', 'Pastel2', 'Set1', 'Set2', 'Set3')
+plots = llply(c(seq_palettes, div_palettes, qual_palettes), function(pal) {
+  ggplot(df_p, aes(x, y, fill = x)) + geom_tile() + theme_void() + theme(legend.position = "none") + 
   scale_fill_distiller(palette = pal) + ggtitle(pal)
 })
-marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+marrangeGrob(plots, nrow = 6, ncol = 6, top = NULL)
 
+ggplot(df_p, aes(x, y, fill = x)) + geom_tile() + theme_void() + theme(legend.position = "none") + scale_fill_custom('cubehelix', discrete = FALSE)
+ggplot(df_p, aes(x, y, fill = x)) + geom_tile() + theme_void() + theme(legend.position = "none") + scale_fill_custom('cubehelix_hue', discrete = FALSE)
 ```
 
 
@@ -201,6 +206,7 @@ ggplot(df[state %in% my_states], aes(date, new_deaths)) + geom_line() + geom_smo
 ggplot(df[state %in% my_states], aes(date, new_deaths_avg_7d)) + geom_line() + facet_wrap(~state, scales = 'free_y')
 ggplot(df[state %in% my_states], aes(date, new_cases_avg_7d)) + geom_line() + facet_wrap(~state, scales = 'free_y')
 
+#year over Year
 ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_cases_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y')
 
 ggplot(df[state %in% my_states], aes(1e-6*cases, 1e-3*deaths)) + geom_line() + facet_wrap(~state, scales = 'free')
@@ -250,7 +256,7 @@ for(i in seq(90)) {
 
 model_rm_vars = names(df)[ grep('new_cases_rm_', names(df)) ]
 
-x=data.matrix(df[state != 'USA', c('new_deaths_avg_7d', model_rm_vars), with = FALSE])
+x=data.matrix(df[state != 'USA' & date < '2021-07-01' & date > '2020-11-01', c('new_deaths_avg_7d', model_rm_vars), with = FALSE])
 #x=data.matrix(df[state != 'USA', c('new_deaths', model_rm_vars), with = FALSE])
 index = complete.cases(x)
 y = x[index, 1]
@@ -260,10 +266,13 @@ x = x[index,-1]
 cvob3=cv.glmnet(x, y, family="gaussian", nfolds = 10, relax = FALSE)
 plot(cvob3)
 
-ggplot(data.frame(rms = cvob3$cvm, rms_hi = cvob3$cvup, rms_lo = cvob3$cvlo, lambda = log(cvob3$lambda)) , aes(lambda, rms) ) + geom_line() + geom_point() + 
+ggplot(data.frame(rms = cvob3$cvm, rms_hi = cvob3$cvup, rms_lo = cvob3$cvlo, lambda = log(cvob3$lambda), dof =  cvob3$nzero) , aes(lambda, rms) ) + geom_line() + geom_point() + 
   geom_ribbon(aes(ymin = rms_lo, ymax = rms_hi), fill = 'blue', alpha = 0.3) +
   geom_vline(xintercept =  c(log(cvob3$lambda.min),  log(cvob3$lambda.1se)), linetype = 'dashed') +
   ggtitle(sprintf('Best RMS %.5f', cvob3$cvm[which(cvob3$lambda == cvob3$lambda.1se)]))
+
+ggplot(data.frame(rms = cvob3$cvm, rms_hi = cvob3$cvup, rms_lo = cvob3$cvlo, lambda = log(cvob3$lambda), dof =  cvob3$nzero) , aes(dof, rms) ) + geom_line() + geom_point() + 
+  geom_ribbon(aes(ymin = rms_lo, ymax = rms_hi), fill = 'blue', alpha = 0.3)
 
 coef_path = data.table(get_all_coefs(cvob3))
 coef_path[order(var_name), weight := seq(0, .N-1),  by =.(lambda)]
@@ -272,7 +281,7 @@ coef_path[, dof:=sum(coef!=0), by =.(lambda)]
 coef_path[var_name != '(Intercept)', .( sum(coef),  sum(adj_coef)), by =.(lambda)] #sum of the coefs  -0.013400167
 
 coef_path[var_name != '(Intercept)' & lambda == cvob3$lambda.1se & coef != 0]
-coef_path[var_name != '(Intercept)' & dof == 4 & coef != 0]
+coef_path[var_name != '(Intercept)' & dof <= 5 & coef != 0]
 
 imp_vars = as.character(unique( coef_path[lambda >= cvob3$lambda.1se & abs(coef) >0, var_name] ))
 
@@ -285,18 +294,20 @@ ggplot(coef_path[var_name != '(Intercept)'], aes(var_name, log(lambda), fill = a
 #ggplot(df[state %in% my_states], aes(date, new_deaths)) + geom_line() + geom_line(aes(date, new_deaths_pred), color = 'red') + facet_wrap(~state, scales = 'free_y')
 
 df[, new_deaths_avg_7d_pred := predict(cvob3, newx=data.matrix(df[,model_rm_vars, with = F]), s= 'lambda.1se')]
-ggplot(df[state %in% my_states], aes(date, new_deaths_avg_7d)) + geom_line() + geom_line(aes(date, new_deaths_avg_7d_pred), color = 'red') + facet_wrap(~state, scales = 'free_y')
+ggplot(df[state %in% my_states], aes(date, new_deaths_avg_7d)) + geom_line() + geom_line(aes(date, new_deaths_avg_7d_pred), color = 'red') + facet_wrap(~state, scales = 'free_y') + 
+  geom_vline(xintercept = as.Date(c('2021-07-01', '2020-11-01')), linetype = 'dashed')
 ggplot(df[state %in% my_states], aes(new_deaths_avg_7d, new_deaths_avg_7d_pred)) + geom_point() + facet_wrap(~state, scales = 'free')
 
 summary(lm('new_deaths_avg_7d ~ new_deaths_avg_7d_pred', df))
-summary(lm('new_deaths_avg_7d ~ new_cases_rm_55', df))
+summary(lm('new_deaths_avg_7d ~ new_cases_rm_56', df))
 
 #summary(lm('new_deaths ~ new_deaths_pred', df))
 #summary(lm('new_deaths ~ new_cases_rm_50', df))
 
-model.lm = lm('new_deaths_avg_7d ~ new_cases_rm_55', df)
+model.lm = lm('new_deaths_avg_7d ~ new_cases_rm_56', df)
 df[, new_deaths_avg_7d_pred := predict(model.lm, df[,model_rm_vars, with = F])]
-ggplot(df[state %in% my_states], aes(date, new_deaths_avg_7d)) + geom_line() + geom_line(aes(date, new_deaths_avg_7d_pred), color = 'red') + facet_wrap(~state, scales = 'free_y')
+ggplot(df[state %in% my_states], aes(date, new_deaths_avg_7d)) + geom_line() + geom_line(aes(date, new_deaths_avg_7d_pred), color = 'red') + facet_wrap(~state, scales = 'free_y') + 
+   geom_vline(xintercept = as.Date(c('2021-07-01', '2020-11-01')), linetype = 'dashed')
 ggplot(df[state %in% my_states], aes(new_deaths_avg_7d, new_deaths_avg_7d_pred)) + geom_point() + facet_wrap(~state, scales = 'free')
 
 #model.lm = lm('new_deaths ~ new_cases_rm_50', df)

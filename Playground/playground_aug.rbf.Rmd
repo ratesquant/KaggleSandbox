@@ -17,6 +17,8 @@ library(plyr)
 library(forcats)
 library(proxy)
 library(MASS)
+library(gam)
+library(caret)
 
 working_folder = 'D:/Github/KaggleSandbox'
 #working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
@@ -120,7 +122,7 @@ library(doParallel)
 #detach("package:doParallel", unload = TRUE)
 
 t_index_v = which(train_index)
-t_index_v1 = sample(t_index_v, 1.0*length(t_index_v))
+t_index_v1 = sample(t_index_v, 0.04*length(t_index_v))
 
 formula.caret    = formula(stri_join( "loss", ' ~ ', stri_join(n_vars, collapse = ' + ')))
 
@@ -147,6 +149,36 @@ model.gam <- train(formula.caret, data = df[t_index_v1, all.vars(formula.caret),
 print(a)
 stopCluster(cl)
 
+#USING GAM(loess) package (needs more memory) ------------
+a = system.time(
+model.gam <- train(formula.caret, data = df[t_index_v1, all.vars(formula.caret), with = FALSE], 
+                   method = "gamLoess",
+                   trControl = control,
+                   tuneGrid = expand.grid(degree = c(1), span = c(0.3, 0.5))
+                   ))
+print(a)
+plot(model.gam)
+
+#USING gamboost package (mstop, prune) ------------
+a = system.time(
+model.gam <- train(formula.caret, data = df[t_index_v1, all.vars(formula.caret), with = FALSE], 
+                   method = "gamboost",
+                   trControl = control,
+                   tuneGrid = data.frame(mstop = c(200, 400, 600), prune = 'no')
+                   #tuneLength = 2
+                   ))
+print(a)
+plot(model.gam)
+
+#USING gam package (select, method) ------------
+a = system.time(
+model.gam <- train(formula.caret, data = df[t_index_v1, all.vars(formula.caret), with = FALSE], 
+                   method = "gam",
+                   trControl = control,
+                   #tuneGrid = data.frame(mstop = c(200, 400, 600), prune = 'no')
+                   tuneLength = 2
+                   ))
+print(a)
 plot(model.gam)
 
 pred.gam = predict(model.gam, df, type = 'raw')

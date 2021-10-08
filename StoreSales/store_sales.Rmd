@@ -1,0 +1,179 @@
+---
+title: "Store Sales"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE)
+
+library(lightgbm)
+library(data.table)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(plyr)
+library(forcats)
+library(lubridate)
+library(zoo)
+#library(mclust)
+
+#setDTthreads(6)
+#getDTthreads()
+
+working_folder = 'D:/Github/KaggleSandbox'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
+source(file.path(working_folder, 'Utils/common.R'))
+```
+
+## Load Data
+```{r load_data}
+train <- fread(file.path(working_folder,'StoreSales/data/train.csv'), check.names = TRUE)
+test  <- fread(file.path(working_folder,'StoreSales/data/test.csv'),  check.names = TRUE)
+test[, sales :=NA]
+df = rbind(train, test)
+
+train_index = !is.na(df$sales)
+
+df[, date_year  := year(date)]
+df[, date_month := month(date)]
+df[, date_day   := day(date)]
+df[, date_wday  := wday(date)]
+df[, sales_log  := log(sales + 1)]
+
+df_stores   <- fread(file.path(working_folder,'StoreSales/data/stores.csv'),  check.names = TRUE)
+df_oil      <- fread(file.path(working_folder,'StoreSales/data/oil.csv'),  check.names = TRUE)
+df_holidays <- fread(file.path(working_folder,'StoreSales/data/holidays_events.csv'),  check.names = TRUE)
+
+df[df_stores, city     := i.city, on =.(store_nbr)]
+df[df_stores, state    := i.state, on =.(store_nbr)]
+df[df_stores, type     := i.type, on =.(store_nbr)]
+df[df_stores, cluster  := i.cluster, on =.(store_nbr)]
+
+df[df_holidays[transferred == FALSE & locale == 'National'], nat_holiday:= i.description, , on =.(date)]
+df[df_holidays[transferred == FALSE & locale == 'Local'],    loc_holiday:= i.description, , on =.(date, state = locale_name)]
+
+quake_date = as.Date('2016-04-16')
+
+
+df_oil[order(date), price := na.locf(dcoilwtico, na.rm = FALSE) ]
+for(i in seq(120)) {
+  vname = sprintf('price_rm_%03d', i)
+  df_oil[order(date), c(vname) := rollmeanr(price, k = i, fill = NA)]  
+}
+
+df[df_oil, price_rm_010  := i.price_rm_010, on =.(date)]
+df[df_oil, price_rm_030  := i.price_rm_030, on =.(date)]
+df[df_oil, price_rm_060  := i.price_rm_060, on =.(date)]
+df[df_oil, price_rm_090  := i.price_rm_090, on =.(date)]
+df[df_oil, price_rm_120  := i.price_rm_120, on =.(date)]
+
+
+```
+
+## Charts
+
+```{r charts, echo=FALSE}
+df_agg = df[, .(total_sales = sum(sales_log, na.rm = TRUE)), by =.(date)]
+
+ggplot(df_agg, aes(date, total_sales)) + geom_line() + geom_vline(xintercept = quake_date, color = 'red')
+
+ggplot(df_oil, aes(date, price_rm_060)) + geom_line()
+
+
+plot_profile(df$sales_log[train_index], df$sales_log[train_index], df$date_month[train_index], error_band  = 'normal' )
+plot_profile(df$sales_log[train_index], df$sales_log[train_index], df$date_wday[train_index],  error_band  = 'normal' )
+
+```
+
+## Light GBM Model
+
+```{r model, echo=FALSE}
+set.seed(1321)
+
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, 0.1*length(t_index_v))
+
+all_vars = c('onpromotion', 'date_month', 'date_day', 'date_wday', 'family', 'type', 'cluster')
+
+lgb_vars = c(all_vars) %!in_set% c('id')
+obj_var = 'sales_log'
+
+my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
+
+dfs = df[t_index_v1, c(obj_var,lgb_vars), with = FALSE]
+
+dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
+params <- list(objective = "regression", metric = "rmse")
+
+model.lgb <- lgb.cv(
+  params = params,
+  data = dtrain,
+  nrounds = 1000,
+  nfold = 10,
+  num_threads = 5, 
+  
+  min_data = 850, #default = 20
+  learning_rate = 0.008,
+  num_leaves = 90,
+  bagging_fraction = 0.95,
+  min_data_in_bin = 3,
+
+  boost_from_average = TRUE,
+  eval_freq = 100,
+  early_stopping_rounds = 100,
+  force_col_wise=TRUE
+)
+
+#saveRDS(model.lgb, file.path(working_folder,'StoreSales/data/model_lgb.rds'))
+
+cv_error = as.numeric(model.lgb$record_evals$valid$rmse$eval)
+ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line() 
+
+min(cv_error) #7.841514
+
+dm_all = data.matrix(df[,lgb_vars, with = F])
+pred.lgb_cvi = ldply(seq(length(model.lgb$boosters)), function(i){ data.frame(cv = i, id = df$id, pred= predict(model.lgb$boosters[[i]]$booster, dm_all)) } )
+setDT(pred.lgb_cvi)
+
+pred.lgb_cv_summary = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(cv)]
+pred.lgb_cv         = pred.lgb_cvi[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(id)]
+
+#%% Plot -----
+#plot_profiles(df$target_lgb[train_index], df[train_index,])
+#plot_profiles_2d(df$target_lgb[p_index], df[p_index,])
+
+df[pred.lgb_cv, sales_log_pred :=  i.avg, on=.(id)]
+
+lgb_importance = lgb.importance(model.lgb$boosters[[1]][[1]], percentage = TRUE)
+ggplot(lgb_importance, aes(fct_reorder(Feature,Gain), Gain)) + geom_bar(stat = 'identity') + coord_flip()
+#lgb.plot.interpretation(lgb_importance)
+
+df_agg = df[, .(total_sales = sum(sales_log, na.rm = TRUE), total_sales_pred = sum(sales_log_pred, na.rm = TRUE)), by =.(date)]
+ggplot(df_agg, aes(date, total_sales)) + geom_line() +  geom_line(aes(date, total_sales_pred), color = 'red')
+
+
+ plots = llply(c(lgb_importance$Feature, 'city', 'state', 'type', 'cluster', 'loc_holiday','price_rm_010','price_rm_030','price_rm_060', 'price_rm_090', 'price_rm_120', 'date_year'), function(var_name) { #lgb_vars
+    p = plot_profile(df$sales_log_pred[train_index],  df$sales_log[train_index], df[[var_name]][train_index], bucket_count = 20, error_band = 'normal') +
+      ggtitle(var_name) +  theme(title =element_text(size=8))
+    return( ggplotGrob(p) )
+  })
+  marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
+  ggsave(filename = file.path(working_folder,"StoreSales/profiles_w.pdf"), plot = marrangeGrob(plots, nrow=4, ncol=4), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+  
+  plot_profile(df$sales_log_pred[train_index],  df$sales_log[train_index], df[['date']][train_index], bucket_count = 10, error_band = 'normal')
+  plot_profile(df$sales_log_pred[train_index],  df$sales_log[train_index], df[['nat_holiday']][train_index], bucket_count = 10, error_band = 'normal') 
+  
+#partial plots
+pdp_index = sample(which(train_index), 10000)
+my_model = model.lgb$boosters[[1]][[1]]
+df_plot = partialPlot(my_model, data.matrix(df[pdp_index,lgb_vars, with = FALSE]), xname = "f81", n.pt = 100)
+ggplot(df_plot, aes(x, y)) + geom_line()
+
+ggplot(df[pdp_index,], aes(loss, target_lgb)) + geom_point()
+
+plot_profile(df$target_lgb[train_index],  df$loss[train_index], df[['f81']][train_index], bucket_count = 20, error_band = 'normal')
+```

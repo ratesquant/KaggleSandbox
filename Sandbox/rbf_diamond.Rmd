@@ -1,0 +1,46 @@
+---
+title: "RBF diamond set"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library(proxy)
+library(MASS)
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(stringi)
+library(caret)
+library(gridExtra)
+library(GGally)
+library(gpairs)
+
+working_folder = 'D:/Github/KaggleSandbox'
+
+source(file.path(working_folder, 'Utils/common.R'))
+source(file.path(working_folder, 'Utils/rbf_utils.R'))
+
+rms <-function(y1, y2) sqrt( mean( (y1 - y2)^2 ))
+
+```
+
+## Data
+
+```{r rbf_kernels}
+
+data("diamonds")
+
+df = data.table(diamonds)
+
+ggpairs(df[sample.int(nrow(df), 1000)])
+gpairs(df[sample.int(nrow(df), 1000)])
+ggcorr(df, palette = "RdBu", label = TRUE)
+
+ggally_cross(df, aes(cut, color,  label = scales::percent(after_stat(prop)) ), geom_text_args = list(colour = "white", fontface = "bold", size = 2))
+ggally_count(df, aes(cut, color))
+```

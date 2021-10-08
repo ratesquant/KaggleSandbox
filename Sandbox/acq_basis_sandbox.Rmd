@@ -1,0 +1,332 @@
+---
+title: "ACQ Basis Sandbox"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library(proxy)
+library(MASS)
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(stringi)
+library(caret)
+library(gridExtra)
+
+working_folder = 'D:/Github/KaggleSandbox'
+
+source(file.path(working_folder, 'Utils/common.R'))
+source(file.path(working_folder, 'Utils/rbf_utils.R'))
+source(file.path(working_folder, 'Utils/acq_basis_utils.R'))
+
+rms <-function(y1, y2) sqrt( mean( (y1 - y2)^2 ))
+
+```
+
+## Test 1D
+
+```{r test}
+x = seq(0, 1, by = 0.01)
+y = 0.2 + 0.4 * x * x + 0.3 *x * sin(15 * x) + 0.05 * cos(50 * x)
+
+df = data.table(x, y)
+
+nodes = as.matrix(c(0.25, 0.75))
+
+model.acq = acq.create(df[,.(x)], df$y, nodes, kernel_fun = acq_kernel)
+
+y_pred = acq.predict(model.acq, df[,.(x)])
+ggplot(cbind(df, y_pred), aes(x, y)) + geom_point() + geom_line(aes(x, y_pred), color = 'red')
+
+```
+
+
+## ACQ Boot
+
+```{r acq_boot}
+x = seq(0, 1, by = 0.01)
+y = 0.2 + 0.4 * x * x + 0.3 *x * sin(15 * x) + 0.05 * cos(50 * x)
+df = data.table(x, y)
+df[, id:=seq(nrow(df))]
+
+max_nodes = 20
+
+models = acq_boot.create(df[,.(x)], df$y, max_nodes, n_runs = 100)
+#models = rbf_boot.create(df[,.(x)], df$y, max_nodes, n_runs = 100, kernel_fun = rbf_tp_kernel)
+res = acq_boot.predict(models, df[,.(x)])
+setDT(res)
+res_agg = res[, .(y_pred = mean(y_pred), sigma = sd(y_pred), .N ), by =.(id)]
+
+res_agg[df, y := i.y, on=.(id) ]
+res_agg[df, x := i.x, on=.(id) ]
+res[df, x := i.x, on=.(id) ]
+
+#all fits
+ggplot(res, aes(x, y_pred, group = run_id)) + geom_line(color = 'blue', alpha = 0.2) 
+
+#average
+ggplot(res_agg, aes(x, y)) + geom_point() + geom_line(aes(x, y_pred), color = 'red', size = 1) + 
+  geom_ribbon(aes(x, ymin = y_pred - 2*sigma, ymax = y_pred + 2*sigma), alpha = 0.2, fill = 'blue')
+
+#convergence
+res[order(run_id),y_pred_cum := cummean(y_pred), by =.(id) ]
+ggplot(res, aes(x, y_pred_cum, group = run_id)) + geom_line(color = 'blue', alpha = 0.2) 
+
+it_error = res[order(id), .(error = rms(df$y, y_pred_cum)), by =.(run_id) ] #it_error[error == min(error)]
+ggplot(it_error, aes(run_id, error)) + geom_line()
+
+```
+
+## ACQ Boosting
+
+```{r acq_boosting}
+
+x = seq(0, 1, by = 0.01)
+y = 0.2 + 0.4 * x * x + 0.3 *x * sin(15 * x) + 0.05 * cos(50 * x)
+df = data.table(x, y)
+df[, id:=seq(nrow(df))]
+
+max_nodes = 32
+
+models_boost =  acq_boost.create(df[,.(x)],  df$y, 1, max_nodes, n_runs = 50,  growth_rate = 2)
+res = acq_boost.predict(models_boost, df[,.(x)], combine_boots = FALSE)
+
+setDT(res)
+ 
+#show all - curves
+res[df, x := i.x, on=.(id) ]
+ggplot(res, aes(x, y_pred, group = model_id2 )) + geom_line(alpha = 0.3) + facet_wrap(~model_id1 )
+
+#boost results for each step
+res_sum = res[, .(y_pred = mean(y_pred)), by =.(id, model_id1 )]
+res_sum[df, x := i.x, on=.(id) ]
+ggplot(res_sum, aes(x, y_pred, group = model_id1 )) + geom_line()  + facet_wrap(~model_id1 )
+
+#boost results for each step
+res_conv = res[, .(y_pred = mean(y_pred)), by =.(id, model_id1 )]
+res_conv[order(model_id1), y_pred_cum := cumsum(y_pred), by =.(id)]
+res_conv[df, x := i.x, on=.(id) ]
+ggplot(res_conv, aes(x, y_pred_cum)) + geom_line(color = 'red', size = 1)  + geom_point(data = df, aes(x, y)) + facet_wrap(~model_id1 )
+
+#Convergence
+ggplot(res_conv[order(id), .(error = rms(y_pred_cum, df$y)), by =.(model_id1) ] , aes(model_id1, error)) + geom_line() +  geom_point()
+
+# CV ---------
+cv_res = rbf_boost.create_cv(df[,.(x)],  df$y,1, max_nodes = 32, n_runs = 10, max_it = 20, growth_rate =1.5, shrink_kernel = 0.65, nfolds = 10, kernel_fun = rbf_linear_kernel, dist_fun = 'L1' )
+df_cv_res = data.table(it = seq(nrow(cv_res)), avg = apply(cv_res, 1, mean ), sigma = apply(cv_res, 1, sd ), cv_res )
+ggplot(df_cv_res, aes(it, avg)) + geom_line() + geom_point() + geom_ribbon(aes(it, ymin = avg - sigma, ymax = avg + sigma), alpha = 0.2, fill = 'blue')
+```
+
+
+## ACQ with Noise
+
+```{r acq_boosting}
+x = seq(0, 1, by = 0.001)
+y = 0.2 + 0.4 * x * x + 0.3 *x * sin(15 * x) + 0.05 * cos(50 * x)
+y = as.numeric(x>0.5)
+df = data.table(x, yt = y, y = y + 0.05*rnorm(length(y)))
+df[, id:=seq(nrow(df))]
+
+ggplot(df, aes(x, y)) + geom_point() + geom_line(aes(x, yt), color = 'red', size = 1)
+
+# CV
+cv_res = rbf_boost.create_cv(df[,.(x)],  df$y, 1, max_nodes = 64, n_runs = 30, max_it = 20, growth_rate = 2.0, shrink_kernel = 0.5, nfolds = 10, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1' )
+df_cv_res = data.table(it = seq(nrow(cv_res)), avg = apply(cv_res, 1, mean ), sigma = apply(cv_res, 1, sd ), cv_res )
+ggplot(df_cv_res[avg>0], aes(it, avg)) + geom_line() + geom_ribbon(aes(it, ymin = avg - sigma, ymax = avg + sigma), alpha = 0.2, fill = 'blue') + 
+  geom_hline(yintercept = 0.05, color = 'red', linetype = 'dashed')
+
+df_cv_res[avg == min(avg)]#0.102632 
+
+# build model
+models_boost =  rbf_boost.create(df[,.(x)],  df$y, 1,  max_nodes = 128, n_runs = 30, max_it = 20, growth_rate =2, shrink_kernel = 0.4, kernel_fun = rbf_mquad_kernel, dist_fun = 'L1' )
+res = rbf_boost.predict(models_boost, df[,.(x)], combine_boots = FALSE)
+setDT(res)
+ 
+#show all - curves
+res[df, x := i.x, on=.(id) ]
+ggplot(res, aes(x, y_pred, group = model_id2 )) + geom_line(alpha = 0.3) + facet_wrap(~model_id1 )
+
+#boost results for each step
+res_sum = res[, .(y_pred = mean(y_pred)), by =.(id, model_id1 )]
+res_sum[df, x := i.x, on=.(id) ]
+ggplot(res_sum, aes(x, y_pred, group = model_id1 )) + geom_line()  + facet_wrap(~model_id1 )
+
+#boost results for each step
+res_conv = res[, .(y_pred = mean(y_pred)), by =.(id, model_id1 )]
+res_conv[order(model_id1), y_pred_cum := cumsum(y_pred), by =.(id)]
+res_conv[df, x := i.x, on=.(id) ]
+ggplot(res_conv, aes(x, y_pred_cum)) + geom_line(color = 'red', size = 1)  +
+  geom_point(data = df, aes(x, y), alpha = 0.1, size = 0.1) + 
+  geom_line(data = df, aes(x, yt))  + facet_wrap(~model_id1 )
+
+ggplot(res_conv[model_id1 == max(model_id1)], aes(x, y_pred_cum)) + geom_line(color = 'red', size = 1)  +
+  geom_point(data = df, aes(x, y), alpha = 0.1, size = 0.1) + 
+  geom_line(data = df, aes(x, yt))  + facet_wrap(~model_id1 )
+
+rms(df$yt, res_conv[model_id1 == 12]$y_pred_cum)
+
+
+## ------------- Boot model with the same number of nodes
+models = rbf_boot.create(df[,.(x)], df$y, max_nodes = 31, n_runs = 1000, kernel_fun = rbf_linear_kernel)
+res = rbf_boot.predict(models, df[,.(x)])
+setDT(res)
+
+res_agg = res[, .(y_pred = mean(y_pred), sigma = sd(y_pred), .N ), by =.(id)]
+res_agg[df, x := i.x, on=.(id) ]
+
+#average
+ggplot(df, aes(x, yt)) + geom_line() + geom_line(data = res_agg, aes(x, y_pred), color = 'red', size = 1) + 
+  geom_ribbon(data = res_agg, aes(x, ymin = y_pred - 2*sigma, ymax = y_pred + 2*sigma), alpha = 0.2, fill = 'blue', inherit.aes = FALSE)
+
+rms(df$yt, res_agg$y_pred)
+rms(df$y, res_agg$y_pred)
+
+ggplot(res_agg, aes(x, y)) + geom_point() + geom_line(aes(x, y_pred), color = 'red', size = 1) + 
+  geom_ribbon(aes(x, ymin = y_pred - 2*sigma, ymax = y_pred + 2*sigma), alpha = 0.2, fill = 'blue')
+
+#convergence
+res[order(run_id),y_pred_cum := cummean(y_pred), by =.(id) ]
+
+it_error = res[order(id), .(error = rms(df$y, y_pred_cum)), by =.(run_id) ] #it_error[error == min(error)]
+ggplot(it_error, aes(run_id, error)) + geom_line() + geom_hline(yintercept = 0.1, color = 'red', linetype = 'dashed')
+
+## ------------- Boot CV
+run_cases = expand.grid(nodes = seq(10, 60), runs = c(100, 200, 300, 1000), nfolds = c(2, 3, 4, 5, 6, 7, 8, 9, 10, 20))
+cv_res = ldply(seq(nrow(run_cases)), function(run_id){
+  cv_res = rbf_boot.create_cv(df[,.(x)], df$y, max_nodes = run_cases$nodes[run_id], boot_runs = run_cases$runs[run_id], nfolds =run_cases$nfolds[run_id],  
+                              kernel_params = 1.0, kernel_fun = function(x, c) x, dist_fun = 'L1' )
+  data.frame(cv_error = mean(cv_res), max_nodes = run_cases$nodes[run_id], boot_runs = run_cases$runs[run_id], nfolds =run_cases$nfolds[run_id])
+})
+
+ggplot(cv_res, aes(max_nodes, cv_error, group = nfolds, color = factor(nfolds) )) + geom_point() +  geom_line() + geom_smooth(se = FALSE, color = 'black') + facet_grid(nfolds~boot_runs) +
+   geom_hline(yintercept = 0.1, color = 'red', linetype = 'dashed')
+```
+
+## ACQ 2D test
+
+```{r acq_2d_test}
+
+df = data.table(expand.grid(x = seq(-1, 1, by = 0.02), y = seq(-1, 1, by = 0.02)))
+df[, target_true:= sin(10 * x * exp(y)) + sin(x) + cos(y) ]
+df[, target:= target_true + 0.2*rnorm(nrow(df))]
+df[, id := seq(nrow(df))]
+
+ggplot(df, aes(x, y, fill = target)) + geom_tile() + scale_fill_custom('div', discrete = FALSE)
+ggplot(df, aes(x, y, fill = target_true)) + geom_tile() + scale_fill_custom('div', discrete = FALSE)
+
+#rbf_mquad_kernel, 
+models_boost =  acq_boost.create(df[,.(x, y)], df$target, 1, max_nodes = 128, n_runs = 10, max_it = 10, growth_rate = 2.0, adaptive = TRUE)
+res = acq_boost.predict(models_boost, df[,.(x, y)], combine_boots = TRUE)
+setDT(res)
+
+res[order(id), .(rms_data = rms(y_pred_cum, df$target), rms_act = rms(y_pred_cum, df$target_true)), by = .(model_id1)]
+
+res_df = res[df, on = .(id)]
+
+ggplot(res_df, aes(x, y, fill = y_pred_cum  )) + geom_tile() + scale_fill_distiller(palette = 'RdYlGn') + facet_wrap(~model_id1)
+ggplot(res_df, aes(x, y, fill = y_pred_cum  )) + geom_tile() + scale_fill_custom('jet', discrete = FALSE) + facet_wrap(~model_id1)
+ggplot(res_df, aes(x, y, fill = target_true - y_pred_cum   )) + geom_tile() + scale_fill_custom('jet', discrete = FALSE) + facet_wrap(~model_id1)
+ggplot(res_df[model_id1 == 17], aes(x, y, fill = y_pred_cum  )) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+ggplot(res_df[model_id1 == 17], aes(x, y, fill = target_true - y_pred_cum )) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+#ggplot(res_df, aes(x, y, fill = y_pred  )) + geom_tile() + scale_fill_custom('jet', discrete = FALSE) + facet_wrap(~model_id1)
+#0.244613
+
+nodes = ldply(seq(length(models_boost)), function(model_id1) {
+      boot_models = models_boost[[model_id1]]
+      ldply(seq(length(boot_models)), function(model_id2) {
+        data.frame(boot_models[[model_id2]]$nodes, model_id1, model_id2)
+      })
+    })
+ggplot(nodes, aes(x, y)) + geom_point(size = 0.2, alpha = 0.5) + facet_wrap(~model_id1)
+
+ggplot(nodes, aes(x, y)) + geom_bin2d(bins = 20) + facet_wrap(~model_id1) + scale_fill_custom('jet', discrete = FALSE)
+
+```
+
+## MARS 2D test
+
+```{r mars_2d_test}
+library(earth)
+
+df = data.table(expand.grid(x = seq(-1, 1, by = 0.02), y = seq(-1, 1, by = 0.02)))
+df[, target_true:= sin(10 * x * exp(y) )]
+df[, target:= target_true + 0.2*rnorm(nrow(df))]
+df[, id := seq(nrow(df))]
+
+ggplot(df, aes(x, y, fill = target)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+ggplot(df, aes(x, y, fill = target_true)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+
+model.mars = earth(target ~ x + y, df,  degree = 2, thresh = 0.000001, nk = 1000, nfold=0, trace = 2)
+
+summary(model.mars, style = 'pmax')
+
+df[, mars_pred := predict(model.mars, df) ]
+
+ggplot(df, aes(x, y, fill = mars_pred)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+
+```
+
+## GBM 2D test
+
+```{r gbm_2d_test}
+library(gbm)
+
+#df = data.table(expand.grid(x = seq(-1, 1, by = 0.02), y = seq(-1, 1, by = 0.02)))
+#df[, target_true:= sin(10 * x * exp(y) )]
+#df[, target:= target_true + 0.2*rnorm(nrow(df))]
+#df[, id := seq(nrow(df))]
+
+ggplot(df, aes(x, y, fill = target)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+ggplot(df, aes(x, y, fill = target_true)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+
+model.gbm = gbm(target ~ x + y, df, distribution = "gaussian", n.trees = 1000, interaction.depth=7, shrinkage = 0.1, verbose = TRUE)
+
+best_it.gbm = gbm.perf(model.gbm, plot.it = TRUE)
+#plot(model.gbm, i.var = 1:2, n.trees = 1000)
+
+df[, gbm_pred := predict(model.gbm, df) ]
+
+rms(df$gbm_pred, df$target_true)
+rms(df$gbm_pred, df$target)
+
+ggplot(df, aes(x, y, fill = gbm_pred)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+ggplot(df, aes(x, y, fill = target_true - gbm_pred)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
+
+```
+
+
+## RBF Singular
+
+```{r rbf_singular}
+df = data.table(expand.grid(x = c(0, 1), y = c(0, 1)))
+df[, v := sample(c(0, 1), nrow(df), replace = TRUE) ]
+
+rbf.create(df[,.(x, y)], df$v, df[,.(x, y)], rbf_linear_kernel, dist_fun = 'L1')
+
+
+
+```
+
+
+```{r submit, echo=FALSE}
+  #fwrite(df, file.path(working_folder,'Playground/Feb2021/data/df.csv'))
+
+  #%% boost runs ----------------
+  models_boost =  rbf_boost.create(dfs, target, max_nodes = 2561, n_runs = 20, max_it = 20, growth_rate = 1.5, kernel_fun = rbf_linear_kernel, dist_fun = 'L1', adaptive =TRUE )
+  res = rbf_boost.predict(models_boost, df[,rfb_vars, with = FALSE], combine_boots = TRUE)
+  setDT(res)
+  df[, target_rbf := res[order(id)][model_id1 == max(model_id1), y_pred_cum]] 
+  
+
+  file = file.path(working_folder, "Playground/Feb2021/submit_v3.rbf.csv")
+  fwrite(df[test_index, .(id, target=target_rbf)], file = file, row.names = FALSE)
+  zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
+  print(file)
+
+```
+

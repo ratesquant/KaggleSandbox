@@ -198,7 +198,9 @@ ggplot(lgb_importance, aes(fct_reorder(Feature,Gain), Gain)) + geom_bar(stat = '
 df_agg = df[, .(total_sales = sum(sales_log), total_sales_pred = sum(sales_log_pred, na.rm = TRUE)), by =.(date, family_top11)]
 ggplot(df_agg, aes(date, total_sales)) + geom_line() +  geom_line(aes(date, total_sales_pred), color = 'red') + facet_wrap(~family_top11, scales = 'free')
 ggplot(df_agg[year(date) == '2016'], aes(date, total_sales)) + geom_line() +  geom_line(aes(date, total_sales_pred), color = 'red') + 
-  facet_wrap(~family, scales = 'free')
+  facet_wrap(~family_top11, scales = 'free')
+ggplot(df_agg[date >= '2016-01-02' & date <'2017-01-01'], aes(date, total_sales)) + geom_line() +  geom_line(aes(date, total_sales_pred), color = 'red') + 
+  facet_wrap(~family_top11, scales = 'free')
 ggplot(df_agg[year(date) >= '2016'], aes(date, total_sales)) + geom_line() +  geom_line(aes(date, total_sales_pred), color = 'red') + 
   facet_wrap(~family_top11, scales = 'free')
 
@@ -225,7 +227,7 @@ cc(df[date %in% as.Date(c("2017-08-15", "2017-08-16")) ])
   marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
   ggsave(filename = file.path(working_folder,"StoreSales/profiles.pdf"), plot = marrangeGrob(plots, nrow=2, ncol=2), device = 'pdf', width = 14, height = 8.5, dpi = 360)
   
-  plot_profile(df$sales_log_pred[train_index],  df$sales_log[train_index], df[['nat_holiday_rm15']][train_index], bucket_count = 10, error_band = 'normal')
+  plot_profile(df$sales_log_pred[train_index],  df$sales_log[train_index], df[['nat_holiday_rm15']][train_index], bucket_count = 100, error_band = 'normal')
   plot_profile(df$sales_log_pred[train_index],  df$sales_log[train_index], factor(df[['quake_rm15']][train_index]), bucket_count = 100, error_band = 'normal')
   plot_profile(df$sales_log_pred[train_index],  df$sales_log[train_index], df[['city']][train_index], bucket_count = 10, error_band = 'normal')
   plot_profile(df$sales_log_pred[train_index],  df$sales_log[train_index], df[['state']][train_index], bucket_count = 10, error_band = 'normal')
@@ -251,7 +253,8 @@ plot_profile(df$target_lgb[train_index],  df$loss[train_index], df[['f81']][trai
 v2  - 0.54836 baseline (no optimization, no pre-processing)
 v3 -  0.53349
 v5 -  0.50553 - weighted: exp(-0.5*(ym - y))
-v6 -  0.48661 -weighted exp(-(ym - y))
+v6 -  0.49601 -weighted exp(-(ym - y))
+v7 -  0.48661 more iterations
 
 ```{r submit, echo=FALSE}
   

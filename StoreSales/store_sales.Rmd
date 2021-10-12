@@ -94,11 +94,53 @@ df[, weight := exp( -1.0*(max(date_float) - date_float) )]
 top11_fam = df[, .(sum(sales, na.rm = TRUE)), by =.(family)][order(-V1), family][1:11]
 
 df[,family_top11 := fct_other(family,keep = top11_fam)]
+
+df[,date_1y := make_date(date_year-1, date_month, date_day) ]
+df[,date_2y := make_date(date_year-2, date_month, date_day) ]
+df[,date_3y := make_date(date_year-3, date_month, date_day) ]
+
+df[,date_1m := date %m-% months(1) ]
+df[,date_2m := date %m-% months(2) ]
+df[,date_3m := date %m-% months(3) ]
+
+for(i in c(10, 30, 60, 90, 120, 150, 180, 360 )) {
+  vname = sprintf('sales_log_rm_%03d', i)
+  df[order(date), c(vname) := rollmeanr(sales_log, k = i, fill  = NA), by = .(store_nbr, family)]
+}
+
+df[order(date), sales_log_rm_30m := rollmeanr(sales_log, k = 30, fill  = NA), by = .(store_nbr, family)]
+df[order(date), sales_log_rm_60m := rollmeanr(sales_log, k = 60, fill  = NA), by = .(store_nbr, family)]
+df[order(date), sales_log_rm_90m := rollmeanr(sales_log, k = 90, fill  = NA), by = .(store_nbr, family)]
+
+
+df[df, sales_log_1y := i.sales_log, on=.(date_1y = date, store_nbr, family)]
+df[df, sales_log_2y := i.sales_log, on=.(date_2y = date, store_nbr, family)]
+df[df, sales_log_3y := i.sales_log, on=.(date_3y = date, store_nbr, family)]
+
+df[df, sales_log_1m := i.sales_log, on=.(date_1m = date, store_nbr, family)]
+df[df, sales_log_2m := i.sales_log, on=.(date_2m = date, store_nbr, family)]
+df[df, sales_log_3m := i.sales_log, on=.(date_3m = date, store_nbr, family)]
+
+df[df, sales_log_rm_010_1m := i.sales_log_rm_010, on=.(date_1m = date, store_nbr, family)]
+df[df, sales_log_rm_030_1m := i.sales_log_rm_030, on=.(date_1m = date, store_nbr, family)]
+df[df, sales_log_rm_060_1m := i.sales_log_rm_060, on=.(date_1m = date, store_nbr, family)]
+df[df, sales_log_rm_090_1m := i.sales_log_rm_090, on=.(date_1m = date, store_nbr, family)]
+df[df, sales_log_rm_120_1m := i.sales_log_rm_120, on=.(date_1m = date, store_nbr, family)]
+df[df, sales_log_rm_150_1m := i.sales_log_rm_150, on=.(date_1m = date, store_nbr, family)]
+df[df, sales_log_rm_180_1m := i.sales_log_rm_180, on=.(date_1m = date, store_nbr, family)]
+df[df, sales_log_rm_360_1m := i.sales_log_rm_360, on=.(date_1m = date, store_nbr, family)]
+
+#df[date == '2017-02-02' & store_nbr == 10, .(date,date_1y, sales_log,sales_log_1y, family)]
+
 ```
 
 ## Charts
 
 ```{r charts, echo=FALSE}
+ggplot(df[store_nbr == 1 & family == 'GROCERY I' & date_year > 2015 ], aes(date, sales_log)) + geom_line() + 
+  geom_line(aes(date, sales_log_3y), color = 'red')
+
+
 df_agg = df[, .(total_sales_log = sum(sales_log, na.rm = TRUE), total_sales = sum(sales, na.rm = TRUE), 
                 date_float = mean(date_float, na.rm = TRUE),
                 prom = sum(onpromotion, na.rm = TRUE),
@@ -139,7 +181,8 @@ set.seed(1321)
 t_index_v = which(train_index)
 t_index_v1 = sample(t_index_v, length(t_index_v))
 
-all_vars = c('date_month', 'date_day', 'date_wday','date_year', 'family', 'type', 'cluster', 'city', 'state','nat_holiday','loc_holiday','reg_holiday','month_day_count', 'quake_rm15', 'nat_holiday_rm15')
+all_vars = c('date_month', 'date_day', 'date_wday','date_year', 'family', 'type', 'cluster', 'city', 'state','nat_holiday','loc_holiday','reg_holiday','month_day_count', 'quake_rm15', 'nat_holiday_rm15', 
+             'sales_log_1y', 'sales_log_2y', 'sales_log_3y', 'sales_log_1m', 'sales_log_2m', 'sales_log_3m')
 
 lgb_vars = c(all_vars) %!in_set% c('id')
 obj_var = 'sales_log'
@@ -220,7 +263,7 @@ ggplot(df_agg[year(date) >= '2016'], aes(date, total_sales)) + geom_line() +  ge
 cc(df[date %in% as.Date(c("2017-08-15", "2017-08-16")) ])
 
  plots = llply(unique(c(lgb_importance$Feature, 'city', 'state', 'type', 'cluster', 'loc_holiday','price_rm_010','price_rm_030','price_rm_060', 'price_rm_090', 'price_rm_120', 'date_year','date_days_left', 'onpromotion','month_day_count', 'date_float', 'nat_holiday_rm15','quake_rm15')), function(var_name) { #lgb_vars
-    p = plot_profile(df$sales_log_pred[train_index],  df$sales_log[train_index], df[[var_name]][train_index], bucket_count = 20, error_band = 'normal') +
+    p = plot_profile(df$sales_log_pred[train_index],  df$sales_log[train_index], df[[var_name]][train_index], bucket_count = 50, error_band = 'normal') +
       ggtitle(var_name) +  theme(title =element_text(size=8))
     return( ggplotGrob(p) )
   })
@@ -255,10 +298,11 @@ v3 -  0.53349
 v5 -  0.50553 - weighted: exp(-0.5*(ym - y))
 v6 -  0.49601 -weighted exp(-(ym - y))
 v7 -  0.48661 more iterations
+v9 -  0.48221 using previous month/year
 
 ```{r submit, echo=FALSE}
   
-  file = file.path(working_folder, "StoreSales/submit_v7.lgb.csv")
+  file = file.path(working_folder, "StoreSales/submit_v9.lgb.csv")
   #fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
   fwrite(df[!train_index, .(id, sales = pmax(0, exp(sales_log_pred) - 1) )], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')

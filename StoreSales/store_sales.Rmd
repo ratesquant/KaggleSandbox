@@ -133,6 +133,7 @@ df[df, sales_log_rm_360_1m := i.sales_log_rm_360, on=.(date_1m = date, store_nbr
 
 df[df, sales_log_rm_007_2m := i.sales_log_rm_007, on=.(date_2m = date, store_nbr, family)]
 df[df, sales_log_rm_014_2m := i.sales_log_rm_014, on=.(date_2m = date, store_nbr, family)]
+df[df, sales_log_rm_021_2m := i.sales_log_rm_021, on=.(date_2m = date, store_nbr, family)]
 df[df, sales_log_rm_030_2m := i.sales_log_rm_030, on=.(date_2m = date, store_nbr, family)]
 df[df, sales_log_rm_060_2m := i.sales_log_rm_060, on=.(date_2m = date, store_nbr, family)]
 df[df, sales_log_rm_090_2m := i.sales_log_rm_090, on=.(date_2m = date, store_nbr, family)]
@@ -140,6 +141,17 @@ df[df, sales_log_rm_120_2m := i.sales_log_rm_120, on=.(date_2m = date, store_nbr
 df[df, sales_log_rm_150_2m := i.sales_log_rm_150, on=.(date_2m = date, store_nbr, family)]
 df[df, sales_log_rm_180_2m := i.sales_log_rm_180, on=.(date_2m = date, store_nbr, family)]
 df[df, sales_log_rm_360_2m := i.sales_log_rm_360, on=.(date_2m = date, store_nbr, family)]
+
+df[df, sales_log_rm_007_3m := i.sales_log_rm_007, on=.(date_3m = date, store_nbr, family)]
+df[df, sales_log_rm_014_3m := i.sales_log_rm_014, on=.(date_3m = date, store_nbr, family)]
+df[df, sales_log_rm_021_3m := i.sales_log_rm_021, on=.(date_3m = date, store_nbr, family)]
+df[df, sales_log_rm_030_3m := i.sales_log_rm_030, on=.(date_3m = date, store_nbr, family)]
+df[df, sales_log_rm_060_3m := i.sales_log_rm_060, on=.(date_3m = date, store_nbr, family)]
+df[df, sales_log_rm_090_3m := i.sales_log_rm_090, on=.(date_3m = date, store_nbr, family)]
+df[df, sales_log_rm_120_3m := i.sales_log_rm_120, on=.(date_3m = date, store_nbr, family)]
+df[df, sales_log_rm_150_3m := i.sales_log_rm_150, on=.(date_3m = date, store_nbr, family)]
+df[df, sales_log_rm_180_3m := i.sales_log_rm_180, on=.(date_3m = date, store_nbr, family)]
+df[df, sales_log_rm_360_3m := i.sales_log_rm_360, on=.(date_3m = date, store_nbr, family)]
 
 #df[date == '2017-02-02' & store_nbr == 10, .(date,date_1y, sales_log,sales_log_1y, family)]
 
@@ -201,8 +213,12 @@ t_index_v = which(train_index)
 
 t_index_v1 = sample(t_index_v, length(t_index_v))
 
+#sales_log_rm_
+rm_vars = data.table(expand.grid(c('007', '014','021', '030', '060', '090', '120','150','180','360'), c('_1m', '_2m', '_3m')))
+rm_vars = stri_join('sales_log_rm_', rm_vars$Var1, rm_vars$Var2)
+
 all_vars = c('date_month', 'date_day', 'date_wday','date_year', 'family', 'type', 'cluster', 'city', 'state','nat_holiday','loc_holiday','reg_holiday','month_day_count', 'quake_rm15', 'nat_holiday_rm15', 
-             'sales_log_1y', 'sales_log_2y', 'sales_log_3y', 'sales_log_1m', 'sales_log_2m', 'sales_log_3m',
+             'sales_log_1y', 'sales_log_2y', 'sales_log_3y', 'sales_log_1m', 'sales_log_2m', 'sales_log_3m', 
              'sales_log_rm_007_1m', 'sales_log_rm_014_1m', 'sales_log_rm_030_1m', 'sales_log_rm_060_1m', 'sales_log_rm_090_1m', 'sales_log_rm_120_1m','sales_log_rm_150_1m','sales_log_rm_180_1m','sales_log_rm_360_1m')
 
 lgb_vars = c(all_vars) %!in_set% c('id')

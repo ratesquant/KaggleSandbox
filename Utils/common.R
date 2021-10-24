@@ -45,6 +45,13 @@ ecdf_norm<-function(x, normal = TRUE, expand_dublicates = FALSE) {
   return (y)
 }
 
+periodogram <-function(y){
+  N = length(y)
+  xPerZp <- (1/N)*abs(fft(y)^2)
+  fzp    <- seq(0,1.0-1/N,by=1/N)
+  return (data.frame(freq = fzp[2:ceiling((N-1)/2+1)], y = xPerZp[2:ceiling((N-1)/2+1)]))
+}
+
 
 normalize_data <- function(x){
   #x = data.frame(c1 = rnorm(10), c2 = rnorm(10), c3 = sample(LETTERS[1:4], 10, replace = TRUE) )

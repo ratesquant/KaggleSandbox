@@ -201,15 +201,29 @@ ggplot(df_agg, aes(date, total_sales, group = family, fill = family )) + geom_ar
 
 ggplot(df_agg[date == '2017-03-15'], aes(fct_reorder(family,total_sales), total_sales )) + geom_bar(stat = 'identity') + coord_flip()
 
+###
+df_agg = df[, .(total_sales_log = sum(sales_log, na.rm = TRUE), total_sales = sum(sales, na.rm = TRUE), 
+                date_float = mean(date_float, na.rm = TRUE),
+                prom = sum(onpromotion, na.rm = TRUE),
+                weight = mean(weight, na.rm = TRUE),
+                transactions = sum(transactions, na.rm = TRUE)), by =.(date, store_nbr)]
+
+ggplot(df_agg, aes(date, total_sales)) + geom_line() + facet_wrap(~store_nbr)
+
+ggplot(df_agg[date == '2017-03-15'], aes(fct_reorder(family,total_sales), total_sales )) + geom_bar(stat = 'identity') + coord_flip()
+
+df[sales == 0,]
+
 ```
 
 ## Light GBM Model
-
+store = 18, 25, 43 - have zero sales in 2016 
 ```{r model, echo=FALSE}
 set.seed(1321)
 
 #t_index_v = which(train_index & is.na(df$total_sales))
-t_index_v = which(train_index)
+t_index_v = which(train_index )
+#t_index_v = which(train_index)
 
 t_index_v1 = sample(t_index_v, length(t_index_v))
 
@@ -290,23 +304,38 @@ ggplot(df_agg[year(date) >= '2016'], aes(date, total_sales)) + geom_line() +  ge
 
 #ggplot(df[family == 'BOOKS'], aes(date, sales_log)) + geom_line() + geom_line(aes(date, sales_log_pred), color = 'red') + facet_wrap(~store_nbr)
 
+df_agg = df[, .(total_sales = sum(sales_log), total_sales_pred = sum(sales_log_pred, na.rm = TRUE)), by =.(date, family)]
 
- ts_plots = llply(as.character(unique(df_agg$family_top11)), function(var_name) { #lgb_vars
-   df_temp_2017 = df_agg[family_top11 == var_name & year(date) == 2017]
-   df_temp_2016 = df_agg[family_top11 == var_name & year(date) == 2016]
+ ts_plots = llply(as.character(unique(df_agg$family)), function(var_name) { #lgb_vars
+   df_temp_2017 = df_agg[family == var_name & year(date) == 2017]
+   df_temp_2016 = df_agg[family == var_name & year(date) == 2016]
    df_temp_2016[, date_2017 := make_date(2017, month(date), day(date))]
    
     p = ggplot(df_temp_2017, aes(date, total_sales)) + geom_line() +  geom_line(aes(date, total_sales_pred), color = 'red') +  
-       geom_line(data = df_temp_2016, aes(date_2017, total_sales), color = 'blue', alpha = 0.5) + 
+       geom_line(data = df_temp_2016, aes(date_2017, total_sales), color = 'blue', alpha = 0.3) + 
       ggtitle(var_name) +  theme(title =element_text(size=8))
     return( ggplotGrob(p) )
   })
   ggsave(filename = file.path(working_folder,"StoreSales/ts_2016.pdf"), plot = marrangeGrob(ts_plots, nrow=1, ncol=1), device = 'pdf', width = 14, height = 8.5, dpi = 360)
   
 
+    df_agg = df[, .(total_sales = sum(sales_log), total_sales_pred = sum(sales_log_pred, na.rm = TRUE)), by =.(date, store_nbr)]
+ ts_plots = llply(unique(df_agg$store_nbr), function(var_name) { #lgb_vars
+   df_temp_2017 = df_agg[store_nbr == var_name & year(date) == 2017]
+   df_temp_2016 = df_agg[store_nbr == var_name & year(date) == 2016]
+   df_temp_2016[, date_2017 := make_date(2017, month(date), day(date))]
+   
+    p = ggplot(df_temp_2017, aes(date, total_sales)) + geom_line() +  geom_line(aes(date, total_sales_pred), color = 'red') +  
+       geom_line(data = df_temp_2016, aes(date_2017, total_sales), color = 'blue', alpha = 0.3) + 
+      ggtitle(var_name) +  theme(title =element_text(size=8))
+    return( ggplotGrob(p) )
+  })
+  ggsave(filename = file.path(working_folder,"StoreSales/ts_2016_by_store.pdf"), plot = marrangeGrob(ts_plots, nrow=1, ncol=1), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+  
+
 cc(df[date %in% as.Date(c("2017-08-15", "2017-08-16")) ])
 
- plots = llply(unique(c(lgb_importance$Feature, 'city', 'state', 'type', 'cluster', 'loc_holiday','price_rm_010','price_rm_030','price_rm_060', 'price_rm_090', 'price_rm_120', 'date_year','date_days_left', 'onpromotion','month_day_count', 'date_float', 'nat_holiday_rm15','quake_rm15')), function(var_name) { #lgb_vars
+ plots = llply(unique(c(lgb_importance$Feature, 'city', 'state', 'type', 'cluster', 'loc_holiday','price_rm_010','price_rm_030','price_rm_060', 'price_rm_090', 'price_rm_120', 'date_year','date_days_left', 'onpromotion','month_day_count', 'date_float', 'nat_holiday_rm15','quake_rm15', rm_vars)), function(var_name) { #lgb_vars
     p = plot_profile(df$sales_log_pred[train_index],  df$sales_log[train_index], df[[var_name]][train_index], bucket_count = 50, error_band = 'normal') +
       ggtitle(var_name) +  theme(title =element_text(size=8))
     return( ggplotGrob(p) )
@@ -349,7 +378,7 @@ v12 -  0.45796 using rolling averages
 
 ```{r submit, echo=FALSE}
   
-  file = file.path(working_folder, "StoreSales/submit_v12.lgb.csv")
+  file = file.path(working_folder, "StoreSales/submit_v13.lgb.csv")
   #fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
   fwrite(df[!train_index, .(id, sales = pmax(0, exp(sales_log_pred) - 1) )], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')

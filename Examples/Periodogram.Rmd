@@ -1,0 +1,65 @@
+---
+title: "Periodogram"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library(ggplot2)
+library(TSA)
+
+working_folder = 'D:/Github/KaggleSandbox'
+source(file.path(working_folder, 'Utils/common.R'))
+```
+
+## R Markdown
+
+```{r gen_data}
+
+period = 0.1
+#period = c(2 * pi/15, 2 * pi/50)
+dt = 0.01
+x = seq(0, 1, by = dt)
+y = 0.2 + 0.4 * x * x + 0.3 * sin(15 * x) + 0.05 * cos(50 * x)
+#y = 0.2 + 0.05 * cos(2 * pi * x / period )
+
+df = data.table(x, y)
+
+ggplot(df, aes(x, y)) + geom_line()
+
+#periodogram(df$y,ylab='Periodogram')
+#a = periodogram(df$y,ylab='Periodogram', plot=FALSE)
+#cc(data.frame(a$freq, a$spec))
+
+N = length(df$y)
+xPerZp <- (1/N)*abs(fft(df$y[1:8])^2)
+fzp    <- seq(0,1.0-1/N,by=1/N)
+
+dfp = periodogram(df$y)
+
+ggplot(dfp, aes(freq, y)) + geom_line() + geom_point() + 
+  geom_vline(xintercept = dt/period, color = 'red')
+
+ggplot(dfp, aes(freq, y)) + geom_step(direction = 'mid') + 
+  geom_vline(xintercept = dt/period, color = 'red')
+
+ggplot(dfp, aes(1/x, y)) + geom_line() + geom_point() + 
+  geom_vline(xintercept = period / dt, color = 'red')
+
+ggplot(dfp, aes(dt/x, y)) + geom_line() + geom_point() + 
+  geom_vline(xintercept = period, color = 'red')
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

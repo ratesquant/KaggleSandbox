@@ -239,11 +239,11 @@ df_temp = df[state == 'USA'][order(date), .(new_cases)][!is.na(new_cases)]
 
 df_freq = periodogram(df_temp$new_cases)
 
-ggplot(df_freq, aes(freq, log10(y) )) + geom_step(direction = 'mid') + 
-  geom_vline(xintercept = c(1/7, 12/365, 3/365), color = 'red')
+ggplot(df_freq, aes(365*freq, log(y) )) + geom_step(direction = 'mid') + 
+  geom_vline(xintercept = 365*c(1/7, 3/7, 2/7, 12/365, 2/365), color = 'red')
 
-ggplot(df_freq, aes(1/freq, log10(y) )) + geom_step(direction = 'mid') + 
-  geom_vline(xintercept = c(7, 30), color = 'red')
+ggplot(df_freq, aes(log(1/freq), log(y) )) + geom_step(direction = 'mid') + 
+  geom_vline(xintercept = log(1/c(1/7, 3/7, 2/7, 12/365)), color = 'red')
 
 ```
 

@@ -20,37 +20,49 @@ source(file.path(working_folder, 'Utils/common.R'))
 
 ```{r gen_data}
 
-period = 0.1
+period = c(0.1, 0.2, 0.05, 0.0201)
 #period = c(2 * pi/15, 2 * pi/50)
 dt = 0.01
 x = seq(0, 1, by = dt)
 y = 0.2 + 0.4 * x * x + 0.3 * sin(15 * x) + 0.05 * cos(50 * x)
-#y = 0.2 + 0.05 * cos(2 * pi * x / period )
+y = cos(2 * pi * x / 0.1 ) + 0.5 * sin(2 * pi * x / 0.2 ) + 0.25 * sin(2 * pi * x / 0.05 ) + 0.5 * sin(2 * pi * x / 0.0201 )
 
 df = data.table(x, y)
 
-ggplot(df, aes(x, y)) + geom_line()
+ggplot(df, aes(x, y)) + geom_line() + geom_point()
 
 #periodogram(df$y,ylab='Periodogram')
 #a = periodogram(df$y,ylab='Periodogram', plot=FALSE)
 #cc(data.frame(a$freq, a$spec))
 
 N = length(df$y)
-xPerZp <- (1/N)*abs(fft(df$y[1:8])^2)
+xPerZp <- (1/N)*abs(fft(df$y)^2)
 fzp    <- seq(0,1.0-1/N,by=1/N)
 
+dfp_pad = periodogram(c(df$y,rep(0, length(df$y))) )
 dfp = periodogram(df$y)
 
 ggplot(dfp, aes(freq, y)) + geom_line() + geom_point() + 
+  geom_vline(xintercept = dt/period, color = 'red', linetype = 'dashed')
+
+ggplot(dfp_pad, aes(freq, y)) + geom_line() + geom_point() + 
   geom_vline(xintercept = dt/period, color = 'red')
 
+#with step function
 ggplot(dfp, aes(freq, y)) + geom_step(direction = 'mid') + 
   geom_vline(xintercept = dt/period, color = 'red')
 
-ggplot(dfp, aes(1/x, y)) + geom_line() + geom_point() + 
+ggplot(dfp_pad, aes(freq, y)) + geom_step(direction = 'mid') + 
+  geom_vline(xintercept = dt/period, color = 'red')
+
+ggplot(dfp, aes(1/freq, y)) + geom_line() + geom_point() + 
   geom_vline(xintercept = period / dt, color = 'red')
 
-ggplot(dfp, aes(dt/x, y)) + geom_line() + geom_point() + 
+ggplot(dfp, aes(log(1/freq), y)) + geom_line() + geom_point() + 
+  geom_vline(xintercept = log(period / dt), color = 'red')
+
+
+ggplot(dfp, aes(dt/freq, y)) + geom_line() + geom_point() + 
   geom_vline(xintercept = period, color = 'red')
 ```
 

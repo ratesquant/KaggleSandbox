@@ -201,13 +201,15 @@ ggplot(df[state %in% c('New Jersey', 'North Carolina')], aes(date, new_cases, gr
 ggplot(df[state %in% c('New Jersey', 'North Carolina')], aes(date, deaths, group = state, color = state)) + geom_line()
 
 ggplot(df[state %in% my_states], aes(date, cases, group = state, color = state)) + geom_line() + facet_wrap(~state, scales = 'free_y')
-ggplot(df[state %in% my_states], aes(date, new_cases)) + geom_line() + geom_smooth(span = 0.1, se = FALSE, color = 'red') + facet_wrap(~state, scales = 'free_y')
+ggplot(df[state %in% my_states], aes(date, new_cases)) + geom_line() + geom_line(aes(date, new_cases_avg_7d), size = 1, color = 'red') + facet_wrap(~state, scales = 'free_y')
 ggplot(df[state %in% my_states], aes(date, new_deaths)) + geom_line() + geom_smooth(span = 0.3, se = FALSE, color = 'red') + facet_wrap(~state, scales = 'free_y')
 ggplot(df[state %in% my_states], aes(date, new_deaths_avg_7d)) + geom_line() + facet_wrap(~state, scales = 'free_y')
 ggplot(df[state %in% my_states], aes(date, new_cases_avg_7d)) + geom_line() + facet_wrap(~state, scales = 'free_y')
 
 #year over Year
-ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_cases_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y')
+ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_cases_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')
+
+ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_deaths_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')
 
 ggplot(df[state %in% my_states], aes(1e-6*cases, 1e-3*deaths)) + geom_line() + facet_wrap(~state, scales = 'free')
 
@@ -230,6 +232,18 @@ ggplot(df[state %in% my_states], aes(date, 1e-3*deaths)) + geom_line() +  facet_
 ggplot(df[state %in% my_states], aes(date, 100*deaths/cases)) + geom_line() +  facet_wrap(~state)
 
 ggplot(df[date == max(date),], aes(fct_reorder(state,100*deaths/cases), 100*deaths/cases)) + geom_bar(stat = 'identity') + coord_flip()
+
+
+#periodogram
+df_temp = df[state == 'USA'][order(date), .(new_cases)][!is.na(new_cases)]
+
+df_freq = periodogram(df_temp$new_cases)
+
+ggplot(df_freq, aes(freq, log10(y) )) + geom_step(direction = 'mid') + 
+  geom_vline(xintercept = c(1/7, 12/365, 3/365), color = 'red')
+
+ggplot(df_freq, aes(1/freq, log10(y) )) + geom_step(direction = 'mid') + 
+  geom_vline(xintercept = c(7, 30), color = 'red')
 
 ```
 

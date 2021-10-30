@@ -91,13 +91,15 @@ df_glob[df_glob_deaths, deaths:=i.deaths, on = .(region, state, date)]
 df_glob[order(date), new_cases  := cases  - shift(cases), by = .(region, state)]
 df_glob[order(date), new_deaths  := deaths  - shift(deaths), by = .(region, state)]
 df_glob[order(date), new_cases_avg_7d    := rollmeanr(new_cases,  k = 7, na.pad = TRUE), by = .(region, state)]
+df_glob[order(date), new_cases_avg_60d   := rollmeanr(new_cases,  k = 60, na.pad = TRUE), by = .(region, state)]
 df_glob[order(date), new_deaths_avg_7d   := rollmeanr(new_deaths, k = 7, na.pad = TRUE), by = .(region, state)]
-
 
 my_regions = c('United Kingdom','Ukraine', 'Russia','Israel', 'US', 'India', 'Germany', 'Brazil', 'Mexico', 'Sweden', 'Japan', 'Argentina')
 ggplot(df_glob[region %in% my_regions & state  == '' ], aes(date, new_cases_avg_7d)) + geom_line() + facet_wrap(~region, scales = 'free_y')
 
 ggplot(df_glob[region %in% my_regions & state  == '' ], aes(date, new_deaths_avg_7d)) + geom_line() + facet_wrap(~region, scales = 'free_y')
+
+ggplot(df_glob[region %in% my_regions & state  == '' & date> '2020-07-01' ], aes(date, new_deaths_avg_7d/new_cases_avg_60d)) + geom_line() + facet_wrap(~region, scales = 'free_y') + geom_hline(yintercept = 0.01, color = 'red', linetype = 'dashed')
 
 
 ##--- Global Case to Deaths model
@@ -210,6 +212,8 @@ ggplot(df[state %in% my_states], aes(date, new_cases_avg_7d)) + geom_line() + fa
 ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_cases_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')
 
 ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_deaths_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')
+
+ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_deaths_avg_14d/new_cases_avg_60d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state) + scale_color_custom('mixed') + coord_cartesian(ylim = c(0, 0.1))
 
 ggplot(df[state %in% my_states], aes(1e-6*cases, 1e-3*deaths)) + geom_line() + facet_wrap(~state, scales = 'free')
 

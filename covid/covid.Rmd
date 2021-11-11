@@ -42,13 +42,13 @@ df[, new_cases_avg_7d   := rollmeanr(new_cases, k = 7, na.pad = TRUE), by = .(st
 df[, new_cases_avg_14d  := rollmeanr(new_cases, k = 14, na.pad = TRUE), by = .(state)]
 df[, new_cases_avg_28d  := rollmeanr(new_cases, k = 28, na.pad = TRUE), by = .(state)]
 df[, new_cases_avg_60d  := rollmeanr(new_cases, k = 60, na.pad = TRUE), by = .(state)]
-df[, new_cases_avg_14d_inc :=new_cases_avg_14d - shift(new_cases_avg_14d),  by = .(state)]
 
 df[, new_deaths_avg_7d   := rollmeanr(new_deaths, k = 7, na.pad = TRUE), by = .(state)]
 df[, new_deaths_avg_14d  := rollmeanr(new_deaths, k = 14, na.pad = TRUE), by = .(state)]
 df[, new_deaths_avg_28d  := rollmeanr(new_deaths, k = 28, na.pad = TRUE), by = .(state)]
 df[, new_deaths_avg_60d  := rollmeanr(new_deaths, k = 60, na.pad = TRUE), by = .(state)]
 
+df[, year_f := factor(year(date))]
 ```
 
 
@@ -170,11 +170,15 @@ state_pop = data.table(statepop)
 df_last[state_pop, pop:=i.pop_2015, on = .(state = full)]
 
 df_last[, new_cases_avg_7d_per_capita:=1e6*new_cases_avg_7d/pop]
+df_last[, new_cases_avg_7d_rate:=new_cases_avg_7d/new_cases_avg_28d]
 
 plot_usmap(data = df_last, values = 'new_cases_avg_7d_per_capita') + theme(legend.position = "right") + 
   scale_fill_custom('mixed', discrete = FALSE)
 
 plot_usmap(data = df_last, values = 'new_cases_avg_7d') + theme(legend.position = "right") + 
+  scale_fill_custom('mixed', discrete = FALSE)
+
+plot_usmap(data = df_last, values = 'new_cases_avg_7d_rate') + theme(legend.position = "right") + 
   scale_fill_custom('mixed', discrete = FALSE)
 
 #test palettes
@@ -198,6 +202,8 @@ ggplot(df_p, aes(x, y, fill = x)) + geom_tile() + theme_void() + theme(legend.po
 ```{r plots, echo=FALSE}
 my_states = c('Connecticut', 'New Jersey', 'New York', 'North Carolina', 'Georgia', 'Texas', 'California', 'Minnesota', 'Florida',  'USA', 'Ohio', 'Pennsylvania')
 
+exclude_states = c('Northern Mariana Islands', 'Puerto Rico', 'Virgin Islands', 'American Samoa')
+
 ggplot(df[state %in% c('New Jersey', 'North Carolina')], aes(date, cases, group = state, color = state)) + geom_line()
 ggplot(df[state %in% c('New Jersey', 'North Carolina')], aes(date, new_cases, group = state, color = state)) + geom_line()
 ggplot(df[state %in% c('New Jersey', 'North Carolina')], aes(date, deaths, group = state, color = state)) + geom_line()
@@ -210,6 +216,18 @@ ggplot(df[state %in% my_states], aes(date, new_cases_avg_7d)) + geom_line() + fa
 
 #year over Year
 ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_cases_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')
+
+ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_deaths_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')
+
+df_agg = df[state %in% my_states, .(total_deaths = 1e-3*sum(new_deaths, na.rm = TRUE)), by =.(state, year_f)]
+ggplot(df_agg, aes(state, total_deaths, group =year_f, fill = year_f, label = sprintf('%.1fk',total_deaths))) + geom_bar(stat = 'identity', position = 'dodge') + coord_flip() +  scale_fill_custom('mixed') + geom_text(  position=position_dodge(width=0.9), vjust=0.5, hjust = -0.1, size = 3)
+
+
+ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_deaths_avg_7d/new_cases_avg_60d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')
+
+
+ggplot(df[state %!in% exclude_states], aes(make_date(2020, month(date), day(date)), new_cases_avg_7d, group = year(date), color =  year_f )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')
+
 
 ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_deaths_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')
 

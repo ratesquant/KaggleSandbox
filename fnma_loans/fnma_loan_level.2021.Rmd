@@ -1,0 +1,325 @@
+---
+title: "FNMA Loan Level Data"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(plyr)
+library(foreach)
+library(data.table)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(forcats)
+library(lubridate)
+library(R.utils)
+
+working_folder = 'D:/Github/KaggleSandbox'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+source(file.path(working_folder, '/Utils/common.R'))
+
+```
+
+BZip csv files 
+```{r bzip_files, eval = FALSE}
+data_folder = 'W:/loan_level/fnma/raw'
+
+files = list.files(data_folder, glob2rx('*.csv'), full.names = TRUE )
+
+for(file_name in files) {
+  print(file_name)
+  bzip2(file_name)
+}
+#system("gzip bigdata-compressed.txt")
+
+```
+
+Split file into chuncks
+```{r split_file, eval = FALSE}
+
+library(data.table)
+
+index <- 0
+counter <- 0
+total <- 0
+chunks <- 10000000
+file_name <- "E:/2003Q2.csv"
+
+repeat{
+  # With fread file is opened in each iteration
+  dataChunk <- fread(input = file_name, sep = "|", nrows=chunks, skip = chunks*index, 
+                     header=FALSE, col.names = lppub_column_names, colClasses = lppub_column_classes)
+
+  # do processing on dataChunk (i.e adding header, converting data type) 
+
+  # Create a new file name and write to it. You can have your own logic for file names
+  fwrite(dataChunk, file = sprintf('%s.part_%02d', file_name,index), col.names = FALSE)
+
+  #check if file end has been reached and break from repeat
+  if(nrow(dataChunk) < chunks){
+    break
+  }
+  #increment the index to read next chunk
+  index = index+1
+}
+```
+
+## Load FNMA loan data
+load 1% of loans
+```{r load_data}
+data_folder = 'W:/loan_level/fnma/raw'
+
+### Define the Loan Performance table headers
+lppub_column_names <- c("POOL_ID", "LOAN_ID", "ACT_PERIOD", "CHANNEL", "SELLER", "SERVICER",
+                        "MASTER_SERVICER", "ORIG_RATE", "CURR_RATE", "ORIG_UPB", "ISSUANCE_UPB",
+                        "CURRENT_UPB", "ORIG_TERM", "ORIG_DATE", "FIRST_PAY", "LOAN_AGE",
+                        "REM_MONTHS", "ADJ_REM_MONTHS", "MATR_DT", "OLTV", "OCLTV",
+                        "NUM_BO", "DTI", "CSCORE_B", "CSCORE_C", "FIRST_FLAG", "PURPOSE",
+                        "PROP", "NO_UNITS", "OCC_STAT", "STATE", "MSA", "ZIP", "MI_PCT",
+                        "PRODUCT", "PPMT_FLG", "IO", "FIRST_PAY_IO", "MNTHS_TO_AMTZ_IO",
+                        "DLQ_STATUS", "PMT_HISTORY", "MOD_FLAG", "MI_CANCEL_FLAG", "Zero_Bal_Code",
+                        "ZB_DTE", "LAST_UPB", "RPRCH_DTE", "CURR_SCHD_PRNCPL", "TOT_SCHD_PRNCPL",
+                        "UNSCHD_PRNCPL_CURR", "LAST_PAID_INSTALLMENT_DATE", "FORECLOSURE_DATE",
+                        "DISPOSITION_DATE", "FORECLOSURE_COSTS", "PROPERTY_PRESERVATION_AND_REPAIR_COSTS",
+                        "ASSET_RECOVERY_COSTS", "MISCELLANEOUS_HOLDING_EXPENSES_AND_CREDITS",
+                        "ASSOCIATED_TAXES_FOR_HOLDING_PROPERTY", "NET_SALES_PROCEEDS",
+                        "CREDIT_ENHANCEMENT_PROCEEDS", "REPURCHASES_MAKE_WHOLE_PROCEEDS",
+                        "OTHER_FORECLOSURE_PROCEEDS", "NON_INTEREST_BEARING_UPB", "PRINCIPAL_FORGIVENESS_AMOUNT",
+                        "ORIGINAL_LIST_START_DATE", "ORIGINAL_LIST_PRICE", "CURRENT_LIST_START_DATE",
+                        "CURRENT_LIST_PRICE", "ISSUE_SCOREB", "ISSUE_SCOREC", "CURR_SCOREB",
+                        "CURR_SCOREC", "MI_TYPE", "SERV_IND", "CURRENT_PERIOD_MODIFICATION_LOSS_AMOUNT",
+                        "CUMULATIVE_MODIFICATION_LOSS_AMOUNT", "CURRENT_PERIOD_CREDIT_EVENT_NET_GAIN_OR_LOSS",
+                        "CUMULATIVE_CREDIT_EVENT_NET_GAIN_OR_LOSS", "HOMEREADY_PROGRAM_INDICATOR",
+                        "FORECLOSURE_PRINCIPAL_WRITE_OFF_AMOUNT", "RELOCATION_MORTGAGE_INDICATOR",
+                        "ZERO_BALANCE_CODE_CHANGE_DATE", "LOAN_HOLDBACK_INDICATOR", "LOAN_HOLDBACK_EFFECTIVE_DATE",
+                        "DELINQUENT_ACCRUED_INTEREST", "PROPERTY_INSPECTION_WAIVER_INDICATOR",
+                        "HIGH_BALANCE_LOAN_INDICATOR", "ARM_5_YR_INDICATOR", "ARM_PRODUCT_TYPE",
+                        "MONTHS_UNTIL_FIRST_PAYMENT_RESET", "MONTHS_BETWEEN_SUBSEQUENT_PAYMENT_RESET",
+                        "INTEREST_RATE_CHANGE_DATE", "PAYMENT_CHANGE_DATE", "ARM_INDEX",
+                        "ARM_CAP_STRUCTURE", "INITIAL_INTEREST_RATE_CAP", "PERIODIC_INTEREST_RATE_CAP",
+                        "LIFETIME_INTEREST_RATE_CAP", "MARGIN", "BALLOON_INDICATOR",
+                        "PLAN_NUMBER", "FORBEARANCE_INDICATOR", "HIGH_LOAN_TO_VALUE_HLTV_REFINANCE_OPTION_INDICATOR",
+                        "DEAL_NAME", "RE_PROCS_FLAG", "ADR_TYPE", "ADR_COUNT", "ADR_UPB")
+lppub_column_classes <- c("character", "character", "character", "character", "character", "character",
+                          "character", "numeric", "numeric", "numeric", "numeric",
+                          "numeric", "numeric", "character", "character", "numeric", "numeric",
+                          "numeric", "character", "numeric", "numeric", "character", "numeric",
+                          "numeric", "numeric", "character", "character", "character",
+                          "numeric", "character", "character", "character", "character",
+                          "numeric", "character", "character", "character", "character",
+                          "numeric", "character", "character", "character", "character",
+                          "character", "character", "numeric", "character", "numeric",
+                          "numeric", "numeric", "character", "character", "character",
+                          "numeric", "numeric", "numeric", "numeric", "numeric", "numeric",
+                          "numeric", "numeric", "numeric", "numeric", "numeric", "character",
+                          "numeric", "character", "numeric", "numeric", "numeric", "numeric",
+                          "numeric", "numeric", "character", "numeric", "numeric", "numeric",
+                          "numeric", "character", "numeric", "character", "numeric", "character",
+                          "numeric", "numeric", "character", "character", "numeric", "numeric",
+                          "numeric", "numeric", "numeric", "numeric", "numeric", "numeric",
+                          "numeric", "numeric", "numeric", "numeric", "numeric", "character",
+                          "character", "character", "character", "character",
+						  "character", "numeric", "numeric")
+
+
+files = list.files(data_folder,glob2rx('202*.bz2'), full.names = TRUE )
+files = list.files(data_folder,'^20[0-2].*\\.bz2$', full.names = TRUE )
+#files = list.files(data_folder,'^20[0-2].*\\.csv_part_', full.names = TRUE )
+
+
+drop_columns = c('PMT_HISTORY','SELLER','SERVICER', 'PRODUCT')
+
+### Process file to create new origination files
+for(file_name in files) {
+  print(file_name)
+  temp = fread(file_name, sep = "|", col.names = lppub_column_names, colClasses = lppub_column_classes, nThread =  1)
+  temp = temp[LOAN_AGE == 0]# only new origination
+  
+  fwrite(temp,stri_join(file_name, '.new.gz'), sep = "|", compress = 'gzip')
+  
+  gc(reset = TRUE)
+}
+
+### combine parts
+# files_parts = list.files(file.path(data_folder),glob2rx('2003Q3.csv_part_*.new.gz'), full.names = TRUE )
+# df = foreach(file_name = files_parts, .combine = rbind) %do% {
+#   print(file_name)
+#   temp = fread(file_name, sep = "|", col.names = lppub_column_names, colClasses = lppub_column_classes)
+#   return(temp)
+# }
+# fwrite(df, file.path( file.path(data_folder), '2003Q3.csv.bz2.new.gz'))
+
+### Load new origination
+files_new = list.files(file.path(data_folder, '/new_orig/'),glob2rx('*.new.gz'), full.names = TRUE )
+df = foreach(file_name = files_new, .combine = rbind) %do% {
+  print(file_name)
+  temp = fread(file_name, sep = "|", col.names = lppub_column_names, colClasses = lppub_column_classes)
+  #temp[, c(drop_columns):=NULL]
+  return(temp)
+}
+
+#temp = fread("W:/loan_level/fnma/raw/new_orig/2003Q3.csv.bz2.new.gz", sep = ",", col.names = lppub_column_names, colClasses = lppub_column_classes)
+#fwrite(temp, "W:/loan_level/fnma/raw/new_orig/2003Q3.csv.bz2.new.gz", sep = "|")
+
+#temp = fread('W:/loan_level/fnma/raw/2021Q2.csv.bz2', sep = "|", col.names = lppub_column_names, colClasses = lppub_column_classes)
+
+df[, date:= as.Date(stri_join('01',ACT_PERIOD), format = '%d%m%Y')]
+df[, date_year:= year(date)]
+
+df[, balance := pmax(ORIG_UPB, CURRENT_UPB, na.rm = TRUE)]
+df[LOAN_ID == '000122128311']
+df[,duplicated:=duplicated(LOAN_ID)]
+#temp
+```
+
+
+## Loan Macro Data
+```{r load_macro_data}
+# Mortgage Rate ----- 
+#https://fred.stlouisfed.org/series/MORTGAGE30US
+mtg_rate = fread(file.path(data_folder,'/macro/MORTGAGE30US.csv'))
+mtg_rate[, date := ymd(DATE)]
+mtg_rate[, DATE:=NULL]
+
+ggplot(mtg_rate, aes(date, MORTGAGE30US ))  + geom_line()
+
+#aggregate rate to monthly (not very )
+mtg_rate[, date_month := as_date(ISOdate(year(date), month(date), 1)) ]
+mtg_rate_mon = mtg_rate[, .(mtg30=mean(MORTGAGE30US, na.rm = TRUE)), by =.(date_month) ]
+setnames(mtg_rate_mon, 'date_month', 'date')
+mtg_rate_mon[, date_1m := date %m+% months(1)]
+mtg_rate_mon[, date_2m := date %m+% months(2)]
+mtg_rate_mon[, date_3m := date %m+% months(3)]
+
+# Unemployment Rate -----
+uer = fread(file.path(data_folder,'/macro/UNRATE.csv'))
+uer[, date := ymd(DATE)]
+uer[, DATE := NULL]
+uer[, date_1y := date %m+% months(12)]
+
+
+# HPI Index -----
+hpi = fread(file.path(data_folder,'/macro/USSTHPI.csv'))
+hpi[, date := ymd(DATE)]
+hpi[, DATE := NULL]
+
+#interpolate HPI to monthly 
+dates = seq(min(hpi$date), max(hpi$date), by = '1 month')
+hpi_mon = data.table(date = dates, hpi = approx(hpi$date, hpi$USSTHPI, dates)$y)
+
+hpi_mon[, date_1y := date %m+% months(12)]
+hpi_mon[hpi_mon, hpi_1y:=i.hpi, on = c('date'='date_1y')]
+hpi_mon[, hpa:=(hpi - hpi_1y)/hpi_1y]
+
+
+#join 
+df_macro = merge(mtg_rate_mon, merge(uer, hpi_mon, by = 'date', all = TRUE), by = 'date', all = TRUE)
+setnames(df_macro, 'UNRATE', 'uer')
+
+ggplot(df_macro, aes(date, uer))  + geom_line()
+ggplot(df_macro, aes(date, hpi))  + geom_line()
+ggplot(df_macro, aes(date, mtg30))  + geom_line()
+
+```
+
+## New origination analysis
+```{r new_orig}
+
+df_agg = df[PURPOSE!='U',.(.N, age = mean(LOAN_AGE, na.rm = TRUE), 
+               bal = sum(balance, na.rm = TRUE),
+               OCLTV = weighted.mean(OCLTV, balance, na.rm = TRUE),
+               NUM_BO = weighted.mean(as.numeric(NUM_BO), balance, na.rm = TRUE),
+               DTI  = weighted.mean(DTI , balance, na.rm = TRUE),
+               CSCORE_B  = weighted.mean(pmin(CSCORE_B, CSCORE_C, na.rm = TRUE), balance, na.rm = TRUE),
+               FIRST_FLAG = weighted.mean(as.numeric(FIRST_FLAG == 'Y'), balance, na.rm = TRUE),
+               ORIG_RATE = weighted.mean(ORIG_RATE, balance, na.rm = TRUE),
+               ORIG_TERM = weighted.mean(ORIG_TERM, balance, na.rm = TRUE)
+               ), by = .(date, PURPOSE, OCC_STAT)]
+
+ggplot(df_agg, aes(date, 1e-6*N, group = PURPOSE, fill = PURPOSE)) + geom_area() + facet_wrap(~OCC_STAT, scales = 'free') + scale_fill_custom('mixed')
+
+ggplot(df_agg, aes(date, 1e-9*bal, group = PURPOSE, fill = PURPOSE)) + geom_area() + facet_wrap(~OCC_STAT, scales = 'free') + scale_fill_custom('mixed')
+
+ggplot(df_agg, aes(date, 1e-9*bal, group = PURPOSE, color = PURPOSE)) + geom_line() + facet_wrap(~OCC_STAT, scales = 'free') + scale_color_custom('mixed')
+
+
+ggplot(df_agg , aes(date, 1e-9*bal)) + geom_point()
+ggplot(df_agg , aes(date, 1e-3*bal/N, group = PURPOSE, color = PURPOSE)) + geom_line() + facet_grid(~OCC_STAT)+ scale_color_custom('mixed')
+
+ggplot(df_agg , aes(date, 1e-3*bal/N, group = PURPOSE, color = PURPOSE)) + geom_line() + facet_grid(~OCC_STAT)+ scale_color_custom('mixed')
+ggplot(df_agg , aes(date, DTI, group = PURPOSE, color = PURPOSE)) + geom_line() + facet_grid(~OCC_STAT)+ scale_color_custom('mixed')
+ggplot(df_agg , aes(date, CSCORE_B, group = PURPOSE, color = PURPOSE)) + geom_line() + facet_grid(~OCC_STAT)+ scale_color_custom('mixed')
+ggplot(df_agg , aes(date, ORIG_RATE, group = PURPOSE, color = PURPOSE)) + geom_line() + facet_grid(~OCC_STAT)+ scale_color_custom('mixed')
+ggplot(df_agg , aes(date, ORIG_TERM, group = PURPOSE, color = PURPOSE)) + geom_line() + facet_grid(~OCC_STAT)+ scale_color_custom('mixed')
+ggplot(df_agg , aes(date, FIRST_FLAG, group = PURPOSE, color = PURPOSE)) + geom_line() + facet_grid(~OCC_STAT)+ scale_color_custom('mixed')
+ggplot(df_agg , aes(date, NUM_BO, group = PURPOSE, color = PURPOSE)) + geom_line() + facet_grid(~OCC_STAT)+ scale_color_custom('mixed')
+ggplot(df_agg , aes(date, OCLTV, group = PURPOSE, color = PURPOSE)) + geom_line() + facet_grid(~OCC_STAT)+ scale_color_custom('mixed')
+
+ggplot(df_agg , aes(date, CSCORE_B)) + geom_point()
+ggplot(df_agg , aes(date, NUM_BO)) + geom_point()
+ggplot(df_agg , aes(date, OCLTV)) + geom_point()
+
+ex_states = c('GU', 'VI', 'PR')
+
+df_agg_state = df[PURPOSE=='P',.(.N, age = mean(LOAN_AGE, na.rm = TRUE), 
+               bal = sum(balance, na.rm = TRUE),
+               OCLTV = weighted.mean(OCLTV, balance, na.rm = TRUE),
+               NUM_BO = weighted.mean(as.numeric(NUM_BO), balance, na.rm = TRUE),
+               DTI  = weighted.mean(DTI , balance, na.rm = TRUE),
+               CSCORE_B  = weighted.mean(pmin(CSCORE_B, CSCORE_C, na.rm = TRUE), balance, na.rm = TRUE),
+               FIRST_FLAG = weighted.mean(as.numeric(FIRST_FLAG == 'Y'), balance, na.rm = TRUE),
+               ORIG_RATE = weighted.mean(ORIG_RATE, balance, na.rm = TRUE),
+               ORIG_TERM = weighted.mean(ORIG_TERM, balance, na.rm = TRUE)
+               ), by = .(date, STATE, OCC_STAT)]
+
+
+ggplot(df_agg_state[OCC_STAT == 'P'], aes(date, 1e-9*bal)) + geom_line() + geom_smooth(span  = 0.25, se = FALSE, color = 'red') + facet_wrap(~STATE, scales = 'free')+ scale_color_custom('mixed')
+ggplot(df_agg_state[OCC_STAT == 'S'], aes(date, 1e-9*bal)) + geom_line() + geom_smooth(span  = 0.25, se = FALSE, color = 'red') + facet_wrap(~STATE, scales = 'free')+ scale_color_custom('mixed')
+ggplot(df_agg_state[OCC_STAT == 'I'], aes(date, 1e-9*bal)) + geom_line() + geom_smooth(span  = 0.25, se = FALSE, color = 'red') + facet_wrap(~STATE, scales = 'free')+ scale_color_custom('mixed')
+
+ggplot(df_agg_state[OCC_STAT == 'P'], aes(date, 1e-9*bal)) + geom_line() + geom_smooth(span  = 0.25, se = FALSE, color = 'red') + facet_wrap(~STATE)+ scale_color_custom('mixed')
+
+table( df$LOAN_AGE )
+
+#-----
+df_agg_state = df[duplicated == FALSE & ORIG_TERM == 360,.(.N, age = mean(LOAN_AGE, na.rm = TRUE), 
+               bal = sum(balance, na.rm = TRUE),
+               OCLTV = weighted.mean(OCLTV, balance, na.rm = TRUE),
+               NUM_BO = weighted.mean(as.numeric(NUM_BO), balance, na.rm = TRUE),
+               DTI  = weighted.mean(DTI , balance, na.rm = TRUE),
+               CSCORE_B  = weighted.mean(pmin(CSCORE_B, CSCORE_C, na.rm = TRUE), balance, na.rm = TRUE),
+               FIRST_FLAG = weighted.mean(as.numeric(FIRST_FLAG == 'Y'), balance, na.rm = TRUE),
+               ORIG_RATE = weighted.mean(ORIG_RATE, balance, na.rm = TRUE),
+               ORIG_TERM = weighted.mean(ORIG_TERM, balance, na.rm = TRUE)
+               ), by = .(date, STATE, PURPOSE)]
+df_agg_state_t = df_agg_state[,.(bal = sum(bal, na.rm = TRUE)), by = .(date, STATE)]
+df_agg_state[df_agg_state_t, total_bal := i.bal, on=.(date, STATE)]
+df_agg_state[,bal_pct := 100 * bal / total_bal]
+
+ggplot(df_agg_state[STATE %!in% ex_states & PURPOSE == 'P'], aes(date, 1e-9*bal)) + geom_line() + 
+  geom_smooth(se = FALSE, color = 'red', span = 0.2, alpha = 0.3) +  facet_wrap(~fct_reorder(STATE, -bal, .fun = sum), scales = 'free')+ scale_color_custom('mixed')
+
+ggplot(df_agg_state[STATE %!in% ex_states & PURPOSE == 'P'], aes(date, N)) + geom_line() + 
+  geom_smooth(se = FALSE, color = 'red', span = 0.2, alpha = 0.3) +  facet_wrap(~fct_reorder(STATE, -bal, .fun = sum), scales = 'free')+ scale_color_custom('mixed')
+
+ggplot(df_agg_state[STATE %!in% ex_states & PURPOSE == 'C'], aes(date, bal_pct)) + geom_line() + facet_wrap(~fct_reorder(STATE, -bal, .fun = sum), scales = 'free')+ scale_color_custom('mixed')
+
+ggplot(df_agg_state[STATE %in% c('CA') & PURPOSE == 'P' ], aes(date, bal_pct)) + geom_line() + facet_wrap(~fct_reorder(STATE, -bal, .fun = sum), scales = 'free')+ scale_color_custom('mixed')
+
+ggplot(df_agg_state[STATE %!in% ex_states & PURPOSE != 'U' ], aes(date, bal_pct, group = PURPOSE, fill = PURPOSE)) + geom_area() + facet_wrap(~fct_reorder(STATE, -bal, .fun = sum))+ scale_fill_custom('mixed')
+
+ggplot(df_agg_state[STATE %in% c('CA', 'NY', 'NJ', 'NC', 'CT', 'TX') & PURPOSE == 'P'], aes(date, N)) + geom_line() + 
+  geom_smooth(se = FALSE, color = 'red', span = 0.2, alpha = 0.3) +  facet_wrap(~fct_reorder(STATE, -bal, .fun = sum), scales = 'free')+ scale_color_custom('mixed')
+
+
+df[,.(.N, bal = sum(balance, na.rm = TRUE)), by = .(date_year)]
+```
+

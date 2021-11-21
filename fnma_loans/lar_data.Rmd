@@ -1,0 +1,70 @@
+---
+title: "FNMA Loan Level Data"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(plyr)
+library(foreach)
+library(data.table)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(forcats)
+library(lubridate)
+
+working_folder = 'D:/Github/KaggleSandbox'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+source(file.path(working_folder, '/Utils/common.R'))
+
+```
+
+BZip csv files 
+```{r bzip_files, eval = FALSE}
+data_folder = 'W:/loan_level/fnma/raw'
+
+files = list.files(data_folder, glob2rx('*.csv'), full.names = TRUE )
+
+for(file_name in files) {
+  print(file_name)
+  bzip2(file_name)
+}
+#system("gzip bigdata-compressed.txt")
+
+```
+
+## Load LAR data
+```{r load_data}
+data_folder = 'W:/hmda/LAR'
+
+files = list.files(data_folder,glob2rx('*_lar_csv.csv.bz2'), full.names = TRUE )
+
+df = foreach(file_name = files, .combine = function(...) rbind(..., fill = TRUE, use.names = TRUE)) %do% {
+  print(file_name)
+  return( fread(file_name))
+}
+
+```
+
+
+## New origination analysis
+```{r new_orig}
+df_agg = df[action_taken == 1, .(.N), by =.(activity_year, purchaser_type)]
+
+ggplot(df_agg, aes(factor(purchaser_type), N, group =activity_year, fill = factor(activity_year) )) + geom_bar(stat = 'identity', position = 'dodge')
+
+#PURPOSE
+df_agg = df[action_taken == 1, .(.N), by =.(activity_year, loan_purpose)]
+ggplot(df_agg, aes(factor(loan_purpose), N, group =activity_year, fill = factor(activity_year) )) + geom_bar(stat = 'identity', position = 'dodge')
+
+
+```
+

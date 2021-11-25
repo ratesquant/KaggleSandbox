@@ -58,13 +58,15 @@ df = foreach(file_name = files, .combine = function(...) rbind(..., fill = TRUE,
 ## New origination analysis
 ```{r new_orig}
 df_agg = df[action_taken == 1, .(.N), by =.(activity_year, purchaser_type)]
-
 ggplot(df_agg, aes(factor(purchaser_type), N, group =activity_year, fill = factor(activity_year) )) + geom_bar(stat = 'identity', position = 'dodge')
 
 #PURPOSE
 df_agg = df[action_taken == 1, .(.N), by =.(activity_year, loan_purpose)]
 ggplot(df_agg, aes(factor(loan_purpose), N, group =activity_year, fill = factor(activity_year) )) + geom_bar(stat = 'identity', position = 'dodge')
 
+
+df_agg = df[action_taken == 1, .(.N), by =.(activity_year, loan_purpose)]
+ggplot(df_agg, aes(factor(loan_purpose), N, group =activity_year, fill = factor(activity_year) )) + geom_bar(stat = 'identity', position = 'dodge')
 
 ```
 

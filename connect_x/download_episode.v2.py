@@ -69,12 +69,12 @@ submission_list = set([19700359, 19700145, 19683151, 19683130, 19670498, 1967033
                        19442278, 19541137, 19426528, 19365059, 19302797, 19413351, 19413332,
                        19426528, 19397619, 19397389, 19365059, 19087403, 18987110, 19002379, 18987110, 18956190, 19725613, 19725787, 19541833, 19748268, 19797665, 19804069, 19810416,
                        19854447, 20324274, 20324395, 20339122, 20971481, 20987943, 21000842, 19683151, 21005650, 21012137, 21086630, 21086463, 21053536, 21167184,
-                       21204127, 21217719, 21232435, 21777260, 21777362, 21798662, 22351903, 22363528, 22367398, 22367452, 22507409, 22507534])
-#submission_list.update(recent_submission_list)
+                       21204127, 21217719, 21232435, 21777260, 21777362, 21798662, 22351903, 22363528, 22367398, 22367452, 22507409, 22507534,
+                       24260721, 24260700, 23700983, 23478094, 23478019, 23192759, 23185639, 22836693])
 
 #19749534 - long games
-top_agents = set([19656705, 18777551, 19160823, 19298291, 18829008, 19669130, 19550625, 19799937, 18837224, 18829008])
-#submission_list.update(top_agents)
+top_agents = set([19656705, 18777551, 19160823, 19298291, 18829008, 19669130, 19550625, 19799937, 18837224, 18829008, 23348111, 23420354, 23563401, 23634169])
+submission_list.update(top_agents)
 
 #top players
 #submission_list = set([19160823,18777551, 19656705, 19298291, 18829031, 19498976])
@@ -82,10 +82,17 @@ top_agents = set([19656705, 18777551, 19160823, 19298291, 18829008, 19669130, 19
 
 EPISODE_FOLDER = 'D:/Github/KaggleSandbox/connect_x/analyzed_games'
 
+
 for sub in sorted(submission_list): 
-    #time.sleep(10*random.random())
-    episodes = list_episodes_for_submission(sub)
-    saved_count = 0                    
+    while True:
+        time.sleep(10*random.random())    
+        episodes = list_episodes_for_submission(sub)
+        if 'results' in episodes and 'wasSuccessful' in episodes  and episodes['wasSuccessful'] == True:
+            break
+        else:
+            print('will try again [%s]:  %s' % (sub, episodes.keys()))
+        
+    saved_count = 0      
     for episode in episodes['result']['episodes']:
         eid = episode['id']
         episode_url = 'https://www.kaggleusercontent.com/episodes/%s.json' % str(eid)

@@ -13,6 +13,10 @@ library(ggplot2)
 library(lubridate)
 library(forcats)
 library(foreach)
+library(R.utils)
+#test.data.table()
+
+data_folder = 'W:/vaers'
 
 working_folder = 'D:/Github/KaggleSandbox/'
 #working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
@@ -21,14 +25,24 @@ source(file.path(working_folder, 'Utils/common.R'))
 
 ```
 
+BZip csv files 
+```{r bzip_files, eval = FALSE}
+files = list.files(data_folder, glob2rx('*.csv'), full.names = TRUE )
+
+for(file_name in files) {
+  print(file_name)
+  bzip2(file_name)
+}
+#system("gzip bigdata-compressed.txt")
+```
+
 ## Load Data
 
 
 ```{r load_data}
-files_vax = list.files(file.path(working_folder,'vaers/data/'), glob2rx('*VAERSVAX.csv'), full.names = TRUE)
-files_sym = list.files(file.path(working_folder,'vaers/data/'), glob2rx('*VAERSSYMPTOMS.csv'), full.names = TRUE)
-files_dat = list.files(file.path(working_folder,'vaers/data/'), glob2rx('*VAERSDATA.csv'), full.names = TRUE)
-
+files_vax = list.files(data_folder, glob2rx('*VAERSVAX.csv.bz2'), full.names = TRUE)
+files_sym = list.files(data_folder, glob2rx('*VAERSSYMPTOMS.csv.bz2'), full.names = TRUE)
+files_dat = list.files(data_folder, glob2rx('*VAERSDATA.csv.bz2'), full.names = TRUE)
 
 #load single file for testing
 df_v = fread(files_vax[1])
@@ -89,7 +103,6 @@ ggplot(df_d[is_flu == TRUE & DISABLE == 'Y',.(.N), by =.(RECVDATE_M)], aes(RECVD
 ggplot(df_d[,.(.N), by =.(RECVDATE_M, VAX_TYPE_TOP5)], aes(RECVDATE_M, N, group = VAX_TYPE_TOP5, fill = VAX_TYPE_TOP5)) + geom_area()
 ggplot(df_d[DIED == 'Y',.(.N), by =.(RECVDATE_M, VAX_TYPE_TOP5)], aes(RECVDATE_M, N, group = VAX_TYPE_TOP5, fill = VAX_TYPE_TOP5)) + geom_area()
 ggplot(df_d[DISABLE == 'Y',.(.N), by =.(RECVDATE_M, VAX_TYPE_TOP5)], aes(RECVDATE_M, N, group = VAX_TYPE_TOP5, fill = VAX_TYPE_TOP5)) + geom_area()
-
 
 ggplot(df_d[!is.na(VAX_TYPE_TOP5),.(.N), by =.(RECVDATE_M, VAX_TYPE_TOP5)][order(RECVDATE_M)], aes(RECVDATE_M, N, group = VAX_TYPE_TOP5, color = VAX_TYPE_TOP5)) + geom_line() + facet_wrap(~VAX_TYPE_TOP5, scales = 'free')
 

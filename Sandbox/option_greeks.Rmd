@@ -1,0 +1,77 @@
+---
+title: "Option Greeks"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(data.table)
+library(greeks)
+library(plyr)
+```
+
+## BS_European_Greeks
+
+```{r BS_European_Greeks}
+
+strike = 100
+rate = 0.02
+time = 2.5
+price  = 90
+dividend_yield = 0.06
+sigma = 0.2
+
+all_greeks =  c("fair_value", "delta", "vega", "theta", "rho", "epsilon", "lambda", "gamma", "vanna", "charm", "vomma", "veta", "speed")
+
+ BS_European_Greeks(100, strike,rate, time, sigma, dividend_yield, "call")
+
+df = ldply(seq(0, 0.2, 0.02), function(my_sigma){
+  df_bs = ldply(all_greeks, function(my_greek) {
+   put = BS_European_Greeks(price, strike,rate, time, my_sigma, dividend_yield, greek = my_greek, "put")
+   call = BS_European_Greeks(price, strike,rate, time, my_sigma, dividend_yield, greek = my_greek, "call")
+   data.frame(put, call, greek =  my_greek, sigma = my_sigma) })
+})
+setDT(df)
+
+cc(dcast(df, sigma ~ greek, value.var = 'call' ))
+
+df = ldply(seq(10, 110, 10), function(my_price){
+  df_bs = ldply(all_greeks, function(my_greek) {
+   put = BS_European_Greeks(my_price, strike,rate, time, sigma, dividend_yield, greek = my_greek, "put")
+   call = BS_European_Greeks(my_price, strike,rate, time, sigma, dividend_yield, greek = my_greek, "call")
+   data.frame(put, call, greek =  my_greek, price = my_price) })
+})
+setDT(df)
+
+cc(dcast(df, price ~ greek, value.var = 'call' ))
+cc(dcast(df, price ~ greek, value.var = 'put' ))
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+Binomial_American_Greeks(initial_price = 100, exercise_price = 100,
+r = 0, time_to_maturity = 1, volatility = 0.3, dividend_yield = 0,
+payoff = "call", greek = c("fair_value", "delta", "vega", "theta", "rho",
+"epsilon", "gamma"), steps = 20)
+
+Malliavin_Asian_Greeks(initial_price = 110, exercise_price = 100,
+r = 0.02, time_to_maturity = 4.5, dividend_yield = 0.015, volatility = 0.22,
+greek = c("fair_value", "delta", "rho"), payoff = "put")
+
+Malliavin_European_Greeks(initial_price = 110, exercise_price = 100,
+r = 0.02, time_to_maturity = 4.5, dividend_yield = 0.015, volatility = 0.22,
+greek = c("fair_value", "delta", "rho"), payoff = "put")
+
+Binomial_American_Greeks(initial_price = 100, exercise_price = 100,
+r = 0.06, time_to_maturity = 2.5, dividend_yield = 0.04, volatility = 0.2, payoff = "put")
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

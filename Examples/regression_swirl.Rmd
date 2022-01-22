@@ -23,8 +23,8 @@ library(xgboost)
 library(wesanderson)
 #library(caret)
 
-#working_folder = 'C:/Dev/Kaggle/'
-working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+working_folder = 'D:/Github/KaggleSandbox/'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 
 source(file.path(working_folder, '/Utils/common.R'))
 ```
@@ -56,6 +56,9 @@ actual = df$z
 model.glm = glm('z~ x + y', df, family = binomial(link=logit))
 
 print(summary(model.glm))
+
+#df[, pred_logistic :=  predict(model.glm, type = 'response')]
+#fwrite(df, 'D:/Github/ACQ/ACQ.Excel/Tests/metrics.csv')
 
 pred.glm = predict(model.glm, type = 'response')
 

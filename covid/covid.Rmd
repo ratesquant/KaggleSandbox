@@ -215,9 +215,14 @@ ggplot(df[state %in% my_states], aes(date, new_deaths_avg_7d)) + geom_line() + f
 ggplot(df[state %in% my_states], aes(date, new_cases_avg_7d)) + geom_line() + facet_wrap(~state, scales = 'free_y')
 
 #year over Year
-ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_cases_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')
+ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_cases_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')+ scale_x_date(date_labels = "%b")
 
-ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_deaths_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')
+ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_deaths_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')  + scale_x_date(date_labels = "%b")
+
+#year over Year
+ggplot(df[state %in% "USA"], aes(make_date(2020, month(date), day(date)), new_deaths_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')+ scale_x_date(date_labels = "%b")
+
+
 
 df_agg = df[state %in% my_states, .(total_deaths = 1e-3*sum(new_deaths, na.rm = TRUE)), by =.(state, year_f)]
 ggplot(df_agg, aes(state, total_deaths, group =year_f, fill = year_f, label = sprintf('%.1fk',total_deaths))) + geom_bar(stat = 'identity', position = 'dodge') + coord_flip() +  scale_fill_custom('mixed') + geom_text(  position=position_dodge(width=0.9), vjust=0.5, hjust = -0.1, size = 3)
@@ -335,16 +340,21 @@ ggplot(df[state %in% my_states], aes(date, new_deaths_avg_7d)) + geom_line() + g
 ggplot(df[state %in% my_states], aes(new_deaths_avg_7d, new_deaths_avg_7d_pred)) + geom_point() + facet_wrap(~state, scales = 'free')
 
 summary(lm('new_deaths_avg_7d ~ new_deaths_avg_7d_pred', df))
-summary(lm('new_deaths_avg_7d ~ new_cases_rm_56', df))
+summary(lm('new_deaths_avg_7d ~ new_cases_rm_57', df))
 
 #summary(lm('new_deaths ~ new_deaths_pred', df))
 #summary(lm('new_deaths ~ new_cases_rm_50', df))
 
-model.lm = lm('new_deaths_avg_7d ~ new_cases_rm_56', df)
+model.lm = lm('new_deaths_avg_7d ~ new_cases_rm_57', df)
 df[, new_deaths_avg_7d_pred := predict(model.lm, df[,model_rm_vars, with = F])]
 ggplot(df[state %in% my_states], aes(date, new_deaths_avg_7d)) + geom_line() + geom_line(aes(date, new_deaths_avg_7d_pred), color = 'red') + facet_wrap(~state, scales = 'free_y') + 
    geom_vline(xintercept = as.Date(c('2021-07-01', '2020-11-01')), linetype = 'dashed')
-ggplot(df[state %in% my_states], aes(new_deaths_avg_7d, new_deaths_avg_7d_pred)) + geom_point() + facet_wrap(~state, scales = 'free')
+
+
+ggplot(df[state %in% my_states], aes(date, 0.01*new_cases_avg_7d)) + geom_line() + geom_line(aes(date, new_deaths_avg_7d_pred), color = 'red') + facet_wrap(~state, scales = 'free_y') + 
+   geom_vline(xintercept = as.Date(c('2021-07-01', '2020-11-01')), linetype = 'dashed')
+
+#ggplot(df[state %in% my_states], aes(new_deaths_avg_7d, new_deaths_avg_7d_pred)) + geom_point() + facet_wrap(~state, scales = 'free')
 
 #model.lm = lm('new_deaths ~ new_cases_rm_50', df)
 #df[, new_deaths_pred := predict(model.lm, df[,model_rm_vars, with = F])]

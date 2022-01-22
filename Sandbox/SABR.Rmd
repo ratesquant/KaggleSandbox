@@ -1,0 +1,354 @@
+---
+title: "SABR"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library(plyr)
+library(data.table)
+library(ggplot2)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## SABR - Hagan formulas
+https://en.wikipedia.org/wiki/SABR_volatility_model
+
+SABR params are alpha - volatility,
+beta - CEV exponent
+nu - vol of vol,
+rho - correlation
+https://github.com/lballabio/QuantLib/blob/eaf031529bd99d366f6538087db8643f04caecd0/ql/termstructures/volatility/sabr.cpp
+
+
+alpha thus controls the height of the ATM implied volatility level. The correlation rho controls the slope of the implied skew and beta controls its curvature.
+
+```{r funct}
+ 
+MC_SABR <- function(num_sims, num_intervals, F_0, K, s0, beta, rho, alpha, r, t)
+{
+    dt = t / num_intervals;
+    F = rep(0, num_intervals);
+    V = rep(0, num_intervals);
+    F[1] = F_0;
+    V[1] = s0;
+    Ft = rep(0, num_sims)
+
+    payoff_sum = 0.0;
+    for (i in 1:num_sims)
+    {
+       Z1 = rnorm(num_intervals)
+       Z2 = rnorm(num_intervals)
+       
+       Z2 = ((rho * Z1) + (sqrt(1 - (rho * rho)) * Z2))
+            
+        for (j in 2:num_intervals)
+        {
+            V[j] = V[j-1] * exp((alpha * sqrt(dt) * Z1[j]) - (0.5 * alpha * alpha * dt));
+            F[j] = F[j-1] + (V[j-1] * (F[j-1]^beta) * sqrt(dt) * Z2[j]);
+            F[j] = max(F[j], 0.0);
+        }
+       Ft[i] = F[num_intervals]
+    }
+    return (Ft);
+}
+
+MC_SABR_price <- function(num_sims, num_intervals, F_0, K, s0, beta, rho, alpha, r, t)
+{
+  Ft = MC_SABR(num_sims, num_intervals, F_0, K, s0, beta, rho, alpha, r, t)
+  return ( mean(pmax(Ft - K, 0.0)) * exp(-r*T) )
+}
+
+SABR_Hagan_black_wiki <- function(F0, K, alpha, beta, rho, nu, r, t)
+{
+  f_mid = sqrt(F0 * K)
+  cf = f_mid^beta
+  eta = ifelse(beta == 1,(nu/alpha) * log(F0/K),  nu * (F0^(1-beta) - K^(1-beta)) / (alpha * (1-beta)) )
+  g1 =  beta / f_mid
+  g2 = -beta * (1-beta) / (f_mid * f_mid)
+  d_eta = log((sqrt(1-2*rho * eta + eta*eta) + eta - rho)/(1-rho) )
+  eps = t * nu * nu
+  
+   if (abs(z*z)>2.22045e-16 * 10){
+      multiplier = z/xx
+    }else{
+      multiplier = 1.0 - 0.5*rho*z - (3.0*rho*rho-2.0)*z*z/12.0
+      }
+  
+  d = 1 + ((2*g2 - g1 * g1 + 1/(f_mid * f_mid)) *(alpha * cf / nu)^2/24 + 
+                                                        rho * g1 * alpha * cf / (4*nu) + 
+                                                        (2-3*rho * rho)/24) * eps
+  
+  black_vol = (nu * log(F0 / K) / d_eta) * d
+  
+  return (black_vol)
+}
+SABR_Hagan_black <- function(F0, K, alpha, beta, rho, nu, r, t)
+{
+   oneMinusBeta = 1.0-beta
+   A = (F0*K)^oneMinusBeta
+   sqrtA = sqrt(A)
+   if (abs(F0 - K)>1e-12){
+     logM = log(F0/K)
+   } else {
+     epsilon = (F0-K)/K
+     logM = epsilon - .5 * epsilon * epsilon
+    }
+    z = (nu/alpha)*sqrtA*logM
+    B = 1.0-2.0*rho*z+z*z
+    C = oneMinusBeta*oneMinusBeta*logM*logM
+    tmp = (sqrt(B)+z-rho)/(1.0-rho)
+    xx = log(tmp)
+    D = sqrtA*(1.0 + C/24.0 + C*C/1920.0)
+    d = 1.0 + t * (oneMinusBeta*oneMinusBeta*alpha*alpha/(24.0*A)
+                                + 0.25*rho*beta*nu*alpha/sqrtA
+                                    +(2.0-3.0*rho*rho)*(nu*nu/24.0))
+
+   
+    if (abs(z*z)>2.22045e-16 * 10){
+      multiplier = z/xx
+    }else{
+      multiplier = 1.0 - 0.5*rho*z - (3.0*rho*rho-2.0)*z*z/12.0
+      }
+    return ( (alpha/D)*multiplier*d )
+}
+
+
+SABR_Hagan_norm_wiki <- function(F0, K, alpha, beta, rho, nu, r, t)
+{
+  f_mid = sqrt(F0 * K)
+  cf = f_mid^beta
+  eta = ifelse(beta == 1,(nu/alpha) * log(F0/K),  nu * (F0^(1-beta) - K^(1-beta)) / (alpha * (1-beta)) )
+  g1 =  beta / f_mid
+  g2 = -beta * (1-beta) / (f_mid * f_mid)
+  d_eta = log((sqrt(1-2*rho * eta + eta*eta) + eta - rho)/(1-rho) )
+  eps = t * nu * nu
+  
+   normal_vol = nu * (F0 - K) * (1/d_eta) * (1 + ( (2*g2-g1*g1) * (alpha * cf/nu)^2/24 + 
+                                                      rho * g1 * alpha * cf / (4*nu) + 
+                                                       (2-3*rho*rho)/24 ) * eps)
+
+  return (normal_vol)
+}
+
+SABR_Hagan_norm <- function(F0, K, alpha, beta, rho, nu, r, t)
+{
+  oneMinusBeta = 1.0 - beta
+  minusBeta = -1.0 * beta
+  A = (F0 * K)^oneMinusBeta
+  sqrtA = sqrt(A)
+  
+  if (abs(F0 - K)>1e-12){
+    logM = log(F0 / K)
+  } else {
+    epsilon = (F0 - K) / K
+    logM = epsilon - .5 * epsilon * epsilon
+  }
+    z = (nu / alpha) * sqrtA * logM
+    B = 1.0 - 2.0 * rho * z + z * z
+    C = oneMinusBeta * oneMinusBeta * logM * logM
+    D = logM * logM
+    tmp = (sqrt(B) + z - rho) / (1.0 - rho)
+    xx = log(tmp)
+    E_1 = (1.0 + D / 24.0 + D * D / 1920.0)
+    E_2 = (1.0 + C / 24.0 + C * C / 1920.0)
+    E = E_1 / E_2
+    d = 1.0 + t * (minusBeta * (2 - beta) * alpha * alpha / (24.0 * A) +
+                                0.25 * rho * beta * nu * alpha / sqrtA +
+                                (2.0 - 3.0 * rho * rho) * (nu * nu / 24.0))
+
+    m = 10
+    if (abs(z * z) > 2.22045e-16 * m) {
+        multiplier = z / xx
+    } else {
+        multiplier = 1.0 - 0.5 * rho * z - (3.0 * rho * rho - 2.0) * z * z / 12.0
+    }
+    F = alpha * (F0 * K)^ (beta / 2.0)
+
+   return (F * E * multiplier * d)
+}
+
+
+black_price <- function(F0, K, t, r, sigma)
+{
+  v = sigma * sqrt(t);
+  d1 = (log(F0 / K) + 0.5 * v * v) / v;
+  d2 = d1 - v;
+  df = exp(-r * t)
+  
+  price = df * (F0 * pnorm(d1) - K * pnorm(d2))
+  
+  return (price)
+}
+
+norm_price <- function(F0, K, t, r, sigma)
+{
+  v = sigma * sqrt(t);
+  d = (F0 - K)/ v;
+  df = exp(-r * t)
+  
+  price = df * ( (F0 - K) * pnorm(d) + v * dnorm(d))
+  
+  return (price)
+}
+
+```
+
+## Test
+
+```{r test, echo=FALSE}
+
+num_sims = 1000    # Number of simulated asset paths
+num_intervals = 1000 # Number of intervals for the asset path to be sampled
+
+F0 = 0.02            # Initial forward price
+#ble> K(10);
+#for (int i=0; i<K.size(); i++) { K[i] = 1.0 + i; }
+
+r = 0.0         # Risk-free rate
+t = 2.5         # One year until expiry
+
+alpha = 0.3   # Initial volatility
+beta = 0.5      # Elasticity
+rho = 0.5     # Correlation of asset and volatility
+nu = 0.4 # "Vol of vol"
+
+#MC_SABR_price(num_sims, num_intervals, F0, K , s0, beta, rho, alpha, r, t)
+
+df = data.frame(K = seq(0.01, 0.1, 0.001))
+#normal
+res = ldply(seq(nrow(df)), function(i)
+{
+  n_vol1 = SABR_Hagan_norm_wiki( F0,df$K[i], alpha, beta, rho, nu, r, t)
+  n_vol2 = SABR_Hagan_norm(      F0,df$K[i], alpha, beta, rho, nu, r, t)
+  n_price1 = norm_price(F0,df$K[i], t, r, n_vol1)
+  n_price2 = norm_price(F0,df$K[i], t, r, n_vol2)
+  
+  
+  b_vol1 = SABR_Hagan_black_wiki( F0,df$K[i], alpha, beta, rho, nu, r, t)
+  b_vol2 = SABR_Hagan_black(      F0,df$K[i], alpha, beta, rho, nu, r, t)
+  b_price1 = black_price(F0,df$K[i], t, r, b_vol1)
+  b_price2 = black_price(F0,df$K[i], t, r, b_vol2)
+    
+  data.frame(i, n_vol1, n_vol2, n_price1, n_price2, b_vol1, b_vol2, b_price1, b_price2)
+})
+
+df = cbind(df, res)
+
+ggplot(df) + geom_line(aes(K, n_vol1)) + geom_line(aes(K, n_vol2), color = 'red')
+ggplot(df) + geom_line(aes(K, b_vol1)) + geom_line(aes(K, b_vol2), color = 'red', linetype = 'dashed')
+
+ggplot(df) + geom_line(aes(K, n_price1)) + geom_line(aes(K, n_price2), color = 'red') +  
+  geom_line(aes(K, b_price1), color = 'green') +  geom_line(aes(K, b_price2), color = 'blue')
+
+```
+
+
+## Unit testing 
+http://ta.twi.tudelft.nl/mf/users/oosterle/oosterlee/SABRMC.pdf
+```{r unit_testing, echo=FALSE}
+F0 = 0.05            # Initial forward price
+#ble> K(10);
+#for (int i=0; i<K.size(); i++) { K[i] = 1.0 + i; }
+
+r = 0.0         # Risk-free rate
+t = 1.0         # One year until expiry
+
+alpha = 0.2   # Initial volatility
+beta = 0.55      # Elasticity
+rho = 0     # Correlation of asset and volatility
+nu = 0.03 # "Vol of vol"
+
+SABR_Hagan_black_wiki(F0,0.045, alpha, beta, rho, nu, r, t)
+#black_price(F0,0.045, t, r, SABR_Hagan_black_wiki(F0,0.045, alpha, beta, rho, nu, r, t))
+SABR_Hagan_black(F0,0.045, alpha, beta, rho, nu, r, t)
+#black_price(F0, 0.045, t, r, SABR_Hagan_black(F0,0.045, alpha, beta, rho, nu, r, t))
+
+SABR_Hagan_norm_wiki(F0,0.045 , alpha, beta = 1.0, rho, nu, r, t)
+SABR_Hagan_norm(F0,0.045 , alpha, beta = 1.0, rho, nu, r, t)
+
+n = 1000
+df = data.frame(F0 = 0.01 + 0.1*runif(n), K = 0.01 + 0.1*runif(n), alpha =0.3*runif(n), beta =runif(n), rho = 1 - 2 * runif(n), 
+                nu = 0.1*runif(n), t = 10*runif(n))
+#normal
+res = ldply(seq(nrow(df)), function(i)
+{
+  n_vol1 = SABR_Hagan_norm_wiki( df$F0[i],df$K[i], df$alpha[i], df$beta[i], df$rho[i], df$nu[i], r, df$t[i])
+  n_vol2 = SABR_Hagan_norm(      df$F0[i],df$K[i], df$alpha[i], df$beta[i], df$rho[i], df$nu[i], r, df$t[i])
+  n_price1 = norm_price(df$F0[i],df$K[i], df$t[i], r, n_vol1)
+  n_price2 = norm_price(df$F0[i],df$K[i], df$t[i], r, n_vol2)
+  
+  
+  b_vol1 = SABR_Hagan_black_wiki( df$F0[i],df$K[i], df$alpha[i], df$beta[i], df$rho[i], df$nu[i], r, df$t[i])
+  b_vol2 = SABR_Hagan_black(      df$F0[i],df$K[i], df$alpha[i], df$beta[i], df$rho[i], df$nu[i], r, df$t[i])
+  b_price1 = black_price(df$F0[i],df$K[i], df$t[i], r, b_vol1)
+  b_price2 = black_price(df$F0[i],df$K[i], df$t[i], r, b_vol2)
+    
+  data.frame(i, n_vol1, n_vol2, n_price1, n_price2, b_vol1, b_vol2, b_price1, b_price2)
+})
+
+res = cbind(df, res)
+
+setDT(res)
+
+ggplot(res, aes(i, n_vol2 - n_vol1)) + geom_point()
+ggplot(res, aes(i, b_vol2 - b_vol1)) + geom_point()
+
+ggplot(res, aes(F0, n_vol2 - n_vol1)) + geom_point()
+ggplot(res, aes(K, n_vol2)) + geom_point()
+#ggplot(res, aes(K,  n_vol*1e-4)) + geom_point() + geom_line()
+
+res[order(abs(n_vol2 - n_vol1))]
+res[order(abs(b_vol2 - b_vol1))]
+
+
+ggplot(res, aes(i, n_price1 - n_price2)) + geom_point()
+ggplot(res, aes(i, b_price1 - b_price2)) + geom_point()
+ggplot(res, aes(i, b_price1 - n_price1)) + geom_point()
+ggplot(res, aes(i, b_price2 - n_price2)) + geom_point()
+
+ggplot(res, aes(i, b_vol1 - b_vol2)) + geom_point()
+ggplot(res, aes(i, n_vol1 - n_vol2)) + geom_point()
+
+```
+## Calibration Example
+https://www.mathworks.com/help/fininst/calibrating-the-sabr-model.html
+
+```{r calibration_example, echo=FALSE}
+MarketStrikes = c(2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0)/100
+MarketVolatilities = c(45.6,41.6, 37.9, 36.6, 37.8, 39.2, 40.0)/100
+
+CurrentForwardValue = MarketStrikes[4]
+ATMVolatility = MarketVolatilities[4]
+
+obj_funct <- function(alpha,rho,nu){
+ 
+  vols = rep(0, length(MarketStrikes))
+  for(i in seq(length(MarketStrikes)))
+  {
+    vols[i] = SABR_Hagan_black(CurrentForwardValue, MarketStrikes[i], alpha, beta, rho, nu, r = 0, t = 3)
+  }
+  return( sum((vols - MarketVolatilities)^2) ) 
+}
+
+SABR_Hagan_black( MarketStrikes[4], MarketStrikes[2], alpha, beta, rho, nu, r = 0, t = 3)
+
+beta = 0.5 #solve for (alpha,Rho,Nu) are all fitted directly
+
+params = c(0.1, 0.2, 0.01)
+res = optim(params,function(params) obj_funct(params[1], params[2], params[3]), lower = c(0.001, -1, 0.001), upper = c(10, 1, 10), method = 'L-BFGS-B')
+
+#params: 0.060277, 0.5, 0.2097, 0.75091 (Alpha, Beta, Rho, Nu )
+df = data.table(K = MarketStrikes, vol = MarketVolatilities, source = 'market')
+df = rbind(df, data.table(K = seq(0.02, 0.05, 0.001), vol = 0, source = 'SABR'))
+df = rbind(df, data.table(K = seq(0.02, 0.05, 0.001), vol = 0, source = 'SABR_TEST'))
+df[source == 'SABR',      vol:= SABR_Hagan_black_wiki(CurrentForwardValue, K, res$par[1], 0.5, res$par[2],  res$par[3], r = 0, t = 3), by = seq_len(nrow(df[source == 'SABR']))]
+df[source == 'SABR_TEST', vol:= SABR_Hagan_black(CurrentForwardValue, K, res$par[1], 0.5, res$par[2],  res$par[3], r = 0, t = 3), by = seq_len(nrow(df[source == 'SABR_TEST']))]
+
+ggplot(df, aes(K, vol, group = source, color = source)) + geom_line()
+
+SABR_Hagan_black_wiki(0.035, 0.05, alpha, beta, rho, nu, r = 0, t = 3)
+SABR_Hagan_black     (0.035, 0.05, alpha, beta, rho, nu, r = 0, t = 3)
+
+```

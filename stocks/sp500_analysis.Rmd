@@ -105,11 +105,16 @@ df[, ret := log(price/price_prev) ]
 df[, date_year := year(date)]
 
 df[, ret_vol :=  sqrt(rollmeanr(ret * ret, k = 250, fill = NA)), by =.(ticker) ]
-df[, ret_avg :=  sqrt(rollmeanr(ret      , k = 250, fill = NA)), by =.(ticker) ]
+df[, ret_avg :=  rollmeanr(ret      , k = 250, fill = NA), by =.(ticker) ]
 
 ggplot(df[ticker == '^GSPC',], aes(x = ref.date, y = ret_avg/ret_vol)) + geom_line() + geom_smooth(se = FALSE, span = 0.1, color = 'red')
 ggplot(df[ticker %in% c('^GSPC', 'BND', 'MUB', 'LQD', 'SPIB','VIG','VNQ', 'XLU', 'VCSH') ,], aes(x = ref.date, y = ret_avg/ret_vol)) + geom_line() + facet_wrap(~ticker)
 ggplot(df[ticker %in% c('^GSPC', 'BND', 'MUB', 'LQD', 'SPIB','VIG','VNQ', 'XLU', 'VCSH') ,], aes(x = ref.date, y = 100*ret_vol)) + geom_line() + facet_wrap(~ticker)
+
+ggplot(df[ticker %in% c('^GSPC', 'BND', 'MUB', 'LQD', 'SPIB','VIG','VNQ', 'XLU', 'VCSH') ,], aes(x = ref.date, y = ret_avg)) + geom_line() + facet_wrap(~ticker)
+
+ggplot(df[ticker %in% c('^GSPC', 'BND', 'MUB', 'LQD', 'SPIB','VIG','VNQ', 'XLU', 'VCSH') ,], aes(x = ref.date, y = price )) + geom_line() + facet_wrap(~ticker, scales = 'free')
+
 
 ggplot(df, aes(x = ref.date, y = ret_avg/ret_vol)) + geom_line() + geom_smooth(se = FALSE, span = 0.1, color = 'red') +  facet_wrap(~ticker)
 ggplot(df, aes(x = ref.date, y = 100*ret_vol)) + geom_line() + facet_wrap(~ticker)
@@ -119,7 +124,9 @@ ggplot(df[ticker %in% c('^GSPC', 'BND', 'MUB', 'LQD', 'SPIB','VIG','VNQ') ], aes
 
 #correlation
 #num_vars  = model_vars %in_set% names(which(sapply(df, is.numeric)))
-corr_matrix = cor(as.matrix(dcast(df[, .(ret, date, ticker) ], date ~ ticker, value.var = 'ret', fun.aggregate = mean)[,-1]), use="complete.obs")
+corr_matrix = cor(as.matrix(dcast(df[, .(ret, date, ticker) ], date ~ ticker, value.var = 'ret', fun.aggregate = mean)[,-1]), use="pairwise.complete.obs")
+
+plot_cormat(dcast(df[, .(ret, date, ticker) ], date ~ ticker, value.var = 'ret', fun.aggregate = mean)[,-1])
 corrplot(corr_matrix, method="number", number.cex = 0.5, order="hclust")
 corrplot(corr_matrix, method="circle", order="hclust")
 
@@ -165,7 +172,7 @@ df[, var_price_hl:=price.high/price.low]
 df[, var_price_op:=price.high/price.open]
 
 #df[ticker == 'T' & date > '2016-01-01',]
-ggplot(df[ticker == 'MCK' & date > '2016-01-01',])  + geom_line(aes(date, var_price_avg60*price), color = 'red') + 
+ggplot(df[ticker == 'MUB' & date > '2016-01-01',])  + geom_line(aes(date, var_price_avg60*price), color = 'red') + 
   geom_line(aes(date, price), color = 'black')
 
 ```

@@ -1,0 +1,345 @@
+---
+title: "Amex Default Prediction"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE)
+
+library(lightgbm)
+library(data.table)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(plyr)
+library(forcats)
+
+#setDTthreads(0)    # use all available cores (default)
+#getDTthreads()     # check how many cores are currently used
+
+working_folder = 'D:/Github/KaggleSandbox'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
+source(file.path(working_folder, 'Utils/common.R'))
+```
+
+## Load Data
+
+```{r load_data}
+train <- fread(file.path(working_folder,'Amex/data/train_data.csv'), check.names = TRUE)
+test  <- fread(file.path(working_folder,'Amex/data/test_data.csv'),  check.names = TRUE)
+train_labels  <- fread(file.path(working_folder,'Amex/data/train_labels.csv'),  check.names = TRUE)
+
+train[train_labels, target := i.target, on =.(customer_ID) ]
+
+test[, target :=NA]
+df = rbind(train, test)
+
+setnames(df, "customer_ID", "id")
+setkey(df, id, S_2)
+
+test_index = is.na(df$target)
+train_index = !test_index
+
+obj_var = 'target'
+all_vars = names(df) %!in_set% c('id', obj_var)
+cat_vars = names(which(sapply(df[,all_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
+con_vars = names(which(sapply(df[,all_vars, with = FALSE], function(x) is.numeric(x)  )))
+
+df[, is_test:= is.na(target)]
+
+rm(train, test)
+gc(reset=TRUE)
+
+#D_63 {CL, CO, CR, XL, XM, XZ}, D_64 {O, R, U}
+true_cat_vars = c('B_30', 'B_38', 'D_114', 'D_116', 'D_117', 'D_120', 'D_126', 'D_63', 'D_64', 'D_66', 'D_68') 
+
+#exclude_vars = c('D_87', 'D_136', 'D_138')
+#con_vars = con_vars %!in_set% exclude_vars
+```
+
+##  Plots
+D_* = Delinquency variables
+S_* = Spend variables
+P_* = Payment variables
+B_* = Balance variables
+R_* = Risk variables
+
+cat_vars = ['B_30', 'B_38', 'D_114', 'D_116', 'D_117', 'D_120', 'D_126', 'D_63', 'D_64', 'D_66', 'D_68'] 
+```{r plots, echo=FALSE, eval = FALSE}
+
+df_a = df[,.(.N, p2 = mean(P_2, na.rm = TRUE), p = mean(target, na.rm = TRUE)), by = .(S_2, is_test)]
+
+ggplot(df_a, aes(S_2, N, group =is_test, color = is_test)) + geom_line()
+ggplot(df_a, aes(S_2, p2, group =is_test, color = is_test)) + geom_line()
+ggplot(df_a, aes(S_2, p, group =is_test, color = is_test)) + geom_line()
+
+
+ggplot(df_agg, aes(P_2, B_1)) + geom_bin2d() + facet_wrap(~is_test) + scale_fill_custom('jet', discrete = FALSE)
+ggplot(df_agg[is_test == FALSE], aes(P_2, B_1, z = target)) + stat_summary_2d() +  scale_fill_custom('jet', discrete = FALSE)
+
+#density plots
+den_plots = llply(names(df) %!in_set% c('id', 'target', 'is_test'), function(vname){
+  p = ggplot(df[sample(nrow(df), 100000)], aes_string(vname, group = 'is_test', color = 'is_test', fill = 'is_test')) + 
+    geom_density(adjust = 0.1, alpha = 0.5 )
+  return (ggplotGrob(p))
+})
+ggsave(filename = file.path(working_folder,"Amex/data/density.pdf"), plot = marrangeGrob(den_plots, nrow=4, ncol=4), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+
+qq_plots = llply(names(df) %!in_set% c('id', cat_vars, 'target', 'is_test'), function(vname){
+  df_temp = df[,.SD[sample(.N, 1000)], by = .(is_test), .SDcols = vname]
+  p = ggplot(df_temp, aes_string(sample = vname,  group = 'is_test', color = 'is_test')) + 
+    stat_qq(alpha = 0.6 ) + stat_qq_line( ) + ggtitle(vname)
+  return (ggplotGrob(p))
+})
+ggsave(filename = file.path(working_folder,"Amex/data/qq.pdf"), plot = marrangeGrob(qq_plots, nrow=4, ncol=4), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+```
+
+## features
+```{r features, echo=FALSE}
+#test_id = sample(unique(df$id), 30)
+#train_ids = df[is_test == TRUE, unique(id)]
+#test_ids = df[is_test == FALSE, unique(id)]
+
+df_agg = df[order(S_2),.SD[.N], by = .(id)] #train on last values
+setkey(df_agg, 'id')
+
+df_agg_n = df[, .N, by = .(id)] #train on last values
+setkey(df_agg_n, 'id')
+
+#deviation from average
+avg_con_vars = stri_join('avg_', con_vars)
+df_agg_avg = df[order(S_2), lapply(.SD, function(x) x[length(x)] - mean(x)), by = .(id), .SDcols = con_vars]
+names(df_agg_avg) <- c('id', avg_con_vars)
+setkey(df_agg_avg, 'id')
+
+#change
+chg_con_vars = stri_join('chg_', con_vars)
+df_agg_chg = df[order(S_2), lapply(.SD, function(x) x[length(x)] - x[1]), by = .(id), .SDcols = con_vars]
+names(df_agg_chg) <- c('id', chg_con_vars)
+setkey(df_agg_chg, 'id')
+
+#lag1
+df_agg_lag = df[order(S_2), .(lag1_P_2 = (P_2 - shift(P_2, 1))[.N],
+                              lag2_P_2 = (P_2 - shift(P_2, 2))[.N],
+                              lag3_P_2 = (P_2 - shift(P_2, 3))[.N],
+                              lag4_P_2 = (P_2 - shift(P_2, 4))[.N],
+                              lag5_P_2 = (P_2 - shift(P_2, 5))[.N],
+                              
+                              lag1_B_1 = (B_1 - shift(B_1, 1))[.N],
+                              lag2_B_1 = (B_1 - shift(B_1, 2))[.N],
+                              lag3_B_1 = (B_1 - shift(B_1, 3))[.N]
+                              ), by = .(id)]
+
+#range
+rng_con_vars = stri_join('rng_', con_vars)
+df_agg_rng = df[order(S_2), lapply(.SD, function(x) max(x) - min(x)), by = .(id), .SDcols = con_vars]
+names(df_agg_rng) <- c('id', rng_con_vars)
+setkey(df_agg_rng, 'id')
+
+#max
+max_con_vars = stri_join('max_', con_vars)
+df_agg_max = df[order(S_2), lapply(.SD, function(x) max(x)), by = .(id), .SDcols = con_vars]
+names(df_agg_max) <- c('id', max_con_vars)
+setkey(df_agg_max, 'id')
+
+#std
+std_con_vars = stri_join('std_', con_vars)
+df_agg_std = df[order(S_2), lapply(.SD, function(x) sd(x)), by = .(id), .SDcols = con_vars]
+names(df_agg_std) <- c('id', std_con_vars)
+setkey(df_agg_std, 'id')
+
+ex_vars = c('N', std_con_vars, rng_con_vars, avg_con_vars, chg_con_vars, max_con_vars)
+
+df_agg = df_agg[df_agg_avg,][df_agg_rng,][df_agg_std,][df_agg_chg,][df_agg_max,][df_agg_n,]
+
+#add lagged variables
+df_agg[df_agg_lag, lag1_P_2 := i.lag1_P_2, on=.(id)]
+df_agg[df_agg_lag, lag2_P_2 := i.lag2_P_2, on=.(id)]
+df_agg[df_agg_lag, lag3_P_2 := i.lag3_P_2, on=.(id)]
+df_agg[df_agg_lag, lag4_P_2 := i.lag4_P_2, on=.(id)]
+df_agg[df_agg_lag, lag5_P_2 := i.lag5_P_2, on=.(id)]
+
+df_agg[df_agg_lag, lag1_B_1 := i.lag1_B_1, on=.(id)]
+df_agg[df_agg_lag, lag2_B_1 := i.lag2_B_1, on=.(id)]
+df_agg[df_agg_lag, lag3_B_1 := i.lag3_B_1, on=.(id)]
+
+#cat var
+df_agg[df[, .(D_64_O_n = sum(D_64 == 'O')), by = .(id)], D_64_O_n := i.D_64_O_n, on=.(id)]
+df_agg[df[, .(D_64_R_n = sum(D_64 == 'R')), by = .(id)], D_64_R_n := i.D_64_R_n, on=.(id)]
+df_agg[df[, .(D_64_U_n = sum(D_64 == 'U')), by = .(id)], D_64_U_n := i.D_64_U_n, on=.(id)]
+df_agg[df[, .(D_64_N_n = sum(D_64 == '' )), by = .(id)], D_64_N_n := i.D_64_N_n, on=.(id)]
+
+df_agg[df[, .(D_63_CL_n = sum(D_63 == 'CL')), by = .(id)], D_63_CL_n := i.D_63_CL_n, on=.(id)]
+df_agg[df[, .(D_63_CO_n = sum(D_63 == 'CO')), by = .(id)], D_63_CO_n := i.D_63_CO_n, on=.(id)]
+df_agg[df[, .(D_63_CR_n = sum(D_63 == 'CR')), by = .(id)], D_63_CR_n := i.D_63_CR_n, on=.(id)]
+df_agg[df[, .(D_63_XL_n = sum(D_63 == 'XL')), by = .(id)], D_63_XL_n := i.D_63_XL_n, on=.(id)]
+df_agg[df[, .(D_63_XM_n = sum(D_63 == 'XM')), by = .(id)], D_63_XM_n := i.D_63_XM_n, on=.(id)]
+df_agg[df[, .(D_63_XZ_n = sum(D_63 == 'XZ')), by = .(id)], D_63_XZ_n := i.D_63_XZ_n, on=.(id)]
+
+ex_vars = unique(c(ex_vars, names(df_agg)[grep('D_6[34]', names(df_agg))]))
+ex_vars = unique(c(ex_vars, names(df_agg)[grep('P_2', names(df_agg))]))
+
+#df_agg = merge(merge(merge(df_agg, df_agg_avg, by = 'id'), df_agg_rng,  by = 'id'), df_agg_std,  by = 'id')
+#Reduce(function(...) merge(..., all = TRUE), List_of_DTs)
+rm(df_agg_avg, df_agg_rng, df_agg_std, df_agg_chg, df_agg_max, df_agg_n)
+
+fwrite(df_agg, file.path(working_folder,"Amex/data/data_agg.csv.gz"))
+
+names(df_agg)[grep('P_2', names(df_agg))]
+```
+
+## LightGBM
+```{r lgb_model, echo=FALSE}
+
+set.seed(1321)
+
+#df_agg = df[order(S_2),.SD[.N], by = .(id)] #train on last values
+
+train_index = !is.na(df_agg$target)
+t_index_v = which(train_index)
+t_index_v1 = sample(t_index_v, length(t_index_v))
+
+lgb_vars = unique(c(all_vars, ex_vars) %!in_set% c('customer_ID', 'S_2'))
+#lgb_vars = c(w_vars) %!in_set% c('id')
+#lgb_vars = c(p_vars) %!in_set% c('id')
+#lgb_vars = c(rbf_vars) %!in_set% c('id')
+#lgb_vars = c(n_vars) %!in_set% c('id') #best performance
+#lgb_vars = c(p50_vars) %!in_set% c('id') 
+#lgb_vars = c(n_vars, r_vars) %!in_set% c('id')
+#lgb_vars = names(df)[grep('f[0-9]*_lgb', names(df))]
+#lgb_vars = c(n_vars, c_vars) %!in_set% c('id')
+
+my_cat_vars =  names(which(sapply(df_agg[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
+
+### - logistic regression  -----------
+dfs = df_agg[t_index_v1, c(obj_var,lgb_vars), with = FALSE]
+
+dtrain_bin <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
+params_bin <- list(objective = "binary", metric = "binary_logloss")
+
+model.lgb_bin <- lgb.cv(
+  params = params_bin,
+  data = dtrain_bin,
+  nrounds = 7000,
+  nfold = 7,
+  num_threads = 6, 
+  
+  min_data = 800, #default = 20
+  learning_rate = 0.01,
+  #num_leaves = 93,
+  #bagging_fraction = 0.97,
+  #min_data_in_bin = 3,
+  max_bin = 1023,#255
+
+  boost_from_average = TRUE,
+  eval_freq = 100,
+  early_stopping_rounds = 200,
+  force_col_wise=TRUE
+)
+
+#saveRDS(model.lgb_bin, file.path(working_folder,'Playground/data/model_lgb_bin.rds'))
+cv_error = as.numeric(model.lgb_bin$record_evals$valid$binary_logloss$eval)
+ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line()
+
+max(cv_error) # 0.9600434
+
+dm_all = data.matrix(df_agg[,lgb_vars, with = F])
+pred.lgb_cvi_bin = ldply(seq(length(model.lgb_bin$boosters)), function(i){ data.frame(cv = i, id = df_agg$id, pred= predict(model.lgb_bin$boosters[[i]]$booster, dm_all)) } )
+setDT(pred.lgb_cvi_bin)
+
+pred.lgb_cv_summary_bin = pred.lgb_cvi_bin[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(cv)]
+pred.lgb_cv_bin         = pred.lgb_cvi_bin[, .(.N, avg=mean(pred), sigma = sd(pred)), by =.(id)]
+
+df_agg[pred.lgb_cv_bin, target_prob :=  i.avg, on=.(id)]
+
+#%% Plot -----
+#plot_profiles(df_agg$target_prob[train_index], df_agg[train_index,])
+#plot_profiles_2d(df$target_lgb[p_index], df[p_index,])
+
+plot_binmodel_predictions(df_agg$target[train_index], df_agg$target_prob[train_index])
+plot_binmodel_percentiles(df_agg$target[train_index], df_agg$target_prob[train_index], 100)
+
+if(FALSE){
+  lgb_importance = lgb.importance(model.lgb_bin$boosters[[1]][[1]], percentage = TRUE)
+  fwrite(lgb_importance, file.path(working_folder,"Amex/data/importance_lgd.csv"))
+  
+  ggplot(lgb_importance[Gain > 0.01], aes(fct_reorder(Feature,Gain), Gain)) + geom_bar(stat = 'identity') + coord_flip()
+
+  plots = llply(lgb_importance$Feature, function(var_name) { #lgb_vars
+    p = plot_profile(df_agg$target_prob[train_index],  df_agg$target[train_index], df_agg[[var_name]][train_index], bucket_count = 25, error_band = 'binom') +
+      ggtitle(var_name) +  theme(title =element_text(size=8))
+    return( ggplotGrob(p) )
+  })
+  #marrangeGrob(plots, nrow = 6, ncol = 6, top = NULL)
+  ggsave(filename = file.path(working_folder,"Amex/data/profiles_lgd.pdf"), plot = marrangeGrob(plots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+  
+  #cat profiles
+  plots = llply(true_cat_vars, function(var_name) { #lgb_vars
+    p = plot_profile(df_agg$target_prob[train_index],  df_agg$target[train_index], df_agg[[var_name]][train_index], bucket_count = 100, error_band = 'binom') +
+      ggtitle(var_name) +  theme(title =element_text(size=8))
+    return( ggplotGrob(p) )
+  })
+  ggsave(filename = file.path(working_folder,"Amex/data/profiles_lgd.cat.pdf"), plot = marrangeGrob(plots, nrow=3, ncol=3), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+  
+  #residual profiles
+  plots_residual = llply(names(df_agg) %!in_set% c('id', lgb_importance$Feature), function(var_name) { #lgb_vars
+  p = plot_profile(df_agg$target_prob[train_index],  df_agg$target[train_index], df_agg[[var_name]][train_index], bucket_count = 25, error_band = 'binom') +
+    ggtitle(var_name) +  theme(title =element_text(size=8))
+    return( ggplotGrob(p) )
+  })
+  ggsave(filename = file.path(working_folder,"Amex/data/profiles_lgd.residual.pdf"), plot = marrangeGrob(plots_residual, nrow=3, ncol=3), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+  
+  
+  plots = llply(c('N', names(df_agg)[grep('P_2', names(df_agg))]), function(var_name) { #lgb_vars
+    p = plot_profile(df_agg$target_prob[train_index],  df_agg$target[train_index], df_agg[[var_name]][train_index], bucket_count = 25, error_band = 'binom') +
+      ggtitle(var_name) + theme(title =element_text(size=8))
+    return( ggplotGrob(p) )
+  })
+  marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+    
+  plot_profile(df_agg$target_prob[train_index], df_agg$target[train_index], df_agg[['P_2']][train_index], bucket_count = 100, error_band = 'binom')
+  plot_profile(df_agg$target_prob[train_index], df_agg$target[train_index], df_agg[['std_P_2']][train_index], bucket_count = 100, error_band = 'binom')
+  plot_profile(df_agg$target_prob[train_index], df_agg$target[train_index], df_agg[['chg_P_2']][train_index], bucket_count = 20, error_band = 'binom')
+  plot_profile(df_agg$target_prob[train_index], df_agg$target[train_index], df_agg[['N']][train_index], bucket_count = 100, error_band = 'binom')
+  
+  plot_profile(df_agg$target_prob[train_index], df_agg$target[train_index], df_agg[['rng_P_2']][train_index] -  df_agg[['max_P_2']][train_index], bucket_count = 100, error_band = 'binom')
+  
+   plot_profile(df_agg$target_prob[train_index], df_agg$target[train_index], df_agg[['D_64']][train_index], bucket_count = 20, error_band = 'binom')
+   plot_profile(df_agg$target_prob[train_index], df_agg$target[train_index], df_agg[['S_2']][train_index], bucket_count = 20, error_band = 'binom')
+
+  
+  s_index = sample.int(nrow(df),10000)
+  ggplot(df[s_index ], aes(loss_prob, loss_prob_glm)) + geom_point()
+  
+  ggplot(df[train_index ], aes(f55)) + geom_density(adjust = 0.01)
+  
+  ggplot(df[train_index ], aes(loss)) + geom_density(adjust = 0.1)
+  ggplot(df[train_index ], aes(loss_pred)) + geom_density(adjust = 0.1) + 
+    geom_density(aes(loss_pred_glm), adjust = 0.1) +  
+    geom_density(aes(loss), adjust = 0.7, color = 'red')
+  
+}
+#df[,.(loss_prob_glm, loss_prob, lgd_pred, loss_prob_glm * lgd_pred, loss_prob * lgd_pred, loss, is_loss)]
+```
+
+##Submit 
+      
+v1 - 0.786 baseline (no optimization, no pre-processing)
+v2 - 0.791 baseline
+v3 - 0.791
+v6 - 0.792
+
+```{r submit, echo=FALSE}
+  #fwrite(df, file.path(working_folder,'Playground/Apr2021/data/df.csv'))
+ 
+  file = file.path(working_folder, "Amex/data/submit_v06.lgb.csv")
+  #fwrite(df[test_index, .(id, target=target_lgb)], file = file, row.names = FALSE)
+  fwrite(df_agg[is_test == TRUE, .(customer_ID = id, prediction = target_prob)], file = file, row.names = FALSE)
+  zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
+  print(file)
+
+```

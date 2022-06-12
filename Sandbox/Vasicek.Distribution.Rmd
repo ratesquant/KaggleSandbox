@@ -1,0 +1,100 @@
+---
+title: "Vasicek distribution"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library(ggplot2)
+```
+
+## Functions
+When fitted to the same mean and standard deviation, 
+the Vasicek, beta, and Kumaraswamy densities do not differ much
+
+
+Y = QNORM(X), X - vasicek, Y - normal with sigma = r / (1-r)
+```{r functions}
+
+vasicek_pdf <- function(x, p, r) {
+  xn = qnorm(x)
+  sqrt( (1-r) / r) * exp(0.5* (xn * xn - (sqrt(1-r)*xn -  qnorm(p))^2/r) )
+}
+vasicek_cdf <- function(x, p, r) {
+  pnorm((sqrt(1-r) * qnorm(x) - qnorm(p)) / sqrt(r))
+}
+vasicek_icdf <- function(x, p, r) {
+  pnorm((qnorm(p) + sqrt(r) * qnorm(x)) / sqrt(1-r))
+}
+vasicek_cdf_num_s <- function(x, p, r) {
+  tryCatch(integrate(function(y)vasicek_pdf(y, p, r), 0, x, stop.on.error = FALSE)$value, error = function(e) NA)
+}
+vasicek_cdf_num <- Vectorize(vasicek_cdf_num_s, "x")
+
+vasicek_icdf_num_s <- function(x, p, r) {
+  uniroot(function(y)vasicek_cdf(y, p, r) - x, c(0, 1))$root 
+}
+vasicek_icdf_num <- Vectorize(vasicek_icdf_num_s, "x")
+
+rho = 0.15 
+
+df = data.table(x = seq(0, 1, by = 0.01))
+df[, p_pdf := vasicek_pdf(x, 0.1, rho)]
+df[, p_cdf := vasicek_cdf(x, 0.1, rho)]
+df[, p_cdf_num := vasicek_cdf_num_v(x, 0.1, rho)]
+df[, ix := vasicek_icdf(p_cdf, 0.1, rho)]
+df[, ix_num := vasicek_icdf_num(p_cdf, 0.1, rho)]
+
+ggplot(df, aes(x, p_pdf)) + geom_line()
+ggplot(df, aes(x, p_cdf)) + geom_line()
+ggplot(df, aes(x, p_cdf - p_cdf_num)) + geom_line()
+
+```
+
+## Random Sample
+
+```{r sample, echo=FALSE}
+rho = 0.15  #(Basel mortgages)
+n = 10000
+x = vasicek_icdf(runif(n), 0.1, rho)
+
+ggplot(data.frame(x),   aes(x)) + geom_histogram()
+ggplot(data.frame(xn), aes(xn)) + geom_histogram()
+
+#moment matching
+mean(x) 
+
+xn = qnorm(x)
+mu = mean(xn)
+s2 =  var(xn)
+p_est = pnorm(mu / sqrt(1+s2))
+r_est = s2 / (1 + s2)
+
+```
+
+
+## Simulation
+
+```{r simulation, echo=FALSE}
+library(plyr)
+
+rho = 0.15#0.15 
+p0 = 0.1
+n = 10000
+
+threshold = 1-qnorm(p0)
+
+df_sim = ldply(seq(1000), function(i){
+  s = rnorm(1)
+  x = rnorm(n) * sqrt(1-rho)  + rho * s
+  c(def = mean(x>threshold))
+})
+
+ggplot(df_sim, aes(def)) + geom_density() + 
+  geom_line(data= df, aes(x, p_pdf), color = 'red')
+```
+

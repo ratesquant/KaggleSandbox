@@ -86,15 +86,32 @@ rho = 0.15#0.15
 p0 = 0.1
 n = 10000
 
-threshold = 1-qnorm(p0)
+threshold = qnorm(p0)
 
 df_sim = ldply(seq(1000), function(i){
-  s = rnorm(1)
-  x = rnorm(n) * sqrt(1-rho)  + rho * s
-  c(def = mean(x>threshold))
+  x = rnorm(n) * sqrt(1-rho)  + sqrt(rho) * rnorm(1)
+  c(def = mean(x<threshold))
 })
 
-ggplot(df_sim, aes(def)) + geom_density() + 
-  geom_line(data= df, aes(x, p_pdf), color = 'red')
+ggplot(df_sim, aes(def)) + geom_density() + geom_line(data= df, aes(x, p_pdf), color = 'red')
+
+#binom beta
+beta = (1/rho - 1) * (1-p0)
+alpha = beta * p0 / (1-p0)
+#alpha / (alpha + beta) #p0
+#1/(alpha + beta +1) #rho
+#bt = rbeta(10000, alpha, beta)
+
+df_sim = ldply(seq(10000), function(i){
+  #rbeta(1, alpha, beta)
+  #c(def = rbinom(1, n, p0)/n)
+  c(def = rbinom(1, n, rbeta(1, alpha, beta))/n)
+})
+
+ggplot(df_sim, aes(def)) + geom_density() + geom_line(data= df, aes(x, p_pdf), color = 'red')
+ggplot(df_sim, aes(def)) + geom_histogram(binwidth = 0.01 )
+
+mean(df_sim$def)
+sd(df_sim$def) # sqrt(p0 * (1-p0) * (1 + (n-1) * rho) / n)
 ```
 

@@ -94,10 +94,26 @@ df_glob[order(date), new_cases_avg_7d    := rollmeanr(new_cases,  k = 7, na.pad 
 df_glob[order(date), new_cases_avg_60d   := rollmeanr(new_cases,  k = 60, na.pad = TRUE), by = .(region, state)]
 df_glob[order(date), new_deaths_avg_7d   := rollmeanr(new_deaths, k = 7, na.pad = TRUE), by = .(region, state)]
 
+df_glob[, date_m := make_date(2020, month(date), day(date))]
+df_glob[, date_y := year(date)]
+
 my_regions = c('United Kingdom','Ukraine', 'Russia','Israel', 'US', 'India', 'Germany', 'Brazil', 'Mexico', 'Sweden', 'Japan', 'Argentina')
 ggplot(df_glob[region %in% my_regions & state  == '' ], aes(date, new_cases_avg_7d)) + geom_line() + facet_wrap(~region, scales = 'free_y')
 
 ggplot(df_glob[region %in% my_regions & state  == '' ], aes(date, new_deaths_avg_7d)) + geom_line() + facet_wrap(~region, scales = 'free_y')
+
+ggplot(df_glob[region %in% my_regions & state  == '' ], aes(data_m, new_deaths_avg_7d, group = date_y, color = factor(date_y) )) + geom_line() + 
+  facet_wrap(~region, scales = 'free_y') + scale_color_custom('mixed') + scale_x_date(date_labels = "%b",date_breaks  = "2 month")
+
+
+plots = llply(sort(unique(df_glob$region)), function(my_region) { #lgb_vars
+    p = ggplot(df_glob[region == my_region & state  == '' ], aes(data_m, new_deaths_avg_7d, group = date_y, color = factor(date_y) )) + geom_line() + 
+      scale_color_custom('mixed') + ggtitle(my_region) +  theme(title =element_text(size=8))
+    return( ggplotGrob(p) )
+  })
+#  marrangeGrob(plots, nrow = 5, ncol = 5, top = NULL)
+ggsave(filename = file.path(working_folder,"covid.pdf"), plot = marrangeGrob(plots, nrow=5, ncol=5), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+
 
 ggplot(df_glob[region %in% my_regions & state  == '' & date> '2020-07-01' ], aes(date, new_deaths_avg_7d/new_cases_avg_60d)) + geom_line() + facet_wrap(~region, scales = 'free_y') + geom_hline(yintercept = 0.01, color = 'red', linetype = 'dashed')
 
@@ -215,8 +231,11 @@ ggplot(df[state %in% my_states], aes(date, new_deaths_avg_7d)) + geom_line() + f
 ggplot(df[state %in% my_states], aes(date, new_cases_avg_7d)) + geom_line() + facet_wrap(~state, scales = 'free_y')
 
 #year over Year
+ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_cases_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed') + 
 ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_cases_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')+ scale_x_date(date_labels = "%b")
+  scale_x_date(date_labels = "%b")
 
+ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_deaths_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed') + scale_x_date(date_labels = "%b")
 ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_deaths_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')  + scale_x_date(date_labels = "%b")
 
 #year over Year

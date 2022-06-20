@@ -1,5 +1,5 @@
 install.packages('devtools')
-devtools::install_url('https://github.com/catboost/catboost/releases/download/v0.25.1/catboost-R-Windows-0.25.1.tgz', INSTALL_opts = c("--no-multiarch"))
+devtools::install_url('https://github.com/catboost/catboost/releases/download/v1.0.4/catboost-R-Windows-1.0.4.tgz', INSTALL_opts = c("--no-multiarch"))
 
 #%% Test -----
 

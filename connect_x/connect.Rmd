@@ -3,6 +3,8 @@ title: "Connect_Position"
 output: html_document
 editor_options: 
   chunk_output_type: console
+  markdown: 
+    wrap: 72
 ---
 
 ```{r setup, include=FALSE}
@@ -18,7 +20,6 @@ library(foreach)
 library(lubridate)
 library(dplyr)
 library(zoo)
-
 
 #working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 working_folder = 'D:/Github/KaggleSandbox/'
@@ -45,6 +46,7 @@ matrix(board, nrow = 6, byrow = TRUE)
 ```
 
 # Episode Data
+
 ```{r episode_data}
 df = fread(file.path(working_folder, 'connect_x/my_episodes.csv'),  na.strings = 'None')
 df_type = fread(file.path(working_folder, 'connect_x/sub_types.csv'),  na.strings = 'None')
@@ -153,6 +155,7 @@ df[submission_id == '20324274']
 ```
 
 ##Load Data
+
 ```{r overview}
 ggplot(df[time>0.5], aes(factor(submission_id), score) ) +  geom_boxplot() + facet_wrap(~type)
 
@@ -238,15 +241,19 @@ ggplot(df[ time>1 & reward ==1 & is_first == 0], aes(time, score2)) + geom_point
 ggplot(df[ time>20,], aes(is_first_cum, score)) + geom_point(alpha = 0.2)
 
 ```
-  
 
-##Load Data
- 6 depth reference: 4.962794 min, match: 2372, avg_error: 3.990969, cor: 0.805851
- 6 depth reference: 2.645965 min, match: 2404, avg_error: 3.802784, cor: 0.811391  max:  0.29 sec (with static move ordering)
- 7 depth reference: 6.965158 min, match: 2467, avg_error: 4.077111, cor: 0.818551  max:  1.18 sec (with static move ordering)
- 8 depth reference: 14.29394 min, match: 2795, avg_error: 3.294617, cor: 0.865816  max:  2.05 sec (with static move ordering)
- 9 depth reference: 35.82927 min, match: 2845, avg_error: 3.517646, cor: 0.873437  max:  6.07 sec (with static move ordering)
-10 depth reference: 77.05532 min, match: 3125, avg_error: 2.769537, cor: 0.909271  max: 18.74 sec (with static move ordering)
+##Load Data 6 depth reference: 4.962794 min, match: 2372, avg_error:
+3.990969, cor: 0.805851 6 depth reference: 2.645965 min, match: 2404,
+avg_error: 3.802784, cor: 0.811391 max: 0.29 sec (with static move
+ordering) 7 depth reference: 6.965158 min, match: 2467, avg_error:
+4.077111, cor: 0.818551 max: 1.18 sec (with static move ordering) 8
+depth reference: 14.29394 min, match: 2795, avg_error: 3.294617, cor:
+0.865816 max: 2.05 sec (with static move ordering) 9 depth reference:
+35.82927 min, match: 2845, avg_error: 3.517646, cor: 0.873437 max: 6.07
+sec (with static move ordering) 10 depth reference: 77.05532 min, match:
+3125, avg_error: 2.769537, cor: 0.909271 max: 18.74 sec (with static
+move ordering)
+
 ```{r load_data}
  # Test_L3_R1 Test_L2_R1 Test_L2_R2 Test_L1_R1 Test_L1_R2 Test_L1_R3
  #df = fread(file.path(working_folder, 'connect_x/cpp/Test_All_negamax.v2.csv'))
@@ -409,7 +416,6 @@ ggplot(df, aes(nodes, elapsed_time)) + geom_point()
   ggplot(df, aes(1e-3*evals ,time   )) + geom_point(alpha = 0.2) + facet_wrap(~version)
  
 ```
-
 
 ##Debut table
 

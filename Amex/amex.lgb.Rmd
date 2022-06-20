@@ -81,6 +81,9 @@ ggplot(df_a, aes(S_2, p2, group =is_test, color = is_test)) + geom_line()
 ggplot(df_a, aes(S_2, p, group =is_test, color = is_test)) + geom_line()
 
 
+ggplot(df_agg, aes(P_2, date_wday)) + geom_bin2d() + facet_wrap(~is_test) + scale_fill_custom('jet', discrete = FALSE)
+ggplot(df_agg, aes(P_2, date_month)) + geom_bin2d() + facet_wrap(~is_test) + scale_fill_custom('jet', discrete = FALSE)
+
 ggplot(df_agg, aes(P_2, B_1)) + geom_bin2d() + facet_wrap(~is_test) + scale_fill_custom('jet', discrete = FALSE)
 ggplot(df_agg[is_test == FALSE], aes(P_2, B_1, z = target)) + stat_summary_2d() +  scale_fill_custom('jet', discrete = FALSE)
 
@@ -191,8 +194,8 @@ df_agg[df[, .(D_63_XL_n = sum(D_63 == 'XL')), by = .(id)], D_63_XL_n := i.D_63_X
 df_agg[df[, .(D_63_XM_n = sum(D_63 == 'XM')), by = .(id)], D_63_XM_n := i.D_63_XM_n, on=.(id)]
 df_agg[df[, .(D_63_XZ_n = sum(D_63 == 'XZ')), by = .(id)], D_63_XZ_n := i.D_63_XZ_n, on=.(id)]
 
-df_agg[, date_wday := weekdays(S_2, FALSE)]
-df_agg[, date_day := day(S_2)]
+df_agg[, date_wday   := lubridate::wday(S_2)]
+df_agg[, date_day    := lubridate::day(S_2)]
 
 ex_vars = unique(c(ex_vars, names(df_agg)[grep('D_6[34]', names(df_agg))]))
 ex_vars = unique(c(ex_vars, names(df_agg)[grep('P_2', names(df_agg))]))
@@ -224,6 +227,33 @@ gc()
 ## LightGBM
 ```{r lgb_model, echo=FALSE}
 
+#The default rate captured at 4% is the percentage of the positive labels (defaults) captured within the highest-ranked 4% of the predictions, and represents a Sensitivity/Recall statistic.
+binmodel_auc = function (actual, model) 
+{
+    n1 <- sum(actual)
+    n <- length(actual)
+    if (n == n1) {
+        return(1)
+    }
+    return((mean(rank(model)[actual > 0]) - (n1 + 1)/2)/(n - n1))
+}
+
+def_rate <- function(actual, model){
+  p96 = quantile(model, 0.96) 
+  p96_index = model >= p96
+  sum(actual[p96_index])/sum(p96_index)
+}
+
+evalerror <- function(preds, dtrain) {
+  labels <- get_field(dtrain, "label")
+  auc = binmodel_auc(labels, preds)
+  gini =  2 * auc  - 1
+  drate = def_rate(labels, preds)
+  return(list(name = "amex_error", value =  0.5 * (gini + drate), higher_better = TRUE))
+}
+#evalerror(df_agg$target_prob[train_index], dtrain_bin)
+#binmodel_auc(get_field(dtrain_bin, "label"), df_agg$target_prob[train_index])
+
 set.seed(1321)
 
 #df_agg = df[order(S_2),.SD[.N], by = .(id)] #train on last values
@@ -232,7 +262,7 @@ train_index = !is.na(df_agg$target)
 t_index_v = which(train_index)
 t_index_v1 = sample(t_index_v, length(t_index_v))
 
-lgb_vars = unique(c(all_vars, ex_vars) %!in_set% c('customer_ID', 'S_2', 'B_29', 'std_D_121', 'D_59'))
+lgb_vars = unique(c(all_vars, ex_vars) %!in_set% c('id', 'S_2', 'B_29', 'std_D_121', 'D_59', 'S_11'))
 #lgb_vars = c(w_vars) %!in_set% c('id')
 #lgb_vars = c(p_vars) %!in_set% c('id')
 #lgb_vars = c(rbf_vars) %!in_set% c('id')
@@ -242,38 +272,38 @@ lgb_vars = unique(c(all_vars, ex_vars) %!in_set% c('customer_ID', 'S_2', 'B_29',
 #lgb_vars = names(df)[grep('f[0-9]*_lgb', names(df))]
 #lgb_vars = c(n_vars, c_vars) %!in_set% c('id')
 
-
 my_cat_vars =  names(which(sapply(df_agg[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
 
 ### - logistic regression  -----------
 dfs = df_agg[t_index_v1, c(obj_var,lgb_vars), with = FALSE]
 
 dtrain_bin <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
-params_bin <- list(objective = "binary", metric = "binary_logloss", 
+params_bin <- list(objective = "binary", 
                    learning_rate = 0.01,
                    num_threads = 7,
-                   min_data = 800,
+                   min_data = 1200,
                    boost_from_average = TRUE,
                    max_bin = 1023,#255
                    force_col_wise=TRUE)
+rm(dfs)
 
 model.lgb_bin <- lgb.cv(
   params = params_bin,
   data = dtrain_bin,
-  nrounds = 10000,
+  nrounds = 20000,
   nfold = 7,
   
   #num_leaves = 93,
   #bagging_fraction = 0.97,
   #min_data_in_bin = 3,
-  
+  eval = evalerror,
   eval_freq = 100,
   early_stopping_rounds = 200
 )
 
 #saveRDS(model.lgb_bin, file.path(working_folder,'Amex/data/model_lgb_bin.rds'))
-cv_error = as.numeric(model.lgb_bin$record_evals$valid$binary_logloss$eval)
-cv_error_std = as.numeric(model.lgb_bin$record_evals$valid$binary_logloss$eval_err)
+cv_error = as.numeric(model.lgb_bin$record_evals$valid$amex_error$eval)
+cv_error_std = as.numeric(model.lgb_bin$record_evals$valid$amex_error$eval_err)
 df_cv = data.table( i = seq(length(cv_error)), cv_error, cv_error_std )
 df_cv[, cv_error_change := cv_error - shift(cv_error)]
 ggplot(df_cv, aes(i, cv_error)) + geom_line() + geom_ribbon(aes(i, ymin = cv_error - cv_error_std, ymax =  cv_error + cv_error_std), alpha = 0.3)
@@ -292,18 +322,25 @@ pred.lgb_cv_bin         = pred.lgb_cvi_bin[, .(.N, avg=mean(pred), sigma = sd(pr
 
 df_agg[pred.lgb_cv_bin, target_prob :=  i.avg, on=.(id)]
 
+#def_rate(df_agg$target[train_index], df_agg$target_prob[train_index])
 #%% Plot -----
 #plot_profiles(df_agg$target_prob[train_index], df_agg[train_index,])
 #plot_profiles_2d(df$target_lgb[p_index], df[p_index,])
 
-plot_binmodel_predictions(df_agg$target[train_index], df_agg$target_prob[train_index])
+#plot_binmodel_predictions(df_agg$target[train_index], df_agg$target_prob[train_index])
 plot_binmodel_percentiles(df_agg$target[train_index], df_agg$target_prob[train_index], 100)
+plot_binmodel_roc(df_agg$target[train_index], df_agg$target_prob[train_index])
 
 if(FALSE){
   lgb_importance = lgb.importance(model.lgb_bin$boosters[[1]][[1]], percentage = TRUE)
   fwrite(lgb_importance, file.path(working_folder,"Amex/data/importance_lgd.csv"))
   
   ggplot(lgb_importance[Gain > 0.001], aes(fct_reorder(Feature,Gain), Gain)) + geom_bar(stat = 'identity') + coord_flip()
+  
+  ggplot(lgb_importance, aes(area = Gain, fill = Frequency, label = Feature)) +
+  geom_treemap() +
+  geom_treemap_text(fontface = "italic", colour = "white", place = "centre",grow = FALSE) + 
+    scale_fill_custom('mixed', discrete = FALSE)
   
   #feature density
   den_plots = llply(lgb_importance$Feature, function(vname){
@@ -367,8 +404,10 @@ ggsave(filename = file.path(working_folder,"Amex/data/qq_plots_features.pdf"), p
    plot_profile(df_agg$target_prob[train_index], df_agg$target[train_index], df_agg[['D_64']][train_index], bucket_count = 20, error_band = 'binom')
    plot_profile(df_agg$target_prob[train_index], df_agg$target[train_index], df_agg[['S_2']][train_index], bucket_count = 20, error_band = 'binom')
    
-   plot_profile(df_agg$target_prob[train_index], df_agg$target[train_index], weekdays(df_agg[['S_2']][train_index]), bucket_count = 20, error_band = 'binom')
-
+   plot_profile(df_agg$target_prob[train_index], df_agg$target[train_index], df_agg[['date_wday']][train_index], bucket_count = 20, error_band = 'binom')
+   plot_profile(df_agg$target_prob[train_index], df_agg$target[train_index], df_agg[['date_day']][train_index], bucket_count = 20, error_band = 'binom')
+   plot_profile(df_agg$target_prob[train_index], df_agg$target[train_index], df_agg[['date_month']][train_index], bucket_count = 20, error_band = 'binom')
+   
 
   
   s_index = sample.int(nrow(df),10000)
@@ -422,12 +461,12 @@ v7 - 0.792 (pron adjustment does not help much)
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Apr2021/data/df.csv'))
  
-  file = file.path(working_folder, "Amex/data/submit_v09.lgb.csv")
+  file = file.path(working_folder, "Amex/data/submit_v10.lgb.csv")
   fwrite(df_agg[is_test == TRUE, .(customer_ID = id, prediction = target_prob)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)
   
-  file = file.path(working_folder, "Amex/data/submit_v09_adj.lgb.csv")
+  file = file.path(working_folder, "Amex/data/submit_v10_adj.lgb.csv")
   fwrite(df_agg[is_test == TRUE, .(customer_ID = id, prediction = target_prob_adj)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)
@@ -435,7 +474,7 @@ v7 - 0.792 (pron adjustment does not help much)
 ```
 
 ## LightGBM SAMPLE TEST
-```{r lgb_model_sample_test, echo=FALSE}
+```{r lgb_model_sample_test, echo=FALSE, eval = FALSE}
 
 set.seed(1321)
 
@@ -516,7 +555,7 @@ if(FALSE){
   plot_profile(df_agg$test_prob, df_agg$is_test, df_agg[['B_29']], bucket_count = 100, error_band = 'binom')
   plot_profile(df_agg$test_prob, df_agg$is_test, df_agg[['std_P_2']], bucket_count = 100, error_band = 'binom')
   plot_profile(df_agg$test_prob, df_agg$is_test, df_agg[['chg_P_2']], bucket_count = 20, error_band = 'binom')
-  plot_profile(df_agg$test_prob, df_agg$is_test, df_agg[['N']], bucket_count = 100, error_band = 'binom')
+  plot_profile(df_agg$test_prob, df_agg$is_test, df_agg[['S_11']], bucket_count = 100, error_band = 'binom')
   
 
 }

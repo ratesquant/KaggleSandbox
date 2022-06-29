@@ -16,7 +16,7 @@ library(foreach)
 library(R.utils)
 #test.data.table()
 
-data_folder = 'W:/vaers'
+data_folder = 'V:/vaers'
 
 working_folder = 'D:/Github/KaggleSandbox/'
 #working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
@@ -25,19 +25,19 @@ source(file.path(working_folder, 'Utils/common.R'))
 
 ```
 
-BZip csv files 
+BZip csv files
+
 ```{r bzip_files, eval = FALSE}
 files = list.files(data_folder, glob2rx('*.csv'), full.names = TRUE )
 
 for(file_name in files) {
   print(file_name)
-  bzip2(file_name)
+  bzip2(file_name, overwrite = TRUE, remove = TRUE)
 }
 #system("gzip bigdata-compressed.txt")
 ```
 
 ## Load Data
-
 
 ```{r load_data}
 files_vax = list.files(data_folder, glob2rx('*VAERSVAX.csv.bz2'), full.names = TRUE)
@@ -122,6 +122,7 @@ ggplot(df_d[DIED == 'Y' & VAX_TYPE == 'COVID19',.(.N), by =.(RECVDATE_M, VAX_MAN
 
 ggplot(df_d[DISABLE == 'Y' & VAX_TYPE == 'COVID19',.(.N), by =.(RECVDATE_M, VAX_MANU)], aes(RECVDATE_M, N, group = VAX_MANU, color = VAX_MANU, label = sprintf('%d', N) )) + 
   geom_line() + geom_point() + geom_text( nudge_x = 10) + scale_x_date(date_breaks = "1 month", date_labels = "%b %y")
+
 ggplot(df_d[VAX_TYPE == 'COVID19' & RECVDATE_M > '2010-01-01',.(.N), by =.(RECVDATE_M, VAX_MANU)], aes(RECVDATE_M, N, group = VAX_MANU, color = VAX_MANU, label = sprintf('%d', N) )) + 
   geom_line() + geom_point() + geom_text( nudge_x = 10) + scale_x_date(date_breaks = "1 month", date_labels = "%b %y")
 
@@ -144,4 +145,3 @@ ggplot(df_d[is_flu == TRUE & DIED == 'Y',], aes(factor(5*floor(AGE_YRS/5)))) +  
 ```
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
-

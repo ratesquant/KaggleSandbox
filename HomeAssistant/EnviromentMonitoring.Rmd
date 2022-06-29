@@ -37,7 +37,7 @@ client$ready()
 Changed Air Filter 5/29/2022
 
 ```{r load_data, echo=FALSE}
-tables <- client$query('from(bucket: "home_assistant") |> range(start: -5d)')
+tables <- client$query('from(bucket: "home_assistant") |> range(start: -7d)')
 #tables <- client$query('from(bucket: "home_assistant")')
 
 #X = read.table(readLines(file.csv, warn = FALSE),header=TRUE,sep=”,”)
@@ -65,6 +65,13 @@ ggplot(df[X_field == 'value' & grepl('power', friendly_name) ], aes(time, X_valu
 
 ggplot(df[X_field == 'value' & grepl('temperature', friendly_name) ], aes(time, temp_c2f(X_value), group = friendly_name, color = friendly_name)) + 
   geom_step() + geom_point()
+
+ggplot(df[X_field == 'value' & grepl('temperature', friendly_name) ], aes(time, temp_c2f(X_value), group = friendly_name, color = friendly_name)) + 
+  geom_step() + geom_point()
+
+ggplot(df[X_field == 'value' & grepl('temperature', friendly_name) ], aes(make_datetime(2022, 6, 20, hour(time), minute(time), second(time)  ), temp_c2f(X_value), group = friendly_name, color = friendly_name)) + 
+   geom_point()
+
 
 ggplot(df[X_field == 'value' & grepl('temperature', friendly_name) ], aes(X_value, pmax(-10, pmin(10, 60*dv/dt)), group = friendly_name, color = friendly_name)) + 
    geom_point() + facet_wrap(~friendly_name)

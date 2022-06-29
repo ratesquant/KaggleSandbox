@@ -230,13 +230,24 @@ ggplot(df[state %in% my_states], aes(date, new_deaths)) + geom_line() + geom_smo
 ggplot(df[state %in% my_states], aes(date, new_deaths_avg_7d)) + geom_line() + facet_wrap(~state, scales = 'free_y')
 ggplot(df[state %in% my_states], aes(date, new_cases_avg_7d)) + geom_line() + facet_wrap(~state, scales = 'free_y')
 
+df_agg = df[, .(new_cases = sum(new_cases, na.rm = TRUE), new_deaths = sum(new_deaths, na.rm = TRUE)), by =.(state, year(date), month(date))]
+ggplot(df_agg[state %in% my_states], aes(factor(month), new_cases, group = year, color =  factor(year ) )) + geom_line(size = 1) + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')
+ggplot(df_agg[state %in% my_states], aes(factor(month), new_deaths, group = year, color =  factor(year ) )) + geom_line(size = 1) + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')
+
+
 #year over Year
-ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_cases_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed') + 
-ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_cases_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')+ scale_x_date(date_labels = "%b")
-  scale_x_date(date_labels = "%b")
+ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_cases_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line(size = 1) + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')+ scale_x_date(date_labels = "%b")
 
 ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_deaths_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed') + scale_x_date(date_labels = "%b")
-ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_deaths_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')  + scale_x_date(date_labels = "%b")
+
+ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_deaths_avg_28d, group = year(date), color =  factor(year(date)) )) + geom_line(size =1) + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed') + scale_x_date(date_labels = "%b")
+
+ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), new_deaths_avg_7d/new_cases_avg_60d, group = year(date), color =  factor(year(date)) )) + geom_line(size =1) + facet_wrap(~state) + scale_color_custom('mixed') + scale_x_date(date_labels = "%b")
+
+ggplot(df[state %in% my_states], aes(make_date(2020, month(date), day(date)), deaths/cases , group = year(date), color =  factor(year(date)) )) + geom_line(size =1) + facet_wrap(~state) + scale_color_custom('mixed') + scale_x_date(date_labels = "%b")
+
+ggplot(df[state %in% my_states,.(.N, new_deaths = sum(new_deaths), new_cases = sum(new_cases)), by=.('date' = make_date(year(date), month(date), 1), state)], aes(make_date(2020, month(date), day(date)), new_deaths, group = year(date), color =  factor(year(date)) )) + geom_line(size =1) + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed') + scale_x_date(date_labels = "%b")
+
 
 #year over Year
 ggplot(df[state %in% "USA"], aes(make_date(2020, month(date), day(date)), new_deaths_avg_7d, group = year(date), color =  factor(year(date)) )) + geom_line() + facet_wrap(~state, scales = 'free_y') + scale_color_custom('mixed')+ scale_x_date(date_labels = "%b")

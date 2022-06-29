@@ -10,6 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 library(data.table)
 library(ggplot2)
+library(mnormt)
 ```
 
 ## Functions
@@ -19,6 +20,20 @@ the Vasicek, beta, and Kumaraswamy densities do not differ much
 
 Y = QNORM(X), X - vasicek, Y - normal with sigma = r / (1-r)
 ```{r functions}
+
+#variance of distribution
+vasicek_var <- function(p, r) {
+  t = qnorm(p)
+  f2 = pmnorm(cbind(t,t), c(0, 0), matrix(c(1,r,r,1), 2, 2))
+  return ( f2 - p * p) 
+}
+
+vasicek_rho <-function(p, var){
+  uniroot(function(y)vasicek_var(p, y) - var, c(0, 1))$root 
+}
+
+#vasicek_var(p, rho)
+#integrate(function(y)vasicek_pdf(y, p, rho)*(y-p)*(y-p), 0, 1, stop.on.error = FALSE)$value
 
 vasicek_pdf <- function(x, p, r) {
   xn = qnorm(x)
@@ -40,18 +55,37 @@ vasicek_icdf_num_s <- function(x, p, r) {
 }
 vasicek_icdf_num <- Vectorize(vasicek_icdf_num_s, "x")
 
-rho = 0.15 
+smm2cpr <-function(smm) { 100*(1 - (1 - smm)^12) }
 
-df = data.table(x = seq(0, 1, by = 0.01))
-df[, p_pdf := vasicek_pdf(x, 0.1, rho)]
-df[, p_cdf := vasicek_cdf(x, 0.1, rho)]
-df[, p_cdf_num := vasicek_cdf_num_v(x, 0.1, rho)]
-df[, ix := vasicek_icdf(p_cdf, 0.1, rho)]
-df[, ix_num := vasicek_icdf_num(p_cdf, 0.1, rho)]
+p0 = 0.1
+rho = 0.99 
 
-ggplot(df, aes(x, p_pdf)) + geom_line()
-ggplot(df, aes(x, p_cdf)) + geom_line()
+df = data.table(x = seq(0, 1, by = 0.001))
+df[, p_pdf := vasicek_pdf(x, p0, rho)]
+
+df[, p_cdf := vasicek_cdf(x, p0, rho)]
+df[, p_cdf_num := vasicek_cdf_num(x, p0, rho)]
+df[, ix := vasicek_icdf(p_cdf, p0, rho)]
+df[, ix_num := vasicek_icdf_num(p_cdf, p0, rho)]
+
+ggplot(df, aes(x, p_pdf)) + geom_line() + coord_cartesian(xlim = c(0, 1.0))
+ggplot(df, aes(x, p_cdf)) + geom_line() + coord_cartesian(xlim = c(0, 1.0))
+ggplot(df, aes(x, ix - x)) + geom_line()
 ggplot(df, aes(x, p_cdf - p_cdf_num)) + geom_line()
+
+
+#tables of confidence intervals
+rho = 0.15
+df = data.table(p = seq(0, 0.1, by = 0.001))
+df[, p_up := vasicek_icdf(1-5/200, p, rho)]
+df[, p_dn := vasicek_icdf(  5/200, p, rho)]
+ggplot(df, aes(smm2cpr(p), ymin = smm2cpr(p_dn), ymax = smm2cpr(p_up) )) + geom_ribbon(fill = 'blue', alpha = 0.3) + geom_line(aes(smm2cpr(p), smm2cpr(p) ))
+
+p0 = 0.01
+df = data.table(rho = seq(0, 0.2, by = 0.001))
+df[, p_up := vasicek_icdf(1-5/200, p0, rho)]
+df[, p_dn := vasicek_icdf(  5/200, p0, rho)]
+ggplot(df, aes(rho, ymin = smm2cpr(p_dn), ymax = smm2cpr(p_up) )) + geom_ribbon(fill = 'blue', alpha = 0.3) + geom_line(aes(rho, smm2cpr(p0) ), linetype = 'dashed')
 
 ```
 
@@ -81,10 +115,15 @@ r_est = s2 / (1 + s2)
 
 ```{r simulation, echo=FALSE}
 library(plyr)
+library(foreach)
 
-rho = 0.15#0.15 
-p0 = 0.1
+rho = 0.1#0.15 
+p0 = 0.02
 n = 10000
+
+df = data.table(x = seq(0, 1, by = 0.0001))
+df[, p_pdf := vasicek_pdf(x, p0, rho)]
+df[, p_cdf := vasicek_cdf(x, p0, rho)]
 
 threshold = qnorm(p0)
 
@@ -93,7 +132,54 @@ df_sim = ldply(seq(1000), function(i){
   c(def = mean(x<threshold))
 })
 
-ggplot(df_sim, aes(def)) + geom_density() + geom_line(data= df, aes(x, p_pdf), color = 'red')
+ggplot(df_sim, aes(def)) + geom_density() + 
+  geom_line(data= df, aes(x, p_pdf), color = 'red') + xlim(c(0, 0.2))
+
+# as function of n
+df_sim = foreach(n = seq(10, 1000, by = 10), .combine = rbind) %do% {
+  df_temp = ldply(seq(10000), function(i){
+    x = rnorm(n) * sqrt(1-rho)  + sqrt(rho) * rnorm(1)
+    c(n = n, i = i, def = mean(x<threshold))
+  })
+  df_temp
+}
+setDT(df_sim)
+c_level = 1-5/200
+ggplot(df_sim[, .(def = mean(def)), by =.(n)], aes(n, def)) + geom_line() + geom_point()
+ggplot(df_sim[, .(def_95 = quantile(def, c_level), def = mean(def), def_95_bin = binom.test(as.integer(mean(def)*n), n, p0)$conf.int[2] ), by =.(n)], aes(n, def_95)) + 
+  geom_line() + geom_point() +  #geom_line(aes(n, def_95_bin))  +
+  geom_hline(yintercept = vasicek_icdf(c_level, p0, rho), linetype = 'dashed', alpha = 0.5)
+
+ggplot(df_sim[, .(def_sd = sd(def), def = mean(def)), by =.(n)], aes(n, def_sd)) + 
+  geom_line() + geom_point() +  #geom_line(aes(n, def_95_bin))  +
+  geom_hline(yintercept = sqrt(vasicek_var(p0, rho)), linetype = 'dashed', alpha = 0.5)
+
+#estimation of correlation
+ggplot(df_sim[, .(def_var = var(qnorm(pmin(pmax(def, 1e-3),1-1e-3))), rho_est = vasicek_rho(p0, var(def)), def = mean(def)), by =.(n)], aes(n, rho_est)) + 
+  geom_line() + geom_point() +  geom_line(aes(n, def_var/(1+def_var)), color = 'red')  +
+  geom_hline(yintercept = rho, linetype = 'dashed', alpha = 0.5)
+
+ggplot(df_sim[, .(def_var = var(qnorm(pmin(pmax(def, 1e-3),1-1e-3)), na.rm = TRUE )), by =.(n)], aes(n, def_var/(1+def_var))) + 
+  geom_line() + geom_point() +  #geom_line(aes(n, def_95_bin))  +
+  geom_hline(yintercept = rho, linetype = 'dashed', alpha = 0.5)
+
+
+ggplot(df_sim[n %in% c(10, 100, 1000)], aes(def, group = n)) + 
+  geom_histogram(aes(y = ..density..), binwidth = 0.01) + facet_wrap(~n) + 
+  geom_line(data= df, aes(x, p_pdf), color = 'red') + coord_cartesian(xlim = c(0, 0.1))
+
+ggplot(df_sim[n == 1000], aes(def, group = n)) + 
+  geom_histogram(aes(y = ..density..), binwidth = 0.001) + 
+  geom_line(data= df, aes(x, vasicek_pdf(x, p0, rho)), color = 'red') + coord_cartesian(xlim = c(0, 0.1))
+
+ggplot(df_sim[n == 1000], aes(qnorm(pmin(pmax(def, 1e-4),1-1e-4)), group = n)) + 
+  geom_histogram(aes(y = ..density..), bins = 50) + geom_vline(xintercept = qnorm(p), color = 'red')
+
+hist(c(qnorm(df_sim[n == 1000 & def>=p]$def), 2*qnorm(p) - qnorm(df_sim[n == 1000 & def>p]$def)), 100)
+
+ggplot(df_sim[n %in% c(10, 100, 1000)], aes(def, group = n)) + stat_ecdf() + facet_wrap(~n) + 
+  geom_line(data= df, aes(x, p_cdf), color = 'red') + coord_cartesian(xlim = c(0, 0.2))
+
 
 #binom beta
 beta = (1/rho - 1) * (1-p0)
@@ -115,3 +201,137 @@ mean(df_sim$def)
 sd(df_sim$def) # sqrt(p0 * (1-p0) * (1 + (n-1) * rho) / n)
 ```
 
+## Loan level
+
+```{r loan_level, echo=FALSE}
+library(stringi)
+
+### Define the Loan Performance table headers
+lppub_column_names <- c("POOL_ID", "LOAN_ID", "ACT_PERIOD", "CHANNEL", "SELLER", "SERVICER",
+                        "MASTER_SERVICER", "ORIG_RATE", "CURR_RATE", "ORIG_UPB", "ISSUANCE_UPB",
+                        "CURRENT_UPB", "ORIG_TERM", "ORIG_DATE", "FIRST_PAY", "LOAN_AGE",
+                        "REM_MONTHS", "ADJ_REM_MONTHS", "MATR_DT", "OLTV", "OCLTV",
+                        "NUM_BO", "DTI", "CSCORE_B", "CSCORE_C", "FIRST_FLAG", "PURPOSE",
+                        "PROP", "NO_UNITS", "OCC_STAT", "STATE", "MSA", "ZIP", "MI_PCT",
+                        "PRODUCT", "PPMT_FLG", "IO", "FIRST_PAY_IO", "MNTHS_TO_AMTZ_IO",
+                        "DLQ_STATUS", "PMT_HISTORY", "MOD_FLAG", "MI_CANCEL_FLAG", "Zero_Bal_Code",
+                        "ZB_DTE", "LAST_UPB", "RPRCH_DTE", "CURR_SCHD_PRNCPL", "TOT_SCHD_PRNCPL",
+                        "UNSCHD_PRNCPL_CURR", "LAST_PAID_INSTALLMENT_DATE", "FORECLOSURE_DATE",
+                        "DISPOSITION_DATE", "FORECLOSURE_COSTS", "PROPERTY_PRESERVATION_AND_REPAIR_COSTS",
+                        "ASSET_RECOVERY_COSTS", "MISCELLANEOUS_HOLDING_EXPENSES_AND_CREDITS",
+                        "ASSOCIATED_TAXES_FOR_HOLDING_PROPERTY", "NET_SALES_PROCEEDS",
+                        "CREDIT_ENHANCEMENT_PROCEEDS", "REPURCHASES_MAKE_WHOLE_PROCEEDS",
+                        "OTHER_FORECLOSURE_PROCEEDS", "NON_INTEREST_BEARING_UPB", "PRINCIPAL_FORGIVENESS_AMOUNT",
+                        "ORIGINAL_LIST_START_DATE", "ORIGINAL_LIST_PRICE", "CURRENT_LIST_START_DATE",
+                        "CURRENT_LIST_PRICE", "ISSUE_SCOREB", "ISSUE_SCOREC", "CURR_SCOREB",
+                        "CURR_SCOREC", "MI_TYPE", "SERV_IND", "CURRENT_PERIOD_MODIFICATION_LOSS_AMOUNT",
+                        "CUMULATIVE_MODIFICATION_LOSS_AMOUNT", "CURRENT_PERIOD_CREDIT_EVENT_NET_GAIN_OR_LOSS",
+                        "CUMULATIVE_CREDIT_EVENT_NET_GAIN_OR_LOSS", "HOMEREADY_PROGRAM_INDICATOR",
+                        "FORECLOSURE_PRINCIPAL_WRITE_OFF_AMOUNT", "RELOCATION_MORTGAGE_INDICATOR",
+                        "ZERO_BALANCE_CODE_CHANGE_DATE", "LOAN_HOLDBACK_INDICATOR", "LOAN_HOLDBACK_EFFECTIVE_DATE",
+                        "DELINQUENT_ACCRUED_INTEREST", "PROPERTY_INSPECTION_WAIVER_INDICATOR",
+                        "HIGH_BALANCE_LOAN_INDICATOR", "ARM_5_YR_INDICATOR", "ARM_PRODUCT_TYPE",
+                        "MONTHS_UNTIL_FIRST_PAYMENT_RESET", "MONTHS_BETWEEN_SUBSEQUENT_PAYMENT_RESET",
+                        "INTEREST_RATE_CHANGE_DATE", "PAYMENT_CHANGE_DATE", "ARM_INDEX",
+                        "ARM_CAP_STRUCTURE", "INITIAL_INTEREST_RATE_CAP", "PERIODIC_INTEREST_RATE_CAP",
+                        "LIFETIME_INTEREST_RATE_CAP", "MARGIN", "BALLOON_INDICATOR",
+                        "PLAN_NUMBER", "FORBEARANCE_INDICATOR", "HIGH_LOAN_TO_VALUE_HLTV_REFINANCE_OPTION_INDICATOR",
+                        "DEAL_NAME", "RE_PROCS_FLAG", "ADR_TYPE", "ADR_COUNT", "ADR_UPB")
+lppub_column_classes <- c("character", "character", "character", "character", "character", "character",
+                          "character", "numeric", "numeric", "numeric", "numeric",
+                          "numeric", "numeric", "character", "character", "numeric", "numeric",
+                          "numeric", "character", "numeric", "numeric", "character", "numeric",
+                          "numeric", "numeric", "character", "character", "character",
+                          "numeric", "character", "character", "character", "character",
+                          "numeric", "character", "character", "character", "character",
+                          "numeric", "character", "character", "character", "character",
+                          "character", "character", "numeric", "character", "numeric",
+                          "numeric", "numeric", "character", "character", "character",
+                          "numeric", "numeric", "numeric", "numeric", "numeric", "numeric",
+                          "numeric", "numeric", "numeric", "numeric", "numeric", "character",
+                          "numeric", "character", "numeric", "numeric", "numeric", "numeric",
+                          "numeric", "numeric", "character", "numeric", "numeric", "numeric",
+                          "numeric", "character", "numeric", "character", "numeric", "character",
+                          "numeric", "numeric", "character", "character", "numeric", "numeric",
+                          "numeric", "numeric", "numeric", "numeric", "numeric", "numeric",
+                          "numeric", "numeric", "numeric", "numeric", "numeric", "character",
+                          "character", "character", "character", "character",
+						  "character", "numeric", "numeric")
+drop_columns = c('PMT_HISTORY','SELLER','SERVICER', 'PRODUCT')
+
+data_folder = 'W:/loan_level/fnma/raw'
+
+#"2019-01-01", "2021-06-01"
+df_loans = fread(file.path(data_folder, '2015Q1.csv.bz2'), sep = "|", col.names = lppub_column_names, colClasses = lppub_column_classes, nThread =  1)
+df_loans = df_loans[PRODUCT == 'FRM' & ORIG_TERM == 360]
+df_loans[, date:= as.Date(stri_join('01',ACT_PERIOD), format = '%d%m%Y')]
+df_loans[order(date), prev_balance:=shift(CURRENT_UPB ), by =.(LOAN_ID)]
+
+df_loans[LOAN_ID == '100000913397', .(date, LOAN_AGE, DLQ_STATUS, CURRENT_UPB, prev_balance, Zero_Bal_Code, TOT_SCHD_PRNCPL, MOD_FLAG)]
+df_loans[LOAN_ID == '107635022150', .(date, LOAN_AGE, DLQ_STATUS, CURRENT_UPB, prev_balance, Zero_Bal_Code, TOT_SCHD_PRNCPL, MOD_FLAG)]
+
+sdate = '2015-06-01'
+
+#01 = Prepaid or Matured (zero balance code)
+ggplot(df_loans[date > sdate,.(.N, balance = 1e-9*sum(CURRENT_UPB, na.rm = TRUE)), by =.(date)], aes(date, balance)) + geom_line() + geom_point()
+ggplot(df_loans[date > sdate,.(.N, balance = 1e-3*sum(CURRENT_UPB, na.rm = TRUE)/.N), by =.(date)], aes(date, balance)) + geom_line() + geom_point()
+
+ggplot(df_loans[,.(.N, pp = sum(Zero_Bal_Code == '01')/.N), by =.(date)], aes(date, pp)) + geom_line() + geom_point()
+ggplot(df_loans[,.(.N, smm = sum( as.numeric(Zero_Bal_Code == '01') * prev_balance, na.rm = TRUE)/sum(prev_balance, na.rm = TRUE)), by =.(date)], aes(date, smm2cpr(smm) )) + geom_line() + geom_point()
+
+
+df_pp = df_loans[date > sdate,.(.N, Np = sum(Zero_Bal_Code == '01')), by =.(date)]
+df_pp[, p :=Np/N]
+
+ggplot(df_pp, aes(date, smm2cpr(p) )) + geom_line() + geom_point() + 
+  geom_ribbon(aes(date, ymin = smm2cpr(vasicek_icdf(0.05, p, 0.01)), ymax = smm2cpr(vasicek_icdf(0.95, p, 0.01))), alpha = 0.1) 
+
+vasicek_rho(mean(df_pp$p), var(df_pp$p)) #0.009444334
+
+pp_var= var(qnorm(df_pp$p))
+pp_var/(1+pp_var) #0.01125072
+
+
+```
+
+## Correlated binomial
+
+```{r corr_binom, echo=FALSE}
+
+a <- function(rho, p, q) {
+  rho * sqrt(p*q*(1-p)*(1-q)) + (1-p)*(1-q)
+}
+
+n <- 10
+p <- 1/3
+q <- 3/4
+rho <- -4/5
+#
+# Compute the four probabilities for the joint distribution.
+#
+a.0 <- a(rho, p, q)
+prob <- c(`(0,0)`=a.0, `(1,0)`=1-q-a.0, `(0,1)`=1-p-a.0, `(1,1)`=a.0+p+q-1)
+if (min(prob) < 0) {
+  print(prob)
+  stop("Error: a probability is negative.")
+}
+#
+# Illustrate generation of correlated Binomial variables.
+#
+set.seed(17)
+n.sim <- 1000
+u <- sample.int(4, n.sim * n, replace=TRUE, prob=prob)
+y <- floor((u-1)/2)
+x <- 1 - u %% 2
+x <- colSums(matrix(x, nrow=n)) # Sum in groups of `n`
+y <- colSums(matrix(y, nrow=n)) # Sum in groups of `n`
+#
+# Plot the empirical bivariate distribution.
+#
+plot(x+rnorm(length(x), sd=1/8), y+rnorm(length(y), sd=1/8),
+     pch=19, cex=1/2, col="#00000010",
+     xlab="X", ylab="Y",
+     main=paste("Correlation is", signif(cor(x,y), 3)))
+abline(v=mean(x), h=mean(y), col="Red")
+abline(lm(y ~ x), lwd=2, lty=3)
+```

@@ -224,6 +224,52 @@ ex_vars = c(ex_vars, stri_join('prob_', prob_vars))
 gc()
 ```
 
+## Amex Custom Error
+```{r amex_error, echo=FALSE}
+#implemented in the silliest way possible
+gini <-function(actual, y_pred, weight){
+  
+  total_pos = sum(actual * weight)
+  cum_pos_found = cumsum(actual * weight)
+  lorentz = cum_pos_found / total_pos
+  gini = (lorentz - cumsum(weight / sum(weight))) * weight
+  sum(gini)
+}
+gini_norm<-function(actual)
+{
+  sort_index = order(actual, decreasing = TRUE)
+  actual_s = actual[sort_index]
+  weight = ifelse(actual_s == 0, 20, 1)
+  random = cumsum(weight / sum(weight))
+  
+  total_pos = sum(actual_s * weight)
+  cum_pos_found = cumsum(actual_s * weight)
+  lorentz = cum_pos_found / total_pos
+  gini = (lorentz - cumsum(weight / sum(weight))) * weight
+  sum(gini)
+}
+
+amex_error <- function(actual, y_pred){
+  sort_index = order(y_pred, decreasing = TRUE)
+  actual_s = actual[sort_index]
+  y_pred_s = y_pred[sort_index] 
+  weight = ifelse(actual_s == 0, 20, 1)
+  
+  #top_four_percent_captured
+  four_pct_cutoff = floor(0.04 * sum(weight))
+  cut_off_index = cumsum(weight) <= four_pct_cutoff
+  top_four_percent_captured = sum(actual_s[cut_off_index] == 1) / sum(actual == 1)
+  
+  gini = gini(actual_s, y_pred_s, weight)/gini_norm(actual)
+  
+  0.5 * (gini + top_four_percent_captured)
+}
+
+amex_error(actual, y_pred)#0.5729004, python: 0.5729004331080327
+
+microbenchmark(amex_error(actual, y_pred)) #88.5039
+```
+
 ## LightGBM
 ```{r lgb_model, echo=FALSE}
 
@@ -262,7 +308,7 @@ train_index = !is.na(df_agg$target)
 t_index_v = which(train_index)
 t_index_v1 = sample(t_index_v, length(t_index_v))
 
-lgb_vars = unique(c(all_vars, ex_vars) %!in_set% c('id', 'S_2', 'B_29', 'std_D_121', 'D_59', 'S_11'))
+lgb_vars = unique(c(all_vars, ex_vars) %!in_set% c('id', 'S_2'))
 #lgb_vars = c(w_vars) %!in_set% c('id')
 #lgb_vars = c(p_vars) %!in_set% c('id')
 #lgb_vars = c(rbf_vars) %!in_set% c('id')
@@ -276,16 +322,19 @@ my_cat_vars =  names(which(sapply(df_agg[,lgb_vars, with = FALSE], function(x) i
 
 ### - logistic regression  -----------
 dfs = df_agg[t_index_v1, c(obj_var,lgb_vars), with = FALSE]
+dfs[, weight:=ifelse(target==0, 20, 1)]
 
-dtrain_bin <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
+#weight = dfs[['weight']]
+dtrain_bin <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), 
+                          label = dfs[[obj_var]], categorical_feature = my_cat_vars)
 params_bin <- list(objective = "binary", 
                    learning_rate = 0.01,
                    num_threads = 7,
-                   min_data = 1200,
+                   min_data = 2000,
                    boost_from_average = TRUE,
                    max_bin = 1023,#255
                    force_col_wise=TRUE)
-rm(dfs)
+#rm(dfs)
 
 model.lgb_bin <- lgb.cv(
   params = params_bin,
@@ -296,7 +345,7 @@ model.lgb_bin <- lgb.cv(
   #num_leaves = 93,
   #bagging_fraction = 0.97,
   #min_data_in_bin = 3,
-  eval = evalerror,
+  #eval = evalerror,
   eval_freq = 100,
   early_stopping_rounds = 200
 )
@@ -461,7 +510,7 @@ v7 - 0.792 (pron adjustment does not help much)
 ```{r submit, echo=FALSE}
   #fwrite(df, file.path(working_folder,'Playground/Apr2021/data/df.csv'))
  
-  file = file.path(working_folder, "Amex/data/submit_v10.lgb.csv")
+  file = file.path(working_folder, "Amex/data/submit_v11.lgb.csv")
   fwrite(df_agg[is_test == TRUE, .(customer_ID = id, prediction = target_prob)], file = file, row.names = FALSE)
   zip(paste(file, '.zip', sep = ''), file, flags = '-r9Xj')
   print(file)

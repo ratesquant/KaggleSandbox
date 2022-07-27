@@ -1,0 +1,56 @@
+---
+title: "Russian_War_Ukraine"
+output: html_document
+date: '2022-06-07'
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(jsonlite)
+library(stringi)
+library(data.table)
+library(ggplot2)
+```
+
+## Load Data
+
+```{r load_data}
+
+filename_eq = 'https://raw.githubusercontent.com/PetroIvaniuk/2022-Ukraine-Russia-War-Dataset/main/data/russia_losses_equipment.json'
+filename_pn = 'https://raw.githubusercontent.com/PetroIvaniuk/2022-Ukraine-Russia-War-Dataset/main/data/russia_losses_personnel.json'
+
+df_eq <- fromJSON(sapply(readLines(filename_eq,  warn=FALSE), function(x) stri_replace_all_fixed(x, "NaN", '"NA"')))
+df_pn <- fromJSON(sapply(readLines(filename_pn,  warn=FALSE), function(x) stri_replace_all_fixed(x, "NaN", '"NA"')))
+
+setDT(df_eq)
+setDT(df_pn)
+
+names(df_eq) = make.names( names(df_eq) )
+
+df_pn[, date := as.Date(date)]
+df_eq[, date := as.Date(date)]
+df_pn[order(date), p_diff := personnel - shift(personnel)]
+
+ggplot(df_pn, aes(date, personnel)) + geom_line()
+ggplot(df_pn, aes(date, POW)) + geom_line()
+ggplot(df_pn, aes(date, p_diff)) + geom_line() + geom_point() + geom_smooth(se = FALSE, color = 'red', span = 0.3)
+
+df_eq_m =  melt(df_eq[, -c("greatest.losses.direction", "day"), ], id.vars = 'date')
+df_eq_m[, value := as.numeric(value)]
+df_eq_m[order(date),  value_diff := value - shift(value), by = .(variable) ]
+ggplot(df_eq_m, aes(date, value)) + geom_line() + facet_wrap(~variable, scales = 'free' )
+ggplot(df_eq_m, aes(date, value_diff)) + geom_line() + facet_wrap(~variable, scales = 'free' ) + geom_smooth(se = FALSE, color = 'red', span = 0.3)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

@@ -299,7 +299,7 @@ corr_matrix_df = data.table(reshape2::melt(corr_matrix))
 if(!show_diagonal) corr_matrix_df[Var1==Var2, value := NA]
 
 p = ggplot(corr_matrix_df, aes(Var1, Var2, fill = value)) + geom_tile() + 
-  theme(axis.text.x = element_text(angle = 90, size = 5), axis.text.y = element_text(size = 5), axis.title.x = element_blank(), axis.title.y = element_blank()) + 
+  theme(axis.text.x = element_text(angle = 90, size = 8), axis.text.y = element_text(size = 8), axis.title.x = element_blank(), axis.title.y = element_blank()) + 
   scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0)
 return (p)
 }

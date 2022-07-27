@@ -10,7 +10,8 @@ knitr::opts_chunk$set(echo = TRUE)
 
 library(data.table)
 library(ggplot2)
-library(mnormt)
+library(plyr)
+#library(mnormt)
 ```
 
 ## Functions
@@ -201,6 +202,30 @@ mean(df_sim$def)
 sd(df_sim$def) # sqrt(p0 * (1-p0) * (1 + (n-1) * rho) / n)
 ```
 
+## Correlated Binomial
+
+```{r cor_binom, echo=FALSE}
+rho = 0.15#0.15#0.15 
+p0 = 0.1
+n = 100
+threshold = qnorm(p0)
+
+df_sim = ldply(seq(1000), function(i){
+  x = rnorm(n) * sqrt(1-rho)  + sqrt(rho) * rnorm(1)
+  c(def = mean(x<threshold))
+})
+setDT(df_sim)
+
+ggplot(df_sim, aes(def)) + geom_density()
+ggplot(df_sim, aes(def)) + geom_histogram()
+
+binom.test(floor(p0*n), n, p0)$conf.int
+
+mean(df_sim$def)
+sd(df_sim$def)
+
+```
+
 ## Loan level
 
 ```{r loan_level, echo=FALSE}
@@ -217,6 +242,9 @@ lppub_column_names <- c("POOL_ID", "LOAN_ID", "ACT_PERIOD", "CHANNEL", "SELLER",
                         "DLQ_STATUS", "PMT_HISTORY", "MOD_FLAG", "MI_CANCEL_FLAG", "Zero_Bal_Code",
                         "ZB_DTE", "LAST_UPB", "RPRCH_DTE", "CURR_SCHD_PRNCPL", "TOT_SCHD_PRNCPL",
                         "UNSCHD_PRNCPL_CURR", "LAST_PAID_INSTALLMENT_DATE", "FORECLOSURE_DATE",
+
+
+
                         "DISPOSITION_DATE", "FORECLOSURE_COSTS", "PROPERTY_PRESERVATION_AND_REPAIR_COSTS",
                         "ASSET_RECOVERY_COSTS", "MISCELLANEOUS_HOLDING_EXPENSES_AND_CREDITS",
                         "ASSOCIATED_TAXES_FOR_HOLDING_PROPERTY", "NET_SALES_PROCEEDS",

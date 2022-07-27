@@ -1,0 +1,154 @@
+---
+title: "Correlation Clustering"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(lubridate)
+library(data.table)
+library(BatchGetSymbols)
+library(zoo)
+library(corrplot)
+library(stringi)
+library(dendextend)
+
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+working_folder = "D:/Github/KaggleSandbox/"
+data_folder = file.path(working_folder,'stocks/data/')
+
+source(file.path(working_folder, '/Utils/common.R'))
+
+```
+
+## Load Data
+```{r load_data, include=FALSE}
+sp500_filename = file.path(data_folder, 'sp500.Rds')
+
+if( file.exists(sp500_filename) ) {
+  l.out = readRDS(sp500_filename)
+}else{
+  first.date <- Sys.Date() %m-% months(12*20)
+  last.date <- Sys.Date()
+  
+  df_SP500 <- GetSP500Stocks()
+  setDT(df_SP500)
+  tickers <- df_SP500$Tickers
+  
+  l.out <- BatchGetSymbols(tickers = tickers,
+                           first.date = first.date,
+                           last.date = last.date)
+  
+  print(l.out$df.control)
+  print(l.out$df.tickers)
+  
+  saveRDS(l.out, sp500_filename)
+}
+df = data.table(l.out$df.tickers)
+setkey(df, ticker, ref.date)
+```
+
+## Load Data ETF
+```{r load_data_etf, include=FALSE}
+etf_filename = file.path(data_folder, 'etf.Rds')
+
+if( file.exists(etf_filename) ) {
+  l.out = readRDS(etf_filename)
+}else{
+  first.date <- Sys.Date() %m-% months(12*20)
+  last.date <- Sys.Date()
+  
+  tickers <- c('^GSPC',
+             'VNQ','VIG','VYM','MUB', 'BND', 'AGG', 
+             'VXF','VTI','SCHB','ITOT','VB', 'VOO', 'VV', #US
+             'VEA','SCHF','IXUS',#Foreign Stocks
+             'VWO', 'IEMG','SCHE', #Emerging Markets Stocks
+             'DVY', 'SCHD', #Dividend Stocks
+             'VTEB', 'TFI','MUB', #Municipal Bonds
+             'VNQ', 'IYR','SCHH', #Real Estate
+             'SCHP', 'TIP','IPE', #TIPS,
+             'XLU',
+             'LQD', 'VCIT', 'SPIB', 'VCSH', #Corp Bonds
+             'EMB', 'PCY', 'EMLC' 
+             )
+  
+  l.out <- BatchGetSymbols(tickers = tickers,
+                           first.date = first.date,
+                           last.date = last.date, freq.data = 'daily')
+  
+  print(l.out$df.control)
+  print(l.out$df.tickers)
+  
+  saveRDS(l.out, etf_filename)
+}
+df = data.table(l.out$df.tickers)
+setkey(df, ticker, ref.date)
+```
+
+## Correlation
+```{r correlation, include=FALSE}
+
+df[, date := ref.date]
+df[, price      :=  price.adjusted, by =.(ticker) ]
+df[, price_prev := shift(price), by =.(ticker) ]
+df[, ret := log(price/price_prev) ]
+df[, date_year := year(date)]
+
+ggplot(df[ticker == '^GSPC',], aes(x = date, y = price )) + geom_line()
+ggplot(df[ticker %in% c('^GSPC', 'BND', 'MUB', 'LQD', 'SPIB','VIG','VNQ', 'XLU', 'VCSH') ,], aes(x = date, y = price )) + geom_line() + facet_wrap(~ticker, scales = 'free')
+
+corr_matrix = cor(as.matrix(dcast(df[, .(ret, date, ticker) ], date ~ ticker, value.var = 'ret', fun.aggregate = mean)[,-1]), method  = "spearman", use="pairwise.complete.obs")
+
+plot_cormat(dcast(df[, .(ret, date, ticker) ], date ~ ticker, value.var = 'ret', fun.aggregate = mean)[,-1])
+corrplot(corr_matrix, method="number", number.cex = 0.9, order="hclust")
+corrplot(corr_matrix, method="number", number.cex = 0.9, order="hclust", hclust.method = "complete")
+#corrplot(corr_matrix, method="circle", order="hclust")
+
+#https://bio723-class.github.io/Bio723-book/clustering-in-r.html
+corr_matrix_df = data.table(reshape2::melt(corr_matrix))
+ggplot(corr_matrix_df, aes(Var1, Var2, fill = value, label = sprintf('%.2f', value) )) + geom_tile() + geom_text() + 
+  theme(axis.text.x = element_text(angle = 90, size = 8), axis.text.y = element_text(size = 8), axis.title.x = element_blank(), axis.title.y = element_blank()) + 
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0)
+
+#reorder corr matrix
+cor_dist = as.dist(1-corr_matrix)
+hc = hclust(cor_dist, method = "complete", members = NULL)
+
+hc_order = order.dendrogram(as.dendrogram(hc))
+
+ggplot(corr_matrix_df, aes(factor(Var1, levels = levels(Var1)[hc_order]), factor(Var2, levels = rev(levels(Var2)[hc_order]) ), fill = value, label = sprintf('%.2f', value) )) + geom_tile() + geom_text() + 
+  theme(axis.text.x = element_text(angle = 90, size = 8), axis.text.y = element_text(size = 8), axis.title.x = element_blank(), axis.title.y = element_blank()) + 
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) + scale_x_discrete(position = "top") 
+
+
+makeEuclidean <- function (D) 
+{
+   M <- as.matrix(D)
+   X <- scale(t(scale(t(M^2), scale = FALSE)), scale = FALSE)
+   E <- eigen(-X/2, symmetric = TRUE)$values
+   R <- sum(E > 1e-10)
+   cmdscale(D, k = R)
+}
+cor_dist_eq =  makeEuclidean(cor_dist)
+#summary(as.vector(cor_dist - dist(cor_dist_eq)))
+   
+library(umap)
+library(ggrepel)
+umap.res = umap(cor_dist_eq)
+ggplot(cbind(data.frame(umap.res$layout), name = rownames(cor_dist_eq) ), aes(X1, X2, label = name)) + geom_point() +  geom_text_repel()
+
+library(tsne)
+tsne.res = tsne(cor_dist_eq)
+ggplot(data.frame(tsne.res, name = rownames(cor_dist_eq)), aes(X1, X2, label = name)) + geom_point(aes(X1, X2)) + geom_text_repel()
+
+
+library(cluster)
+spellman.kmedoids <- pam(cor_dist, 8) # create k-medoids clustering with 8 clusters
+kclusters <- spellman.kmedoids$cluster
+table(kclusters)
+
+```

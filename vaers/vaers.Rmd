@@ -144,4 +144,30 @@ ggplot(df_d[is_flu == TRUE & DIED == 'Y',], aes(factor(5*floor(AGE_YRS/5)))) +  
 
 ```
 
+## Benchmark
+      size     network      local 
+csv - 279Mb -  3.865 sec -  1.773 sec
+bz2 -  40Mb - 16.476 sec - 14.918 sec
+gz  -  68Mb -  5.963 sec -  5.733 sec
+```{r benchmark_zip_files, echo=FALSE}
+library(plyr)
+#df_s = df_d[sample.int(nrow(df_d), 1e6)]
+#fwrite(df_s, 'V:/benchmark.csv')
+#fwrite(df_s, 'V:/benchmark.gz')
+#bzip2('V:/benchmark.csv', overwrite = TRUE, remove = FALSE)
+#gzip('V:/benchmark.csv', overwrite = TRUE, remove = FALSE)
+
+bench = ldply(seq(10), function(i) {
+  a = system.time(fread('V:/benchmark.csv'))
+  b = system.time(fread('V:/benchmark.csv.bz2'))
+  c = system.time(fread('V:/benchmark.csv.gz'))
+  return (c('i' = i, elapsed_csv = as.numeric(a[3]), elapsed_bz2 = as.numeric(b[3]),  elapsed_gz = as.numeric(c[3]) ))
+})
+
+ggplot(bench) + 
+  geom_line(aes(i, elapsed_csv)) + 
+  geom_line(aes(i, elapsed_bz2), color = 'red') + 
+  geom_line(aes(i, elapsed_gz), color = 'blue')
+```
+
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

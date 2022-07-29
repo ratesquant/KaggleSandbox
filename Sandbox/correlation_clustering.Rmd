@@ -16,6 +16,10 @@ library(zoo)
 library(corrplot)
 library(stringi)
 library(dendextend)
+library(scales)
+library(RColorBrewer)
+library(ggrepel)
+library(smacof)
 
 #working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 working_folder = "D:/Github/KaggleSandbox/"
@@ -59,7 +63,7 @@ etf_filename = file.path(data_folder, 'etf.Rds')
 if( file.exists(etf_filename) ) {
   l.out = readRDS(etf_filename)
 }else{
-  first.date <- Sys.Date() %m-% months(12*20)
+  first.date <- Sys.Date() %m-% months(12*10)
   last.date <- Sys.Date()
   
   tickers <- c('^GSPC',
@@ -71,7 +75,7 @@ if( file.exists(etf_filename) ) {
              'VTEB', 'TFI','MUB', #Municipal Bonds
              'VNQ', 'IYR','SCHH', #Real Estate
              'SCHP', 'TIP','IPE', #TIPS,
-             'XLU',
+             'XLU', 'XLE',
              'LQD', 'VCIT', 'SPIB', 'VCSH', #Corp Bonds
              'EMB', 'PCY', 'EMLC' 
              )
@@ -114,6 +118,10 @@ ggplot(corr_matrix_df, aes(Var1, Var2, fill = value, label = sprintf('%.2f', val
   theme(axis.text.x = element_text(angle = 90, size = 8), axis.text.y = element_text(size = 8), axis.title.x = element_blank(), axis.title.y = element_blank()) + 
   scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0)
 
+ggplot(corr_matrix_df, aes(Var1, Var2, fill = value )) + geom_tile() + 
+  theme(axis.text.x = element_text(angle = 90, size = 8), axis.text.y = element_text(size = 8), axis.title.x = element_blank(), axis.title.y = element_blank()) + 
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0)
+
 #reorder corr matrix
 cor_dist = as.dist(1-corr_matrix)
 hc = hclust(cor_dist, method = "complete", members = NULL)
@@ -122,29 +130,61 @@ hc_order = order.dendrogram(as.dendrogram(hc))
 
 ggplot(corr_matrix_df, aes(factor(Var1, levels = levels(Var1)[hc_order]), factor(Var2, levels = rev(levels(Var2)[hc_order]) ), fill = value, label = sprintf('%.2f', value) )) + geom_tile() + geom_text() + 
   theme(axis.text.x = element_text(angle = 90, size = 8), axis.text.y = element_text(size = 8), axis.title.x = element_blank(), axis.title.y = element_blank()) + 
-  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) + scale_x_discrete(position = "top") 
+  scale_fill_gradient2(low = "#053061", mid = "#F7F7F7", high = "#67001F", midpoint = 0) + scale_x_discrete(position = "top") 
 
+ggplot(corr_matrix_df, aes(factor(Var1, levels = levels(Var1)[hc_order]), factor(Var2, levels = rev(levels(Var2)[hc_order]) ), fill = value, label = sprintf('%.2f', value) )) + geom_tile() + geom_text() + 
+  theme(axis.text.x = element_text(angle = 90, size = 8), axis.text.y = element_text(size = 8), axis.title.x = element_blank(), axis.title.y = element_blank()) + 
+   scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) + scale_x_discrete(position = "top")
 
-makeEuclidean <- function (D) 
-{
-   M <- as.matrix(D)
-   X <- scale(t(scale(t(M^2), scale = FALSE)), scale = FALSE)
-   E <- eigen(-X/2, symmetric = TRUE)$values
-   R <- sum(E > 1e-10)
-   cmdscale(D, k = R)
+#display.brewer.all()
+#brewer.pal(11, 'PuOr')
+#display.brewer.pal(11, 'PuOr')
+
+#Principal Coordinate Analysis
+cor_dist_eq <- cmdscale(cor_dist, k = 2)
+#dist(cor_dist_eq)
+ggplot(cbind(data.frame(cor_dist_eq), name = rownames(cor_dist_eq)), aes(X1, X2, label = name)) + geom_point() +  geom_text_repel()
+
+field_pco <- cmdscale(cor_dist, eig = TRUE, k = 5)
+eig_num <- seq(1, length(field_pco$eig), 1)
+barplot(field_pco$eig, names.arg = eig_num, main = "PCO eigenvalue Scree plot")
+
+#smacof
+#fitrat <- mds(cor_dist, type = "interval")
+fitrat <- mds(cor_dist, ndim = 2)
+plot_dist_cmp(cor_dist, dist(fitrat$conf))
+fitrat$stress
+ggplot(cbind(data.frame(fitrat$conf), name = rownames(fitrat$conf)), aes(D1, D2, label = name)) + geom_point() +  geom_text_repel()
+
+#distance plot
+
+plot_dist_cmp <- function(d1, d2) {
+  d1p =  data.table(reshape2::melt(as.matrix(d1) ))
+  d2p =  data.table(reshape2::melt(as.matrix(d2) ))
+  
+  d1p[d2p, value2 := i.value, on =.(Var1, Var2)]
+  
+  ggplot(d1p, aes(value, value2)) + geom_point() + geom_abline(slope = 1, color = 'red')
 }
-cor_dist_eq =  makeEuclidean(cor_dist)
-#summary(as.vector(cor_dist - dist(cor_dist_eq)))
-   
+
+plot_dist_cmp(cor_dist, dist(cor_dist_eq))
+plot_dist_cmp(cor_dist, dist(fitrat$conf))
+
+#TEST smacof
+fitRogers <- mds(cor_dist, type = "ordinal")
+jackRogers <- jackmds(fitRogers)
+jackRogers
+plot(jackRogers, legend = TRUE, cex.legend = 0.8, inset = c(-0.3, 0))
+plot(fitRogers, plot.type = "bubbleplot", bubscale = 20)
+
 library(umap)
 library(ggrepel)
-umap.res = umap(cor_dist_eq)
+umap.res = umap(cmdscale(cor_dist, k = 10))
 ggplot(cbind(data.frame(umap.res$layout), name = rownames(cor_dist_eq) ), aes(X1, X2, label = name)) + geom_point() +  geom_text_repel()
 
 library(tsne)
-tsne.res = tsne(cor_dist_eq)
+tsne.res = tsne(cmdscale(cor_dist, k = 10))
 ggplot(data.frame(tsne.res, name = rownames(cor_dist_eq)), aes(X1, X2, label = name)) + geom_point(aes(X1, X2)) + geom_text_repel()
-
 
 library(cluster)
 spellman.kmedoids <- pam(cor_dist, 8) # create k-medoids clustering with 8 clusters

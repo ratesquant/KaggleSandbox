@@ -1,5 +1,6 @@
 library(ggplot2)
 library(data.table)
+library(car)
 
 working_folder = 'D:/Github/KaggleSandbox'
 
@@ -13,10 +14,13 @@ t(crgb)  # The whole table
 
 ## My Palette -----------
 #p1   = c("#000080","#0000ff","#0080ff", "#00ffff", "#80ff80", "#ffff00","#ff8000","#ff0000", "#800000") #JET
-p1   = c("#0000FF","#00FFFF", "#00FF00", "#FFFF00", "#FF0000") #rainbow
-p1   = c("#3333FF","#33FFFF", "#33FF33", "#FFFF33", "#FF3333") #rainbow - less saturated
-p1 = hsv(seq(0.66, 0, by = -0.02), 0.8, 1)
+#p1   = c("#0000FF","#00FFFF", "#00FF00", "#FFFF00", "#FF0000") #rainbow
+#p1   = c("#3333FF","#33FFFF", "#33FF33", "#FFFF33", "#FF3333") #rainbow - less saturated
+p1 = hsv(seq(0, 1, by = 0.1),  seq(1.0, 0, by = -0.1), seq(0, 1.0, by = 0.1))
+
+p1 = hsv( seq(0.7,0, length.out = 10),  seq(1.0, 0, length.out = 10), seq(0, 1.0, length.out = 10))
 #hsv(0.5, 1, 1)
+ggplot(df, aes(x, y, fill = z2)) + geom_tile() + scale_fill_gradientn(colours = colorRampPalette(p1)(256))
 
 scale_fill_custom <- function(palette = "main", discrete = TRUE, reverse = FALSE, ...) {
   pal <- custom_pal(palette = palette, reverse = reverse)
@@ -36,15 +40,11 @@ df[, z2 := x]
 #ggplot(df, aes(x, y)) + geom_tile( fill = hsv(0.9, 1, 1)) 
 
 
-ggplot(df, aes(x, y, fill = z1)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
 ggplot(df, aes(x, y, fill = z2)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
-
 ggplot(df, aes(x, y, fill = z2)) + geom_tile() + scale_fill_custom('mixed', discrete = FALSE)
-
-ggplot(df, aes(x, y, fill = z1)) + geom_tile() + scale_fill_custom('rainbow', discrete = FALSE)
 ggplot(df, aes(x, y, fill = z2)) + geom_tile() + scale_fill_custom('rainbow', discrete = FALSE)
-
-ggplot(df, aes(x, y, fill = z1)) + geom_tile() + scale_fill_gradientn(colours = colorRampPalette(p1)(256))
+ggplot(df, aes(x, y, fill = z2)) + geom_tile() + scale_fill_custom('rainbow_muted', discrete = FALSE)
+ggplot(df, aes(x, y, fill = z2)) + geom_tile() + scale_fill_custom('cubehelix', discrete = FALSE)
 ggplot(df, aes(x, y, fill = z2)) + geom_tile() + scale_fill_gradientn(colours = colorRampPalette(p1)(256))
 
 ggplot(df, aes(x, y, fill = z2)) + geom_tile() + scale_fill_gradientn(colours = colorRampPalette(c("#00007F", "blue", "#007FFF", "cyan",
@@ -55,6 +55,8 @@ my_pal = colorRampPalette(p1, space = "rgb")(256)
 df_pal = data.table(t(col2rgb(my_pal)), t(rgb2hsv(col2rgb(my_pal))) )
 df_pal[, i := seq(.N)]
 ggplot(df_pal) + geom_line(aes(i, red), color = 'red') + geom_line(aes(i, green), color = 'green') +  geom_line(aes(i, blue), color = 'blue')
+
+#scatter3d(df_pal$r, df_pal$g, df_pal$b, surface = FALSE, bg.col= "black")
 
 df_pal_m = data.table::melt(df_pal, id.vars = 'i')
 ggplot(df_pal_m[variable %in% c('red', 'green', 'blue')]) + geom_line(aes(i, value, color = variable))

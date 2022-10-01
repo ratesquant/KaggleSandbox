@@ -1,0 +1,392 @@
+---
+title: "FNMA Loan Level Data"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(plyr)
+library(foreach)
+library(data.table)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(forcats)
+library(lubridate)
+library(R.utils)
+library(zoo)
+
+working_folder = 'D:/Github/KaggleSandbox'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+source(file.path(working_folder, '/Utils/common.R'))
+
+smm2cpr <- function(smm){
+  100.0*(1.0 - (1.0 - smm)^12)
+}
+
+pmt  <- function(wac, wam){
+  r = wac / 1200.0
+  return ( r / (1.0 - (1.0 + r)^(-wam) ))
+}
+next_sched_balance <-function(wac, wam){
+  return ( 1 + wac / 1200.0 - pmt(wac, wam))
+}
+
+sched_balance <-function(age, wac, term){
+  r = wac / 1200.0
+  return (  (1 - (1+r)^(pmax(0, age)-term)) / (1.0 - (1.0 + r)^(-term) ))
+}
+#test_df = data.table(i = seq(0, 360))
+#test_df[, pay := pmt(6.0, 360-i)]
+#test_df[, n_sb := next_sched_balance(6.0, 360-i)]
+#test_df[, sb := sched_balance(i, 6.0, 360)]
+```
+
+
+## Load FNMA loan data
+load 1% of loans
+```{r load_data}
+data_folder = 'W:/loan_level/fnma/raw'
+#data_folder = 'D:/loan_level/'
+
+to_date<-function(date_string){
+  as.Date(stri_join(ifelse(stri_length(date_string) == 5, '010','01'), date_string), format = '%d%m%Y')
+}
+to_date2<-function(date_string){
+ ns = stri_length(date_string)
+ make_date(as.numeric(stri_sub(date_string, ns-3)), as.numeric(stri_sub(date_string, to = ns-4)), 1)
+}
+to_date(c('52003','122003'))
+#to_date2(c('52003','122003'))
+#library(microbenchmark)
+#microbenchmark(to_date(c('52003','122003')), to_date2(c('52003','122003')))
+
+
+
+### Define the Loan Performance table headers
+lppub_column_names <- c("POOL_ID", "LOAN_ID", "ACT_PERIOD", "CHANNEL", "SELLER", "SERVICER",
+                        "MASTER_SERVICER", "ORIG_RATE", "CURR_RATE", "ORIG_UPB", "ISSUANCE_UPB",
+                        "CURRENT_UPB", "ORIG_TERM", "ORIG_DATE", "FIRST_PAY", "LOAN_AGE",
+                        "REM_MONTHS", "ADJ_REM_MONTHS", "MATR_DT", "OLTV", "OCLTV",
+                        "NUM_BO", "DTI", "CSCORE_B", "CSCORE_C", "FIRST_FLAG", "PURPOSE",
+                        "PROP", "NO_UNITS", "OCC_STAT", "STATE", "MSA", "ZIP", "MI_PCT",
+                        "PRODUCT", "PPMT_FLG", "IO", "FIRST_PAY_IO", "MNTHS_TO_AMTZ_IO",
+                        "DLQ_STATUS", "PMT_HISTORY", "MOD_FLAG", "MI_CANCEL_FLAG", "Zero_Bal_Code",
+                        "ZB_DTE", "LAST_UPB", "RPRCH_DTE", "CURR_SCHD_PRNCPL", "TOT_SCHD_PRNCPL",
+                        "UNSCHD_PRNCPL_CURR", "LAST_PAID_INSTALLMENT_DATE", "FORECLOSURE_DATE",
+                        "DISPOSITION_DATE", "FORECLOSURE_COSTS", "PROPERTY_PRESERVATION_AND_REPAIR_COSTS",
+                        "ASSET_RECOVERY_COSTS", "MISCELLANEOUS_HOLDING_EXPENSES_AND_CREDITS",
+                        "ASSOCIATED_TAXES_FOR_HOLDING_PROPERTY", "NET_SALES_PROCEEDS",
+                        "CREDIT_ENHANCEMENT_PROCEEDS", "REPURCHASES_MAKE_WHOLE_PROCEEDS",
+                        "OTHER_FORECLOSURE_PROCEEDS", "NON_INTEREST_BEARING_UPB", "PRINCIPAL_FORGIVENESS_AMOUNT",
+                        "ORIGINAL_LIST_START_DATE", "ORIGINAL_LIST_PRICE", "CURRENT_LIST_START_DATE",
+                        "CURRENT_LIST_PRICE", "ISSUE_SCOREB", "ISSUE_SCOREC", "CURR_SCOREB",
+                        "CURR_SCOREC", "MI_TYPE", "SERV_IND", "CURRENT_PERIOD_MODIFICATION_LOSS_AMOUNT",
+                        "CUMULATIVE_MODIFICATION_LOSS_AMOUNT", "CURRENT_PERIOD_CREDIT_EVENT_NET_GAIN_OR_LOSS",
+                        "CUMULATIVE_CREDIT_EVENT_NET_GAIN_OR_LOSS", "HOMEREADY_PROGRAM_INDICATOR",
+                        "FORECLOSURE_PRINCIPAL_WRITE_OFF_AMOUNT", "RELOCATION_MORTGAGE_INDICATOR",
+                        "ZERO_BALANCE_CODE_CHANGE_DATE", "LOAN_HOLDBACK_INDICATOR", "LOAN_HOLDBACK_EFFECTIVE_DATE",
+                        "DELINQUENT_ACCRUED_INTEREST", "PROPERTY_INSPECTION_WAIVER_INDICATOR",
+                        "HIGH_BALANCE_LOAN_INDICATOR", "ARM_5_YR_INDICATOR", "ARM_PRODUCT_TYPE",
+                        "MONTHS_UNTIL_FIRST_PAYMENT_RESET", "MONTHS_BETWEEN_SUBSEQUENT_PAYMENT_RESET",
+                        "INTEREST_RATE_CHANGE_DATE", "PAYMENT_CHANGE_DATE", "ARM_INDEX",
+                        "ARM_CAP_STRUCTURE", "INITIAL_INTEREST_RATE_CAP", "PERIODIC_INTEREST_RATE_CAP",
+                        "LIFETIME_INTEREST_RATE_CAP", "MARGIN", "BALLOON_INDICATOR",
+                        "PLAN_NUMBER", "FORBEARANCE_INDICATOR", "HIGH_LOAN_TO_VALUE_HLTV_REFINANCE_OPTION_INDICATOR",
+                        "DEAL_NAME", "RE_PROCS_FLAG", "ADR_TYPE", "ADR_COUNT", "ADR_UPB")
+lppub_column_classes <- c("character", "character", "character", "character", "character", "character",
+                          "character", "numeric", "numeric", "numeric", "numeric",
+                          "numeric", "numeric", "character", "character", "numeric", "numeric",
+                          "numeric", "character", "numeric", "numeric", "character", "numeric",
+                          "numeric", "numeric", "character", "character", "character",
+                          "numeric", "character", "character", "character", "character",
+                          "numeric", "character", "character", "character", "character",
+                          "numeric", "character", "character", "character", "character",
+                          "character", "character", "numeric", "character", "numeric",
+                          "numeric", "numeric", "character", "character", "character",
+                          "numeric", "numeric", "numeric", "numeric", "numeric", "numeric",
+                          "numeric", "numeric", "numeric", "numeric", "numeric", "character",
+                          "numeric", "character", "numeric", "numeric", "numeric", "numeric",
+                          "numeric", "numeric", "character", "numeric", "numeric", "numeric",
+                          "numeric", "character", "numeric", "character", "numeric", "character",
+                          "numeric", "numeric", "character", "character", "numeric", "numeric",
+                          "numeric", "numeric", "numeric", "numeric", "numeric", "numeric",
+                          "numeric", "numeric", "numeric", "numeric", "numeric", "character",
+                          "character", "character", "character", "character",
+						  "character", "numeric", "numeric")
+
+files = list.files(data_folder,glob2rx('2*.1pct'), full.names = TRUE )
+
+#'SELLER',	'SERVICER',	'MASTER_SERVICER','MI_CANCEL_FLAG', 'FIRST_PAY', 'REM_MONTHS', 'ORIG_RATE'
+select_columns = c(
+  'LOAN_ID',	'ACT_PERIOD',	'CHANNEL',	'CURR_RATE',	'ORIG_UPB',	'CURRENT_UPB',	'ORIG_TERM',	'ORIG_DATE',	'LOAN_AGE',	'ADJ_REM_MONTHS',	'OLTV',	'OCLTV',	'NUM_BO',	'DTI',	'CSCORE_B',	'CSCORE_C',	'FIRST_FLAG',	'PURPOSE',	'PROP',	'NO_UNITS',	'OCC_STAT',	'STATE',	'MI_PCT',	'PRODUCT',	'PPMT_FLG',	'IO', 'DLQ_STATUS', 'MOD_FLAG',	'Zero_Bal_Code')
+
+set.seed(129232908)
+### Load new origination
+df = foreach(file_name = files, .combine = rbind) %do% {
+  print(file_name)
+  #temp = fread(file_name, sep = "|", col.names = lppub_column_names, colClasses = lppub_column_classes, nrows = 10)
+  keep_columns = match(select_columns, lppub_column_names)
+  temp = fread(file_name, sep = "|", 
+               col.names = lppub_column_names[keep_columns], 
+               colClasses = lppub_column_classes, 
+               select = keep_columns)
+  temp = temp[PRODUCT == 'FRM' & MOD_FLAG != 'Y' & IO == 'N' & PPMT_FLG == 'N' & ORIG_TERM == 360]
+  temp[, c('PRODUCT', 'MOD_FLAG', 'IO','ORIG_TERM', 'PPMT_FLG'):=NULL]
+  
+  #all_loans = unique(temp$LOAN_ID)
+  #select_loans = sample(all_loans, floor(load_pct*length(all_loans)) )
+  #temp = temp[LOAN_ID %in% select_loans]
+  
+  #gc()
+  return(temp)
+}
+
+df[, date:= to_date(ACT_PERIOD)]
+df[, date_year:= year(date)]
+df[, ACT_PERIOD:=NULL]
+
+df[, orig_date:= to_date(ORIG_DATE)]
+df[, orig_year:= year(orig_date)]
+df[, ORIG_DATE:=NULL]
+
+setkeyv(df, c('LOAN_ID', 'date'))
+
+#Compute prev UPB and delq
+df[, upb := 1e-3*CURRENT_UPB]
+
+#replace UPB with scheduled balance for the first 12 months if it is zero
+df[CURRENT_UPB == 0 & Zero_Bal_Code == '' & LOAN_AGE <=12, upb :=  1e-3*ORIG_UPB * sched_balance(LOAN_AGE, CURR_RATE, 360) ]
+#df[LOAN_ID == '000098915594',.(date, CURRENT_UPB, LOAN_AGE)]
+
+#define PO flag
+df[order(date), Zero_Bal_Code_next := shift(Zero_Bal_Code, -1),  by =.(LOAN_ID)] 
+df[, po_ind := as.numeric(Zero_Bal_Code_next == '01' & DLQ_STATUS == '00')] #next month loan will PO, only prepayment from current are considered 
+
+#df[order(date), LOAN_AGE  := na.locf(LOAN_AGE, na.rm = FALSE),  by =.(LOAN_ID)]
+df[order(date), CURR_RATE := na.locf(CURR_RATE, na.rm = FALSE), by =.(LOAN_ID)] # the rate should be fixed
+
+df[order(date), sbal := pmax(0, upb * (1 + CURR_RATE/1200) - 1e-3*pmt(CURR_RATE, 360) * ORIG_UPB), by =.(LOAN_ID)] #next month sched balance, assume fixed payment 
+df[is.na(sbal), sbal := upb ] #just in case 
+#temp
+
+#saveRDS(df, 'D:/loan_level/fnma_1pct.rds')
+#df <- readRDS('D:/loan_level/fnma_1pct.rds')
+	
+
+#df[po_ind == 1, LOAN_ID]
+#cc(df[LOAN_ID == '999997761057'])
+#df[LOAN_ID == '995828505984', .(date, CURR_RATE, LOAN_AGE,ORIG_UPB, upb, CURRENT_UPB, sbal, po_ind, Zero_Bal_Code, DLQ_STATUS)]
+```
+
+## show data
+
+```{r show_data}
+df_agg = df[,.(.N, upb = sum(upb, na.rm = TRUE), 
+               po = mean(po_ind, na.rm = TRUE), 
+               smm = weighted.mean(po_ind, sbal, na.rm = TRUE )), by=.(date)]
+
+ggplot(df_agg, aes(date, N)) + geom_point()
+ggplot(df_agg, aes(date, upb)) + geom_point()
+ggplot(df_agg, aes(date, upb/N)) + geom_point()
+ggplot(df_agg, aes(date, smm2cpr(po) )) + geom_point() + geom_line() + geom_line(aes(date, smm2cpr(smm) ), color = 'red')
+
+```
+
+##Load MEV
+
+```{r load_mev}
+#load mortgage rate
+df_mtg = fread("W:/FRED/MORTGAGE30US.csv")
+df_mtg[, date:= make_date(year(DATE), month(DATE), 1)]
+df_mtg = df_mtg[, .(rate = mean(MORTGAGE30US, na.rm = TRUE)), by =.(date)] #simple average
+
+
+df_hpi = fread("W:/FRED/CSUSHPINSA.csv")
+df_hpi[, date:= make_date(year(DATE), month(DATE), 1)]
+df_hpi[, hpi := CSUSHPINSA]
+df_hpi[order(date), hpi_1y := shift(hpi, 12)]
+df_hpi[, hpa := 100*(hpi/ hpi_1y - 1)]
+
+df_mev = df_mtg[df_hpi[,.(date, hpi, hpa)], on=.(date)]
+df_mev[order(date), rate_1m := shift(rate, 1)]
+df_mev[order(date), rate_3m48:=frollmean(rate, 3) - frollmean(rate, 48)]
+df_mev[order(date), rate_1m48:=rate               - frollmean(rate, 48)]
+df_mev[order(date), rate_3m60:=frollmean(rate, 3) - frollmean(rate, 60)]
+df_mev[order(date), rate_1m60:=rate               - frollmean(rate, 60)]
+
+setkey(df_mev,'date')
+
+ggplot(df_mev[date>'2000-01-01'], aes(date, rate)) + geom_line()
+ggplot(df_mev[date>'2000-01-01'], aes(date, rate_3m48)) + geom_line()
+ggplot(df_mev[date>'2000-01-01'], aes(date, rate_1m60)) + geom_line()
+ggplot(df_mev[date>'2000-01-01'], aes(date, hpi)) + geom_line()
+ggplot(df_mev[date>'2000-01-01'], aes(date, hpa)) + geom_line()
+
+```
+
+##UWAC
+
+```{r uwac_model}
+df_agg = df[LOAN_AGE == 1,.(.N, upb = sum(upb, na.rm = TRUE), wac = weighted.mean(CURR_RATE, upb, na.rm = TRUE )), by=.(orig_date)]
+ggplot(df_agg, aes(orig_date, wac)) + geom_point() + geom_line() + geom_line(data = df_mev[date>'2009-01-01'], aes(date, rate_1m), color = 'red')
+
+#ccf(df_agg$wac, df_agg$inc, lag.max = 5, plot = FALSE)
+
+df_agg = df[,.(.N, upb = sum(upb, na.rm = TRUE), uwac = weighted.mean(CURR_RATE, upb, na.rm = TRUE )), by=.(date)]
+ggplot(df_agg, aes(date, uwac)) + geom_point() + geom_line() + geom_line(data = df_mev[date>'2009-01-01'], aes(date, rate_1m), color = 'red')
+
+```
+
+## Create variables
+
+```{r create_variables}
+
+df[df_mev, inc       := 100*(CURR_RATE - i.rate   ), on =.(date)]
+df[df_mev, inc_1m    := 100*(CURR_RATE - i.rate_1m), on =.(date)]
+df[df_mev, hpi       := i.hpi, on =.(date)]
+df[df_mev, hpa       := i.hpa, on =.(date)]
+df[df_mev, hpi_orig  := i.hpi, on =.(orig_date = date)]
+
+df[, factor := prev_upb / (1e-3*ORIG_UPB) ]
+df[, CLTV   :=  OLTV * factor * hpi_orig / hpi ]
+df[, season := month(date)]
+
+#cum incentive
+df[order(date), cum_ei  := 0.01*cumsum(pmax(10, inc)), by =.(LOAN_ID)]
+
+df_agg = df[,.(.N, upb = sum(upb, na.rm = TRUE), po = mean(po_ind, na.rm = TRUE), 
+               smm = weighted.mean(po_ind, sbal, na.rm = TRUE ),
+               inc = weighted.mean(inc, sbal)), by=.(date)]
+
+#ccf(df_agg$smm, df_agg$inc, lag.max = 4)
+ccf(df_agg$smm, df_agg$inc, lag.max = 5, plot = FALSE)
+
+#ggplot(df_agg, aes(smm, inc)) + geom_point()
+ggplot(df_agg, aes(date, N)) + geom_point()
+ggplot(df_agg, aes(date, upb)) + geom_point()
+ggplot(df_agg, aes(date, upb/N)) + geom_point()
+ggplot(df_agg, aes(date, inc)) + geom_point() + geom_line() 
+ggplot(df_agg, aes(date, po)) + geom_point() + geom_line() + geom_line(aes(date, smm), color = 'red')
+
+df_agg = df[,.(.N, upb = sum(upb, na.rm = TRUE), po = mean(po_ind), 
+               smm = weighted.mean(po_ind, sbal, na.rm = TRUE )), by=.(LOAN_AGE)]
+
+ggplot(df_agg, aes(LOAN_AGE, upb/N)) + geom_point()
+ggplot(df_agg[N>100], aes(LOAN_AGE, po)) + geom_point() + geom_line() + geom_line(aes(LOAN_AGE, smm), color = 'red')
+
+plot_profile(df$po_ind, df$po_ind, df$date)
+plot_profile(df$po_ind, df$po_ind, df$inc)
+plot_profile(df$po_ind, df$po_ind, df$cum_ei)
+```
+
+
+## ML Model
+
+```{r ml_model}
+## ----------------------------------------------
+library(lightgbm)
+
+set.seed(1321)
+
+t_index_v = sample.int(nrow(df), 5e5)
+v_index_v = sample.int(nrow(df), 5e5) %!in_set% t_index_v
+
+obj_var = 'po_ind'
+lgb_vars = c('inc', 'LOAN_AGE', 'season', 'prev_upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL', 'DTI', 'CSCORE_B') %!in_set% c('id') #best performance
+
+my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
+
+### - logistic regression for loss > 0 -----------
+dfs = df[t_index_v, c(obj_var,lgb_vars), with = FALSE]
+
+dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
+
+dtest  <- lgb.Dataset.create.valid(dtrain, data.matrix(df[v_index_v, lgb_vars , with = FALSE]), label = df$po_ind[v_index_v])
+
+params_bin <- list(objective = "binary")
+
+model.lgb = lgb.train(params = params_bin, data = dtrain, learning_rate = 0.01,
+                      valids = list(test = dtest),
+                      num_threads = 4, nrounds = 1000,
+                      eval_freq = 20, boost_from_average = TRUE, verbose = 1)
+
+model.lgb$best_iter
+cv_error = as.numeric(model.lgb$record_evals$test$binary_logloss$eval)
+ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line()
+
+lgb_importance = lgb.importance(model.lgb, percentage = TRUE)
+ggplot(lgb_importance[Gain > 0.001], aes(fct_reorder(Feature,Gain), Gain)) + geom_bar(stat = 'identity') + coord_flip()
+ 
+df[, po_pred := predict(model.lgb, data.matrix(df[,lgb_vars, with = F]))]
+
+plot_profile(df$po_pred, df$po_ind, df$date)
+plot_profile(df$po_pred, df$po_ind, df$LOAN_AGE)
+plot_profile(df$po_pred, df$po_ind, df$inc_1m)
+plot_profile(df$po_pred, df$po_ind, df$DTI)
+plot_profile(df$po_pred, df$po_ind, df$prev_upb)
+plot_profile(df$po_pred, df$po_ind, df$CHANNEL)
+plot_profile(df$po_pred, df$po_ind, df$season)
+plot_profile(df$po_pred, df$po_ind, df$cum_ei, bucket_count = 12)
+plot_profile(df$po_pred, df$po_ind, df$inc_2m, bucket_count = 50)
+
+#all profiles
+plots = llply(names(df) %!in_set% c('LOAN_ID', 'ACT_PERIOD', 'CURRENT_UPB', 'ORIG_DATE', 'Zero_Bal_Code'), function(var_name) { #lgb_vars
+  print(var_name)
+    p = plot_profile(df$po_pred,  df$po_ind, df[[var_name]], bucket_count = 10, error_band = 'binom') +
+      ggtitle(var_name) +  theme(title =element_text(size=8))
+    return( ggplotGrob(p) )
+  })
+marrangeGrob(plots, nrow = 6, ncol = 6, top = NULL)
+
+```
+
+```{r burnout_parameters}
+library(earth)
+
+df[, po_offset := logit(po_pred)]
+index = sample.int(nrow(df), 1e6)
+
+#Simple cum incentive
+# 10bp is the best threshold  -----------------
+res = ldply(seq(0, 20), function(x){
+  
+df[order(date), cum_ei  := 0.01*cumsum(pmax(x, inc_1m)), by =.(LOAN_ID)]
+gam.model = gam(po_ind ~ s(cum_ei) , data = df[index,.(po_ind, cum_ei)], binomial(link = "logit"), offset = logit(df$po_pred[index]))
+#plot(gam.model)
+sum.model = summary(gam.model)
+data.frame(x, deviance = sum.model$deviance, null.deviance = sum.model$null.deviance)
+#data.frame(x, deviance = summary(glm.model)$deviance)
+})
+
+ggplot(res, aes(x, deviance/null.deviance)) + geom_line()
+
+#Burnout S-Curve
+# 10bp is the best threshold  -----------------
+burn_params = expand.grid(shift = seq(0, 100, by = 5), width = seq(10, 100, by = 5))
+res = ldply(seq(nrow(burn_params)), function(i){
+  
+  df[order(date), cum_eim  := cumsum(logistic( (inc_1m - burn_params$shift[i])/burn_params$width[i] )), by =.(LOAN_ID)]
+  gam.model = gam(po_ind ~ s(cum_eim) , data = df[index,.(po_ind, cum_eim)], binomial(link = "logit"), offset = logit(df$po_pred[index]))
+  #plot(gam.model)
+  sum.model = summary(gam.model)
+  data.frame(deviance = sum.model$deviance, null.deviance = sum.model$null.deviance, shift = burn_params$shift[i], width = burn_params$width[i])
+  #data.frame(x, deviance = summary(glm.model)$deviance)
+})
+setDT(res)
+res[order(deviance)]
+ggplot(res[deviance<null.deviance & width > 10], aes(shift, width, fill = 1-deviance/null.deviance, label = sprintf("%.1f", null.deviance - deviance) )) + 
+  geom_tile() + geom_text() +  scale_fill_custom('mixed', discrete = FALSE)
+
+ggplot(df[LOAN_ID == '000097473153'], aes(date, cum_eim)) + geom_line()
+ggplot(df[LOAN_ID == '000097473153'], aes(date, inc_1m)) + geom_line()
+```
+
+

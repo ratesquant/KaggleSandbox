@@ -88,14 +88,17 @@ lppub_column_classes <- c("character", "character", "character", "character", "c
 
 
 files = list.files(data_folder,glob2rx('2016*.bz2'), full.names = TRUE )
-drop_columns = c('PMT_HISTORY','SELLER','SERVICER', 'PRODUCT')
+select_columns = c(
+  'LOAN_ID',	'ACT_PERIOD',	'CHANNEL',	'SELLER',	'SERVICER',	'MASTER_SERVICER',	'ORIG_RATE',	'CURR_RATE',	'ORIG_UPB',	'ISSUANCE_UPB',	'CURRENT_UPB',	'ORIG_TERM',	'ORIG_DATE',	'FIRST_PAY',	'LOAN_AGE',	'REM_MONTHS',	'ADJ_REM_MONTHS',	'MATR_DT',	'OLTV',	'OCLTV',	'NUM_BO',	'DTI',	'CSCORE_B',	'CSCORE_C',	'FIRST_FLAG',	'PURPOSE',	'PROP',	'NO_UNITS',	'OCC_STAT',	'STATE',	'MSA',	'MI_PCT',	'PRODUCT',	'PPMT_FLG',	'IO', 'DLQ_STATUS', 'MOD_FLAG',	'MI_CANCEL_FLAG',	'Zero_Bal_Code',	'ZB_DTE',	'LAST_UPB', 'SERV_IND
+')
+
 
 ### Load new origination
-df = foreach(file_name = files, .combine = rbind) %do% {
+df = foreach(file_name = files[1], .combine = rbind) %do% {
   print(file_name)
-  temp = fread(file_name, sep = "|", col.names = lppub_column_names, colClasses = lppub_column_classes)
-  temp[, c(drop_columns):=NULL]
-  gc()
+  temp = fread(file_name, sep = "|", col.names = lppub_column_names, colClasses = lppub_column_classes, select = select_columns)
+  #temp[, c(drop_columns):=NULL]
+  #gc()
   return(temp)
 }
 
@@ -106,18 +109,21 @@ df[, orig_date:= as.Date(stri_join('01',ORIG_DATE), format = '%d%m%Y')]
 df[, orig_year:= year(orig_date)]
 
 df[, balance := pmax(ORIG_UPB, CURRENT_UPB, na.rm = TRUE)]
-df[LOAN_ID == '000098915594',.(date, CURRENT_UPB, LOAN_AGE)]
-df[,duplicated:=duplicated(LOAN_ID)]
+#df[LOAN_ID == '000098915594',.(date, CURRENT_UPB, LOAN_AGE)]
+#df[,duplicated:=duplicated(LOAN_ID)]
+df[, po_ind := as.numeric(Zero_Bal_Code == '01')]
 #temp
 ```
 
 ## show data
 
 ```{r load_data}
-df_agg = df[,.(.N, bal = sum(CURRENT_UPB, na.rm = TRUE)), by=.(date)]
+df_agg = df[,.(.N, bal = sum(CURRENT_UPB, na.rm = TRUE), po = mean(po_ind)), by=.(date)]
 
 ggplot(df_agg, aes(date, N)) + geom_point()
+ggplot(df_agg, aes(date, po)) + geom_point() + geom_line()
 
-df[ORIG_DATE == '062018']
 ```
+
+
 

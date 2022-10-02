@@ -43,6 +43,24 @@ sched_balance <-function(age, wac, term){
   r = wac / 1200.0
   return (  (1 - (1+r)^(pmax(0, age)-term)) / (1.0 - (1.0 + r)^(-term) ))
 }
+
+uwac_model <- function(rate, logistic = FALSE){
+  uwac = rate
+  
+  if(logistic){
+    for(i in 2:length(uwac)){
+      dr = rate[i-1] - uwac[i-1]
+      uwac[i] = uwac[i-1]  -0.06 + (0.01+0.06) * logistic((dr+0.7)/0.2)
+    }
+  }else{
+    for(i in 2:length(uwac)){
+      dr = rate[i-1] - uwac[i-1]
+      uwac[i] = uwac[i-1] + dr * ifelse(dr > 0, 0.02, 0.04)
+    }
+  }
+  return(uwac)
+}
+
 #test_df = data.table(i = seq(0, 360))
 #test_df[, pay := pmt(6.0, 360-i)]
 #test_df[, n_sb := next_sched_balance(6.0, 360-i)]
@@ -63,7 +81,7 @@ to_date2<-function(date_string){
  ns = stri_length(date_string)
  make_date(as.numeric(stri_sub(date_string, ns-3)), as.numeric(stri_sub(date_string, to = ns-4)), 1)
 }
-to_date(c('52003','122003'))
+#to_date(c('52003','122003'))
 #to_date2(c('52003','122003'))
 #library(microbenchmark)
 #microbenchmark(to_date(c('52003','122003')), to_date2(c('52003','122003')))
@@ -122,13 +140,12 @@ lppub_column_classes <- c("character", "character", "character", "character", "c
                           "character", "character", "character", "character",
 						  "character", "numeric", "numeric")
 
-files = list.files(data_folder,glob2rx('2*.1pct'), full.names = TRUE )
+files = list.files(file.path(data_folder,'/1pct'),glob2rx('*.1pct'), full.names = TRUE )
 
 #'SELLER',	'SERVICER',	'MASTER_SERVICER','MI_CANCEL_FLAG', 'FIRST_PAY', 'REM_MONTHS', 'ORIG_RATE'
 select_columns = c(
   'LOAN_ID',	'ACT_PERIOD',	'CHANNEL',	'CURR_RATE',	'ORIG_UPB',	'CURRENT_UPB',	'ORIG_TERM',	'ORIG_DATE',	'LOAN_AGE',	'ADJ_REM_MONTHS',	'OLTV',	'OCLTV',	'NUM_BO',	'DTI',	'CSCORE_B',	'CSCORE_C',	'FIRST_FLAG',	'PURPOSE',	'PROP',	'NO_UNITS',	'OCC_STAT',	'STATE',	'MI_PCT',	'PRODUCT',	'PPMT_FLG',	'IO', 'DLQ_STATUS', 'MOD_FLAG',	'Zero_Bal_Code')
 
-set.seed(129232908)
 ### Load new origination
 df = foreach(file_name = files, .combine = rbind) %do% {
   print(file_name)
@@ -157,47 +174,59 @@ df[, orig_date:= to_date(ORIG_DATE)]
 df[, orig_year:= year(orig_date)]
 df[, ORIG_DATE:=NULL]
 
+df = df[orig_year>=2010]
+
 setkeyv(df, c('LOAN_ID', 'date'))
 
 #Compute prev UPB and delq
 df[, upb := 1e-3*CURRENT_UPB]
 
 #replace UPB with scheduled balance for the first 12 months if it is zero
-df[CURRENT_UPB == 0 & Zero_Bal_Code == '' & LOAN_AGE <=12, upb :=  1e-3*ORIG_UPB * sched_balance(LOAN_AGE, CURR_RATE, 360) ]
+df[CURRENT_UPB == 0 & Zero_Bal_Code == '' & LOAN_AGE <=24, upb :=  1e-3*ORIG_UPB * sched_balance(LOAN_AGE, CURR_RATE, 360) ]
 #df[LOAN_ID == '000098915594',.(date, CURRENT_UPB, LOAN_AGE)]
 
 #define PO flag
 df[order(date), Zero_Bal_Code_next := shift(Zero_Bal_Code, -1),  by =.(LOAN_ID)] 
-df[, po_ind := as.numeric(Zero_Bal_Code_next == '01' & DLQ_STATUS == '00')] #next month loan will PO, only prepayment from current are considered 
+df[, po_ind := as.numeric(Zero_Bal_Code_next == '01') *  as.numeric(DLQ_STATUS == '00')] #next month loan will PO, only prepayment from current are considered 
 
 #df[order(date), LOAN_AGE  := na.locf(LOAN_AGE, na.rm = FALSE),  by =.(LOAN_ID)]
 df[order(date), CURR_RATE := na.locf(CURR_RATE, na.rm = FALSE), by =.(LOAN_ID)] # the rate should be fixed
 
 df[order(date), sbal := pmax(0, upb * (1 + CURR_RATE/1200) - 1e-3*pmt(CURR_RATE, 360) * ORIG_UPB), by =.(LOAN_ID)] #next month sched balance, assume fixed payment 
 df[is.na(sbal), sbal := upb ] #just in case 
+#df[order(date), unsched_princ := shift(sbal) - upb, by=.(LOAN_ID) ]
+#df[order(date), smm := unsched_princ/shift(sbal), by=.(LOAN_ID) ]
 #temp
 
 #saveRDS(df, 'D:/loan_level/fnma_1pct.rds')
 #df <- readRDS('D:/loan_level/fnma_1pct.rds')
 	
 
-#df[po_ind == 1, LOAN_ID]
+#df[Zero_Bal_Code_next == '01' & date == '2005-01-01', LOAN_ID]
 #cc(df[LOAN_ID == '999997761057'])
-#df[LOAN_ID == '995828505984', .(date, CURR_RATE, LOAN_AGE,ORIG_UPB, upb, CURRENT_UPB, sbal, po_ind, Zero_Bal_Code, DLQ_STATUS)]
+#df[LOAN_ID == '128633619415', .(date, CURR_RATE, LOAN_AGE,ORIG_UPB, upb, CURRENT_UPB, sbal,unsched_princ, smm, po_ind, Zero_Bal_Code, DLQ_STATUS)]
+df = df[!is.na(po_ind)] #remove last date 
 ```
 
 ## show data
 
 ```{r show_data}
+
+df_agg = df[,.(.N), by =.(date, Zero_Bal_Code_next)]
+ggplot(df_agg, aes(date, N)) + geom_point() + facet_wrap(~Zero_Bal_Code_next, scales = 'free')
+
 df_agg = df[,.(.N, upb = sum(upb, na.rm = TRUE), 
-               po = mean(po_ind, na.rm = TRUE), 
-               smm = weighted.mean(po_ind, sbal, na.rm = TRUE )), by=.(date)]
+               po = mean(po_ind,na.rm = TRUE), 
+               smm = weighted.mean(po_ind, sbal, na.rm = TRUE)), by=.(date)]
 
 ggplot(df_agg, aes(date, N)) + geom_point()
 ggplot(df_agg, aes(date, upb)) + geom_point()
-ggplot(df_agg, aes(date, upb/N)) + geom_point()
+ggplot(df_agg, aes(date, upb/N)) + geom_point() + geom_line()
 ggplot(df_agg, aes(date, smm2cpr(po) )) + geom_point() + geom_line() + geom_line(aes(date, smm2cpr(smm) ), color = 'red')
+ggplot(df_agg, aes(date,  smm2cpr(smm)  )) + geom_point() + geom_line()
 
+df_agg = df[,.(.N, upb = sum(upb, na.rm = TRUE)), by=.(date, orig_year)]
+ggplot(df_agg, aes(date, upb, group = orig_year)) + geom_line()
 ```
 
 ##Load MEV
@@ -215,15 +244,25 @@ df_hpi[, hpi := CSUSHPINSA]
 df_hpi[order(date), hpi_1y := shift(hpi, 12)]
 df_hpi[, hpa := 100*(hpi/ hpi_1y - 1)]
 
+df_uer = fread("W:/FRED/UNRATE.csv")
+df_uer[, date:= make_date(year(DATE), month(DATE), 1)]
+df_uer[, uer := UNRATE]
+
+
 df_mev = df_mtg[df_hpi[,.(date, hpi, hpa)], on=.(date)]
+df_mev = df_mev[df_uer[,.(date, uer)], on=.(date)]
+df_mev = df_mev[!is.na(rate)]
 df_mev[order(date), rate_1m := shift(rate, 1)]
 df_mev[order(date), rate_3m48:=frollmean(rate, 3) - frollmean(rate, 48)]
 df_mev[order(date), rate_1m48:=rate               - frollmean(rate, 48)]
 df_mev[order(date), rate_3m60:=frollmean(rate, 3) - frollmean(rate, 60)]
 df_mev[order(date), rate_1m60:=rate               - frollmean(rate, 60)]
+df_mev[order(date), uer_1m60 :=uer                - frollmean(uer,  60)]
+df_mev[order(date), uer_1y :=uer - shift(uer, 12)]
 
 setkey(df_mev,'date')
 
+# ----------------------------------------
 ggplot(df_mev[date>'2000-01-01'], aes(date, rate)) + geom_line()
 ggplot(df_mev[date>'2000-01-01'], aes(date, rate_3m48)) + geom_line()
 ggplot(df_mev[date>'2000-01-01'], aes(date, rate_1m60)) + geom_line()
@@ -241,7 +280,23 @@ ggplot(df_agg, aes(orig_date, wac)) + geom_point() + geom_line() + geom_line(dat
 #ccf(df_agg$wac, df_agg$inc, lag.max = 5, plot = FALSE)
 
 df_agg = df[,.(.N, upb = sum(upb, na.rm = TRUE), uwac = weighted.mean(CURR_RATE, upb, na.rm = TRUE )), by=.(date)]
-ggplot(df_agg, aes(date, uwac)) + geom_point() + geom_line() + geom_line(data = df_mev[date>'2009-01-01'], aes(date, rate_1m), color = 'red')
+df_mev[df_agg, uwac:=i.uwac, on =.(date)]
+df_mev[order(date), uwac_delta := shift(uwac, -1) - uwac]
+
+ggplot(df_mev[date>'2010-01-01'], aes(date, uwac)) + geom_point() + geom_line() + geom_line(aes(date, rate), color = 'red')
+ggplot(df_mev[date>'2010-01-01'], aes(rate - uwac, uwac_delta)) + geom_point() + geom_smooth(span = 0.9, se = FALSE, method = 'loess')
+
+df_media = df_mev[date>'2010-01-01', .(date, media_ei_lin = rate - uwac_model(rate), media_ei_log = rate - uwac_model(rate, logistic = TRUE), rate_1m48, rate_1m60) ]
+
+df_media = melt(df_media, id.vars = 'date')
+ggplot(df_media, aes(date, value, group = variable, color = variable)) +geom_line() + scale_color_custom('mixed')
+
+#lm(uwac_delta ~ I(rate - uwac), df_mev[date>'2010-01-01' & rate - uwac < 0])
+
+df_mev[order(date), media_ei_lin := rate - uwac_model(rate, logistic = FALSE) ]
+df_mev[order(date), media_ei_log := rate - uwac_model(rate, logistic = TRUE) ]
+
+ggplot(df_mev) + geom_line(aes(date, media_ei_log)) + geom_line(aes(date, media_ei_lin))
 
 ```
 
@@ -249,31 +304,50 @@ ggplot(df_agg, aes(date, uwac)) + geom_point() + geom_line() + geom_line(data = 
 
 ```{r create_variables}
 
-df[df_mev, inc       := 100*(CURR_RATE - i.rate   ), on =.(date)]
-df[df_mev, inc_1m    := 100*(CURR_RATE - i.rate_1m), on =.(date)]
+df_mev[order(date), media_ei_lin := rate - uwac_model(rate, logistic = FALSE) ]
+df_mev[order(date), media_ei_log := rate - uwac_model(rate, logistic = TRUE) ]
+
+df[df_mev, ei       := 100*(CURR_RATE - i.rate   ), on =.(date)]
+df[df_mev, ei_1m    := 100*(CURR_RATE - i.rate_1m), on =.(date)]
 df[df_mev, hpi       := i.hpi, on =.(date)]
 df[df_mev, hpa       := i.hpa, on =.(date)]
 df[df_mev, hpi_orig  := i.hpi, on =.(orig_date = date)]
+df[df_mev, sato   :=  100*(CURR_RATE - i.rate), on =.(orig_date = date)]
 
-df[, factor := prev_upb / (1e-3*ORIG_UPB) ]
+
+df[df_mev, media_ei_log   := i.media_ei_log, on =.(date)]
+df[df_mev, media_ei_lin   := i.media_ei_lin, on =.(date)]
+df[df_mev, rate_1m48  := i.rate_1m48, on =.(date)]
+df[df_mev, rate_3m48  := i.rate_3m48, on =.(date)]
+df[df_mev, rate_1m60  := i.rate_1m60, on =.(date)]
+df[df_mev, rate_3m60  := i.rate_3m60, on =.(date)]
+
+df[df_mev, uer       := i.uer,      on =.(date)]
+df[df_mev, uer_1m60  := i.uer_1m60, on =.(date)]
+df[df_mev, uer_1y    := i.uer_1y,   on =.(date)]
+
+
+df[, factor := upb / (1e-3*ORIG_UPB) ]
 df[, CLTV   :=  OLTV * factor * hpi_orig / hpi ]
 df[, season := month(date)]
 
 #cum incentive
-df[order(date), cum_ei  := 0.01*cumsum(pmax(10, inc)), by =.(LOAN_ID)]
+df[order(date), cum_ei   := 0.01*cumsum(pmax(10, ei)), by =.(LOAN_ID)]
+df[order(date), cum_eim  := cumsum(logistic( (ei - 100)/20 )), by =.(LOAN_ID)]
+
 
 df_agg = df[,.(.N, upb = sum(upb, na.rm = TRUE), po = mean(po_ind, na.rm = TRUE), 
                smm = weighted.mean(po_ind, sbal, na.rm = TRUE ),
-               inc = weighted.mean(inc, sbal)), by=.(date)]
+               ei = weighted.mean(ei, sbal)), by=.(date)]
 
 #ccf(df_agg$smm, df_agg$inc, lag.max = 4)
-ccf(df_agg$smm, df_agg$inc, lag.max = 5, plot = FALSE)
+ccf(df_agg$smm, df_agg$ei, lag.max = 5, plot = FALSE)
 
 #ggplot(df_agg, aes(smm, inc)) + geom_point()
 ggplot(df_agg, aes(date, N)) + geom_point()
 ggplot(df_agg, aes(date, upb)) + geom_point()
 ggplot(df_agg, aes(date, upb/N)) + geom_point()
-ggplot(df_agg, aes(date, inc)) + geom_point() + geom_line() 
+ggplot(df_agg, aes(date, ei)) + geom_point() + geom_line() 
 ggplot(df_agg, aes(date, po)) + geom_point() + geom_line() + geom_line(aes(date, smm), color = 'red')
 
 df_agg = df[,.(.N, upb = sum(upb, na.rm = TRUE), po = mean(po_ind), 
@@ -283,8 +357,9 @@ ggplot(df_agg, aes(LOAN_AGE, upb/N)) + geom_point()
 ggplot(df_agg[N>100], aes(LOAN_AGE, po)) + geom_point() + geom_line() + geom_line(aes(LOAN_AGE, smm), color = 'red')
 
 plot_profile(df$po_ind, df$po_ind, df$date)
-plot_profile(df$po_ind, df$po_ind, df$inc)
+plot_profile(df$po_ind, df$po_ind, df$ei)
 plot_profile(df$po_ind, df$po_ind, df$cum_ei)
+plot_profile(df$po_ind, df$po_ind, df$cum_eim)
 ```
 
 
@@ -300,7 +375,9 @@ t_index_v = sample.int(nrow(df), 5e5)
 v_index_v = sample.int(nrow(df), 5e5) %!in_set% t_index_v
 
 obj_var = 'po_ind'
-lgb_vars = c('inc', 'LOAN_AGE', 'season', 'prev_upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL', 'DTI', 'CSCORE_B') %!in_set% c('id') #best performance
+media_vars = c('media_ei_lin', 'media_ei_log', 'rate_1m48', 'rate_1m60', 'rate_3m48', 'rate_3m60')
+burnout_vars = c('cum_ei', 'cum_eim', 'factor') #'cum_ei', 'factor'
+lgb_vars = c('ei', 'LOAN_AGE', 'season', 'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL', 'DTI', 'CSCORE_B', 'CLTV', 'rate_1m48', 'sato') %!in_set% c('id') #best performance
 
 my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
 
@@ -308,7 +385,6 @@ my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.fa
 dfs = df[t_index_v, c(obj_var,lgb_vars), with = FALSE]
 
 dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
-
 dtest  <- lgb.Dataset.create.valid(dtrain, data.matrix(df[v_index_v, lgb_vars , with = FALSE]), label = df$po_ind[v_index_v])
 
 params_bin <- list(objective = "binary")
@@ -316,7 +392,7 @@ params_bin <- list(objective = "binary")
 model.lgb = lgb.train(params = params_bin, data = dtrain, learning_rate = 0.01,
                       valids = list(test = dtest),
                       num_threads = 4, nrounds = 1000,
-                      eval_freq = 20, boost_from_average = TRUE, verbose = 1)
+                      eval_freq = 50, boost_from_average = TRUE, verbose = 1)
 
 model.lgb$best_iter
 cv_error = as.numeric(model.lgb$record_evals$test$binary_logloss$eval)
@@ -329,64 +405,139 @@ df[, po_pred := predict(model.lgb, data.matrix(df[,lgb_vars, with = F]))]
 
 plot_profile(df$po_pred, df$po_ind, df$date)
 plot_profile(df$po_pred, df$po_ind, df$LOAN_AGE)
-plot_profile(df$po_pred, df$po_ind, df$inc_1m)
+plot_profile(df$po_pred, df$po_ind, df$ei_1m)
+plot_profile(df$po_pred, df$po_ind, df$CLTV)
 plot_profile(df$po_pred, df$po_ind, df$DTI)
 plot_profile(df$po_pred, df$po_ind, df$prev_upb)
 plot_profile(df$po_pred, df$po_ind, df$CHANNEL)
 plot_profile(df$po_pred, df$po_ind, df$season)
-plot_profile(df$po_pred, df$po_ind, df$cum_ei, bucket_count = 12)
-plot_profile(df$po_pred, df$po_ind, df$inc_2m, bucket_count = 50)
+plot_profile(df$po_pred, df$po_ind, df$cum_ei)
+plot_profile(df$po_pred, df$po_ind, df$cum_eim)
+plot_profile(df$po_pred, df$po_ind, df$ei_2m, bucket_count = 50)
+plot_profile(df$po_pred, df$po_ind, df$media_ei_lin)
+plot_profile(df$po_pred, df$po_ind, df$rate_1m48)
+plot_profile(df$po_pred, df$po_ind, df$sato)
 
 #all profiles
-plots = llply(names(df) %!in_set% c('LOAN_ID', 'ACT_PERIOD', 'CURRENT_UPB', 'ORIG_DATE', 'Zero_Bal_Code'), function(var_name) { #lgb_vars
+plots = llply(names(df) %!in_set% c('LOAN_ID', 'CURRENT_UPB', 'Zero_Bal_Code', 'smm', 'Zero_Bal_Code_next'), function(var_name) { #lgb_vars
   print(var_name)
     p = plot_profile(df$po_pred,  df$po_ind, df[[var_name]], bucket_count = 10, error_band = 'binom') +
       ggtitle(var_name) +  theme(title =element_text(size=8))
     return( ggplotGrob(p) )
   })
-marrangeGrob(plots, nrow = 6, ncol = 6, top = NULL)
+marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
+
+plots = llply(c('date','cum_eim', 'cum_ei', 'media_ei_log', 'media_ei_lin', 'rate_1m48', 'rate_3m48', 'rate_1m60', 'rate_3m60', 'uer', 'hpa', 'uer_1m60'), function(var_name) { #lgb_vars
+  print(var_name)
+    p = plot_profile(df$po_pred,  df$po_ind, df[[var_name]], bucket_count = 10, error_band = 'binom') +
+      ggtitle(var_name) +  theme(title =element_text(size=8))
+    return( ggplotGrob(p) )
+  })
+marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
 
 ```
 
+#Burnout optimization
 ```{r burnout_parameters}
-library(earth)
+library(gam)
 
-df[, po_offset := logit(po_pred)]
-index = sample.int(nrow(df), 1e6)
+index   = sample.int(nrow(df), 5e5)
+index_v = sample.int(nrow(df), 5e5) %!in_set% index
+
+#Simple cum incentive with LGB
+# 10bp is the best threshold  -----------------
+res = ldply(seq(0, 50, by = 1), function(x){
+  df[order(date), cum_ei_test  := 0.01*cumsum(pmax(x, ei)), by =.(LOAN_ID)]
+  
+  dtrain.t <- lgb.Dataset(                     data.matrix(df[index,   .(ei, cum_ei_test)]), label = df$po_ind[index],    init_score = logit(df$po_pred[index]))
+  dtest.t  <- lgb.Dataset.create.valid(dtrain, data.matrix(df[index_v, .(ei, cum_ei_test)]), label = df$po_ind[index_v],  init_score = logit(df$po_pred[index_v]))
+
+  model.lgb.test = lgb.train(params = list(objective = "binary"), data = dtrain.t, learning_rate = 0.01,
+                        valids = list(test = dtest.t),
+                        num_threads = 4, nrounds = 1000,  eval_freq = 50, early_stopping_rounds = 100, boost_from_average = TRUE)
+  
+  cv_error = as.numeric(model.lgb.test$record_evals$test$binary_logloss$eval)
+  #ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line()
+  
+  #po_pred.test = logistic(predict(model.lgb.test, data.matrix(df[,.(ei, cum_ei_test)]), rawscore=TRUE) +  logit(df$po_pred))
+  #plot_profile(po_pred.test, df$po_ind, df$cum_ei_test)
+  #plot_profile(df$po_pred, df$po_ind, df$cum_ei_test)
+  
+  data.frame(x, it = model.lgb.test$best_iter, error = cv_error[model.lgb.test$best_iter], max_error = max(cv_error), min_error = min(cv_error) )
+  #data.frame(x, deviance = summary(glm.model)$deviance)
+})
+setDT(res)
+res[error == min(error)]
+ggplot(res, aes(x, error)) + geom_line() + geom_point() + geom_vline(xintercept = res[error == min(error), x], linetype = 'dashed')
+
+#Burnout S-Curve  -----------------
+burn_params = expand.grid(shift = seq(10, 100, by = 10), width = seq(4, 16, by = 2))
+res = ldply(seq(nrow(burn_params)), function(i){
+  
+  df[order(date), cum_eim_test  := cumsum(logistic( (ei - burn_params$shift[i])/burn_params$width[i] )), by =.(LOAN_ID)]
+  
+  dtrain.t <- lgb.Dataset(                       data.matrix(df[index,   c(lgb_vars, 'cum_eim_test'), with = FALSE]), label = df$po_ind[index],    init_score = logit(df$po_pred[index]))
+  dtest.t  <- lgb.Dataset.create.valid(dtrain.t, data.matrix(df[index_v, c(lgb_vars, 'cum_eim_test'), with = FALSE]), label = df$po_ind[index_v],  init_score = logit(df$po_pred[index_v]))
+
+  model.lgb.test = lgb.train(params = list(objective = "binary"), data = dtrain.t, learning_rate = 0.01,
+                        valids = list(test = dtest.t),
+                        num_threads = 4, nrounds = 1000,  eval_freq = 50, early_stopping_rounds = 100, boost_from_average = TRUE)
+  
+  cv_error = as.numeric(model.lgb.test$record_evals$test$binary_logloss$eval)
+  #ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line()
+  
+  #po_pred.test = logistic(predict(model.lgb.test, data.matrix(df[,.(ei, cum_ei_test)]), rawscore=TRUE) +  logit(df$po_pred))
+  #plot_profile(po_pred.test, df$po_ind, df$cum_ei_test)
+  #plot_profile(df$po_pred, df$po_ind, df$cum_ei_test)
+  
+  data.frame(x, it = model.lgb.test$best_iter, error = cv_error[model.lgb.test$best_iter], max_error = max(cv_error), min_error = min(cv_error), shift = burn_params$shift[i], width = burn_params$width[i] )
+})
+setDT(res)
+res[error == min(error)]
+ggplot(res, aes(shift, width, fill = error, label = sprintf("%.4f", error) )) + geom_tile() + geom_text() +  scale_fill_custom('mixed', discrete = FALSE)
+
+
+
+
+
 
 #Simple cum incentive
 # 10bp is the best threshold  -----------------
-res = ldply(seq(0, 20), function(x){
-  
-df[order(date), cum_ei  := 0.01*cumsum(pmax(x, inc_1m)), by =.(LOAN_ID)]
-gam.model = gam(po_ind ~ s(cum_ei) , data = df[index,.(po_ind, cum_ei)], binomial(link = "logit"), offset = logit(df$po_pred[index]))
-#plot(gam.model)
-sum.model = summary(gam.model)
-data.frame(x, deviance = sum.model$deviance, null.deviance = sum.model$null.deviance)
-#data.frame(x, deviance = summary(glm.model)$deviance)
+res = ldply(seq(0, 20, by = 2), function(x){
+  print(x)
+  df[order(date), cum_ei  := 0.01*cumsum(pmax(x, ei)), by =.(LOAN_ID)]
+  gam.model = gam(po_ind ~ s(cum_ei) , data = df[index,.(po_ind, cum_ei)], binomial(link = "logit"), offset = logit(df$po_pred[index]), weights =df$sbal[index]/sum(df$sbal[index]) )
+  #gam.model = gam(po_ind ~ lo(cum_ei, ei) , data = df[index,.(po_ind, cum_ei, ei)], binomial(link = "logit"), offset = logit(df$po_pred[index]), weights =df$sbal[index]/sum(df$sbal[index]) )
+  #plot(gam.model)
+  sum.model = summary(gam.model)
+  data.frame(x, deviance = sum.model$deviance, null.deviance = sum.model$null.deviance)
+  #data.frame(x, deviance = summary(glm.model)$deviance)
 })
-
-ggplot(res, aes(x, deviance/null.deviance)) + geom_line()
+setDT(res)
+res[deviance == min(deviance)]
+ggplot(res, aes(x, deviance/null.deviance)) + geom_line() + geom_vline(xintercept = res[deviance == min(deviance), x], linetype = 'dashed')
 
 #Burnout S-Curve
 # 10bp is the best threshold  -----------------
-burn_params = expand.grid(shift = seq(0, 100, by = 5), width = seq(10, 100, by = 5))
+burn_params = expand.grid(shift = seq(100, 100, by = 10), width = seq(4, 16, by = 2))
 res = ldply(seq(nrow(burn_params)), function(i){
   
-  df[order(date), cum_eim  := cumsum(logistic( (inc_1m - burn_params$shift[i])/burn_params$width[i] )), by =.(LOAN_ID)]
-  gam.model = gam(po_ind ~ s(cum_eim) , data = df[index,.(po_ind, cum_eim)], binomial(link = "logit"), offset = logit(df$po_pred[index]))
+  df[order(date), cum_eim  := cumsum(logistic( (ei - burn_params$shift[i])/burn_params$width[i] )), by =.(LOAN_ID)]
+   gam.model = gam(po_ind ~ s(cum_eim) , data = df[index,.(po_ind, cum_eim)], binomial(link = "logit"), offset = logit(df$po_pred[index]))
+  #gam.model = gam(po_ind ~ s(cum_eim) , data = df[index,.(po_ind, cum_eim)], binomial(link = "logit"), offset = logit(df$po_pred[index]), weights =df$sbal[index]/sum(df$sbal[index]) )
+
   #plot(gam.model)
   sum.model = summary(gam.model)
   data.frame(deviance = sum.model$deviance, null.deviance = sum.model$null.deviance, shift = burn_params$shift[i], width = burn_params$width[i])
   #data.frame(x, deviance = summary(glm.model)$deviance)
 })
 setDT(res)
-res[order(deviance)]
-ggplot(res[deviance<null.deviance & width > 10], aes(shift, width, fill = 1-deviance/null.deviance, label = sprintf("%.1f", null.deviance - deviance) )) + 
+res[deviance == min(deviance)]
+ggplot(res[deviance<null.deviance], aes(shift, width, fill = 1-deviance/null.deviance, label = sprintf("%.1f", null.deviance - deviance) )) + 
   geom_tile() + geom_text() +  scale_fill_custom('mixed', discrete = FALSE)
 
 ggplot(df[LOAN_ID == '000097473153'], aes(date, cum_eim)) + geom_line()
-ggplot(df[LOAN_ID == '000097473153'], aes(date, inc_1m)) + geom_line()
+ggplot(df[LOAN_ID == '000097473153'], aes(date, ei_1m)) + geom_line()
 ```
 
 

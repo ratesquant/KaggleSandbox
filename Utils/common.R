@@ -161,7 +161,7 @@ cor.mtest <- function(mat, conf.level = 0.95){
 }
 
 cutq <- function(x, probs = seq(0, 1, 0.1), na.rm = TRUE, include.lowest = TRUE){
-  res = cut(x, breaks = quantile(x,probs = probs, na.rm = na.rm),include.lowest = include.lowest)
+  res = cut(x, breaks = unique(quantile(x,probs = probs, na.rm = na.rm)),include.lowest = include.lowest)
   return(res)
 }
 
@@ -557,7 +557,7 @@ plot_gbmpartial_2d <- function(gbm_model, iter, variables, resolution = 100, out
   return (plots)
 }
 
-plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, error_band = c('normal', 'binom')[1], average_value = c('mean', 'median')[1], conf_level = 0.95){
+plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, error_band = c('normal', 'binom')[1], average_value = c('mean', 'median')[1], conf_level = 0.95, map_fun = function(x) x){
   plot_result = ggplot() + geom_blank()
   
   factor_plot = FALSE
@@ -602,22 +602,22 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
     
     conf_break = model_mean < conf_int[1] | model_mean > conf_int[2]
     
-    res = list(actual = actual_mean,
-      model = model_mean,
-      actual_std = actual_std,
+    res = list(actual = map_fun(actual_mean),
+      model = map_fun(model_mean),
+      actual_std = map_fun(actual_std),
       count = ns,
       profile = ifelse(factor_plot, NA, mean(x$profile, na.rm = TRUE)),
-      actual_min = conf_int[1],
-      actual_max = conf_int[2],
+      actual_min = map_fun(conf_int[1]),
+      actual_max = map_fun(conf_int[2]),
       confidence_break = conf_break,
-      actual_min_break = ifelse(conf_break, conf_int[1], actual_mean),
-      actual_max_break = ifelse(conf_break, conf_int[2], actual_mean))
+      actual_min_break = map_fun(ifelse(conf_break, conf_int[1], actual_mean)),
+      actual_max_break = map_fun(ifelse(conf_break, conf_int[2], actual_mean)))
     return ( res )
   }
   
   df_temp = data.table(actual = act, model = mod, bucket = buckets, profile)
   res = df_temp[complete.cases(act, mod),agg_buckets(.SD), by = .(bucket)]
-  
+
   #res = res[count >= min_obs & !is.na(profile),]
   res = res[count >= min_obs,]
   
@@ -627,8 +627,16 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
   if(nrow(res) > 0 )
   {
     if(factor_plot){
-      res[,buckets := factor(bucket)]
-      xlabels = levels(res$buckets)
+      
+      date_xaxis = all(!is.na(as.Date(res$bucket, optional = TRUE)))
+      
+      if( date_xaxis ){
+        res[,buckets := as.Date(bucket, optional = TRUE)]
+      }else
+      {
+        res[,buckets := factor(bucket)]
+        xlabels = levels(res$buckets)
+      }
       
       plot_result = ggplot(res, aes(buckets, actual, group = 1)) + 
         geom_point(color = 'black') + 
@@ -636,11 +644,15 @@ plot_profile <- function(mod, act, profile, bucket_count = 10, min_obs = 30, err
         #geom_point(aes(buckets, model), color = 'red') + 
         geom_line(aes(buckets, model), color = 'red', size = 1, alpha= 0.8) +
         #ylab('actual (bk) vs model (rd)') + 
-        theme(legend.position = 'none', axis.title.x = element_blank(), axis.text.x = element_text(angle = 90, hjust = 1)) +
-        scale_x_discrete(breaks = xlabels) +
+        theme(legend.position = 'none', axis.title.x = element_blank()) +
         geom_ribbon(aes(ymax = actual_max, ymin = actual_min), fill = 'blue', alpha = 0.05) +
         geom_errorbar(aes(ymax = actual_max_break, ymin = actual_min_break), width = 0.0, color = 'blue', alpha = 0.3) +
         coord_cartesian(ylim = c(y_min, y_max)) 
+      
+      if(!date_xaxis){
+        plot_result = plot_result + scale_x_discrete(breaks = xlabels) + 
+          theme(axis.text.x = element_text(angle = 90, hjust = 1))
+      }
       
     }else{
       plot_result = ggplot(res, aes(profile, actual)) + 

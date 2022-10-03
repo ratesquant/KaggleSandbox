@@ -40,7 +40,7 @@ select_loans(filename, filename + '.5pct', sep = '|', id_col=1, fraction = 0.05)
 all_files = glob.glob('W:/loan_level/fnma/raw/*.csv') 
 
 for filename in all_files:
-    select_loans(filename, filename + '.1pct', sep = '|', id_col=1, fraction = 0.01)
+    select_loans(filename, filename + '.2pct', sep = '|', id_col=1, fraction = 0.02)
 
 with open(filename, "r") as f_in:
     line_count = 0

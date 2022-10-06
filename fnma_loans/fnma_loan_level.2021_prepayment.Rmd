@@ -195,6 +195,8 @@ df[order(date), CURR_RATE := na.locf(CURR_RATE, na.rm = FALSE), by =.(LOAN_ID)] 
 
 df[order(date), sbal := pmax(0, upb * (1 + CURR_RATE/1200) - 1e-3*pmt(CURR_RATE, 360) * ORIG_UPB), by =.(LOAN_ID)] #next month sched balance, assume fixed payment 
 df[is.na(sbal), sbal := upb ] #just in case 
+df[order(date), delq_24 := frollsum(as.numeric(DLQ_STATUS!='00'), 24), by =.(LOAN_ID) ] 
+
 #df[order(date), unsched_princ := shift(sbal) - upb, by=.(LOAN_ID) ]
 #df[order(date), smm := unsched_princ/shift(sbal), by=.(LOAN_ID) ]
 #temp
@@ -208,7 +210,7 @@ df[is.na(sbal), sbal := upb ] #just in case
 
 #df[Zero_Bal_Code_next == '01' & date == '2005-01-01', LOAN_ID]
 #cc(df[LOAN_ID == '999997761057'])
-#df[LOAN_ID == '128633619415', .(date, CURR_RATE, LOAN_AGE,ORIG_UPB, upb, CURRENT_UPB, sbal,unsched_princ, smm, po_ind, Zero_Bal_Code, DLQ_STATUS)]
+#df[LOAN_ID == '999961864686', .(date, CURR_RATE, LOAN_AGE,ORIG_UPB, upb, CURRENT_UPB, sbal, po_ind, Zero_Bal_Code, DLQ_STATUS, delq_24)]
 df = df[!is.na(po_ind)] #remove last date 
 ```
 
@@ -234,6 +236,11 @@ ggplot(df_agg, aes(date, upb, group = orig_year)) + geom_line()
 
 df_agg = df[,.(.N, upb = sum(upb, na.rm = TRUE), smm = weighted.mean(po_ind, sbal, na.rm = TRUE)), by=.(date, orig_year)]
 ggplot(df_agg, aes(date, smm, group = orig_year)) + geom_line()
+
+df_agg = df[,.(.N, upb = sum(upb, na.rm = TRUE), smm = weighted.mean(po_ind, sbal, na.rm = TRUE)), by=.(date, PROP)]
+ggplot(df_agg, aes(date, smm2cpr(smm), group = PROP)) + geom_line() + facet_wrap(~PROP)
+ggplot(df_agg, aes(date, upb/N, group = PROP, color = PROP)) + geom_line()
+
 ```
 
 ##Load MEV
@@ -269,6 +276,11 @@ df_mev[order(date), uer_1m60 :=uer                - frollmean(uer,  60)]
 df_mev[order(date), uer_1y :=uer - shift(uer, 12)]
 
 setkey(df_mev,'date')
+
+df_busday = data.table(date = min(df$date) + seq(0, max(df$date) - min(df$date)))
+df_busday[, date_month := make_date(year(date), month(date), 1)]
+df_busday[, date_week := wday(date)]
+df_busday = df_busday[date_week %!in% c(1, 7),.(.N), by=date_month][N>15]
 
 # ----------------------------------------
 ggplot(df_mev[date>'2000-01-01'], aes(date, rate)) + geom_line()
@@ -334,10 +346,13 @@ df[df_mev, rate_3m60  := i.rate_3m60, on =.(date)]
 df[df_mev, uer       := i.uer,      on =.(date)]
 df[df_mev, uer_1m60  := i.uer_1m60, on =.(date)]
 df[df_mev, uer_1y    := i.uer_1y,   on =.(date)]
+df[df_busday, busday := i.N,   on =.(date = date_month  )]
+
 
 
 df[, factor := upb / (1e-3*ORIG_UPB) ]
 df[, CLTV   :=  OLTV * factor * hpi_orig / hpi ]
+df[, hpa_life  :=   hpi/hpi_orig - 1 ]
 df[, season := month(date)]
 df[, geo_ny  := as.numeric(STATE == 'NY')]
 df[, geo_pr  := as.numeric(STATE == 'PR')]
@@ -352,7 +367,7 @@ df_agg = df[,.(.N, upb = sum(upb, na.rm = TRUE), po = mean(po_ind, na.rm = TRUE)
                smm = weighted.mean(po_ind, sbal, na.rm = TRUE ),
                ei = weighted.mean(ei, sbal)), by=.(date)]
 
-#ccf(df_agg$smm, df_agg$inc, lag.max = 4)
+#ccf(df_agg$smm, df_agg$ei, lag.max = 5)
 ccf(df_agg$smm, df_agg$ei, lag.max = 5, plot = FALSE)
 
 #ggplot(df_agg, aes(smm, inc)) + geom_point()
@@ -361,6 +376,7 @@ ggplot(df_agg, aes(date, upb)) + geom_point()
 ggplot(df_agg, aes(date, upb/N)) + geom_point()
 ggplot(df_agg, aes(date, ei)) + geom_point() + geom_line() 
 ggplot(df_agg, aes(date, po)) + geom_point() + geom_line() + geom_line(aes(date, smm), color = 'red')
+ggplot(df_agg, aes(date, ei/2)) + geom_point() + geom_line() + geom_line(aes(date, smm2cpr(smm)), color = 'red')
 
 df_agg = df[,.(.N, upb = sum(upb, na.rm = TRUE), po = mean(po_ind), 
                smm = weighted.mean(po_ind, sbal, na.rm = TRUE )), by=.(LOAN_AGE)]
@@ -389,7 +405,8 @@ v_index_v = sample.int(nrow(df), 2e6) %!in_set% t_index_v
 obj_var = 'po_ind'
 media_vars = c('media_ei_lin', 'media_ei_log', 'rate_1m48', 'rate_1m60', 'rate_3m48', 'rate_3m60')
 burnout_vars = c('cum_ei', 'cum_eim', 'factor') #'cum_ei', 'factor'
-lgb_vars = c('ei', 'LOAN_AGE', 'season', 'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL','PROP', 'DTI', 'CSCORE_B', 'co_borrower','score_diff', 'FIRST_FLAG', 'CLTV', 'OLTV', 'rate_1m48', 'sato', 'cum_eim', 'geo_ny', 'geo_pr', 'NO_UNITS', 'hpa') %!in_set% c('id') #best performance
+#lgb_vars = c('ei', 'LOAN_AGE', 'season', 'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL','PROP', 'DTI', 'CSCORE_B', 'co_borrower','score_diff', 'FIRST_FLAG', 'CLTV', 'OLTV', 'rate_1m48', 'sato', 'cum_eim', 'geo_ny', 'geo_pr', 'NO_UNITS', 'hpa', 'hpa_life', 'busday') %!in_set% c('id') #best performance
+lgb_vars = c('ei', 'LOAN_AGE', 'season', 'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL','DTI', 'CSCORE_B',  'CLTV') %!in_set% c('id') #best performance
 
 my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
 
@@ -429,7 +446,7 @@ plot_act_vs_model(df, 'ei', bucket_count = 50)
 plot_act_vs_model(df, 'sato', bucket_count = 50)
 
 #turnover
-vname = 'date'
+vname = 'LOAN_AGE'
 p1 = plot_act_vs_model(df, vname,  df$ei < 0, bucket_count = 20) + ggtitle('turnover')
 p2 = plot_act_vs_model(df, vname,             bucket_count = 20) + ggtitle('prepayment')
 grid.arrange(p1, p2)
@@ -455,7 +472,7 @@ ggsave(filename = "D:/loan_level/profiles_by_state.pdf", plot = marrangeGrob(plo
 #all profiles
 plots = llply(names(df) %!in_set% c('LOAN_ID', 'CURRENT_UPB', 'Zero_Bal_Code', 'smm', 'Zero_Bal_Code_next'), function(var_name) { #lgb_vars
   print(var_name)
-    p = plot_act_vs_model(df, var_name, bucket_count = 10, error_band = 'binom') + ggtitle(var_name) +  theme(title =element_text(size=8))
+    p = plot_act_vs_model(df, var_name, bucket_count = 20, error_band = 'binom') + ggtitle(var_name) +  theme(title =element_text(size=8))
     return( ggplotGrob(p) )
   })
 #marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
@@ -463,7 +480,7 @@ ggsave(filename = "D:/loan_level/profiles_all.pdf", plot = marrangeGrob(plots, n
 
 plots = llply(c('date','cum_eim', 'cum_ei', 'media_ei_log', 'media_ei_lin', 'rate_1m48', 'rate_3m48', 'rate_1m60', 'rate_3m60', 'uer', 'hpa', 'uer_1m60'), function(var_name) { #lgb_vars
   print(var_name)
-    p = plot_profile(df$po_pred,  df$po_ind, df[[var_name]], bucket_count = 10, error_band = 'binom') +
+    p = plot_act_vs_model(df, var_name, bucket_count = 10, error_band = 'binom') +
       ggtitle(var_name) +  theme(title =element_text(size=8))
     return( ggplotGrob(p) )
   })
@@ -495,9 +512,18 @@ for(vname in names(df) %!in_set% c('LOAN_ID', 'CURRENT_UPB', 'Zero_Bal_Code', 's
 }
 
 #partial plots --------- 
-pdp_index = sample.int(nrow(df), 10000)
-df_plot = partialPlot(model.lgb, data.matrix(df[pdp_index,lgb_vars, with = FALSE]), xname = "upb", n.pt = 100)
-ggplot(df_plot, aes(x, y)) + geom_line()
+pdp_index = sample.int(nrow(df), 1000)
+data_mat = data.matrix(df[pdp_index,lgb_vars, with = FALSE])
+
+plots = llply(lgb_importance$Feature, function(my_var){
+  df_plot = partialPlot(model.lgb, data_mat, xname = my_var, n.pt = 100)
+  ggplot(df_plot, aes(x, smm2cpr(y) )) + geom_line() + 
+    geom_rug(data = df[pdp_index,my_var, with = FALSE], aes_string(x=my_var), sides = 'b', alpha = 0.2, size = 0.1, inherit.aes = FALSE) + 
+    ggtitle(my_var) + xlab(my_var) + ylab('cpr')
+})
+marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+
+ggsave(filename = "D:/loan_level/partial_profiles.pdf", plot = marrangeGrob(plots, nrow=3, ncol=3,top = vname), device = 'pdf', width = 14, height = 8.5, dpi = 360)
 
 ```
 
@@ -505,8 +531,8 @@ ggplot(df_plot, aes(x, y)) + geom_line()
 ```{r burnout_parameters}
 library(gam)
 
-index   = sample.int(nrow(df), 5e5)
-index_v = sample.int(nrow(df), 5e5) %!in_set% index
+index   = sample.int(nrow(df), 2e6)
+index_v = sample.int(nrow(df), 2e6) %!in_set% index
 
 #Simple cum incentive with LGB
 # 10bp is the best threshold  -----------------
@@ -537,7 +563,7 @@ ggplot(res, aes(x, error)) + geom_line() + geom_point() + geom_vline(xintercept 
 ggplot(res, aes(x, it)) + geom_line() + geom_point() 
 
 #Burnout S-Curve  -----------------
-burn_params = expand.grid(shift = seq(10, 100, by = 10), width = seq(5, 50, by = 5))
+burn_params = expand.grid(shift = seq(0, 100, by = 1), width = seq(5, 50, by = 1))
 res = ldply(seq(nrow(burn_params)), function(i){
   
   df[order(date), cum_eim_test  := cumsum(logistic( (ei - burn_params$shift[i])/burn_params$width[i] )), by =.(LOAN_ID)]
@@ -556,11 +582,11 @@ res = ldply(seq(nrow(burn_params)), function(i){
   #plot_profile(po_pred.test, df$po_ind, df$cum_ei_test)
   #plot_profile(df$po_pred, df$po_ind, df$cum_ei_test)
   
-  data.frame(x, it = model.lgb.test$best_iter, error = cv_error[model.lgb.test$best_iter], max_error = max(cv_error), min_error = min(cv_error), shift = burn_params$shift[i], width = burn_params$width[i] )
+  data.frame(i, it = model.lgb.test$best_iter, error = cv_error[model.lgb.test$best_iter], max_error = max(cv_error), min_error = min(cv_error), shift = burn_params$shift[i], width = burn_params$width[i] )
 })
 setDT(res)
 res[error == min(error)]
-ggplot(res, aes(shift, width, fill = error -  min(error), label = sprintf("%.2e", error -  min(error)) )) + geom_tile() + geom_text() +  scale_fill_custom('mixed', discrete = FALSE)
+ggplot(res, aes(shift, width, fill = 100*(error/min(error)-1), label = sprintf("%.4f", 100*(error/min(error) - 1) ) )) + geom_tile() + geom_text() +  scale_fill_custom('mixed', discrete = FALSE)
 ggplot(res, aes(shift, width, fill = it, label = sprintf("%d", it) )) + geom_tile() + geom_text() +  scale_fill_custom('mixed', discrete = FALSE)
 
 
@@ -586,6 +612,7 @@ ggplot(res, aes(x, deviance/null.deviance)) + geom_line() + geom_vline(xintercep
 # 10bp is the best threshold  -----------------
 burn_params = expand.grid(shift = seq(100, 100, by = 10), width = seq(4, 16, by = 2))
 res = ldply(seq(nrow(burn_params)), function(i){
+  print(i)
   
   df[order(date), cum_eim  := cumsum(logistic( (ei - burn_params$shift[i])/burn_params$width[i] )), by =.(LOAN_ID)]
    gam.model = gam(po_ind ~ s(cum_eim) , data = df[index,.(po_ind, cum_eim)], binomial(link = "logit"), offset = logit(df$po_pred[index]))

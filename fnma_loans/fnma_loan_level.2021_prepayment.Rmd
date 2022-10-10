@@ -31,6 +31,10 @@ smm2cpr <- function(smm){
   100.0*(1.0 - (1.0 - smm)^12)
 }
 
+cpr2smm<- function(cpr){
+  (1.0 - (1.0 - cpr/100)^(1/12))
+}
+
 pmt  <- function(wac, wam){
   r = wac / 1200.0
   return ( r / (1.0 - (1.0 + r)^(-wam) ))
@@ -327,6 +331,7 @@ ggplot(df_mev) + geom_line(aes(date, media_ei_log)) + geom_line(aes(date, media_
 df_mev[order(date), media_ei_lin := rate - uwac_model(rate, logistic = FALSE) ]
 df_mev[order(date), media_ei_log := rate - uwac_model(rate, logistic = TRUE) ]
 
+df[df_mev, ei_ratio := 100*(CURR_RATE/i.rate-1), on =.(date)]
 df[df_mev, ei       := 100*(CURR_RATE - i.rate   ), on =.(date)]
 df[df_mev, ei_1m    := 100*(CURR_RATE - i.rate_1m), on =.(date)]
 df[df_mev, hpi       := i.hpi, on =.(date)]
@@ -354,6 +359,7 @@ df[, factor := upb / (1e-3*ORIG_UPB) ]
 df[, CLTV   :=  OLTV * factor * hpi_orig / hpi ]
 df[, hpa_life  :=   hpi/hpi_orig - 1 ]
 df[, season := month(date)]
+df[, season_s := sprintf('%02d', season) ]
 df[, geo_ny  := as.numeric(STATE == 'NY')]
 df[, geo_pr  := as.numeric(STATE == 'PR')]
 df[, co_borrower  := as.numeric(!is.na(CSCORE_C))]
@@ -405,8 +411,8 @@ v_index_v = sample.int(nrow(df), 2e6) %!in_set% t_index_v
 obj_var = 'po_ind'
 media_vars = c('media_ei_lin', 'media_ei_log', 'rate_1m48', 'rate_1m60', 'rate_3m48', 'rate_3m60')
 burnout_vars = c('cum_ei', 'cum_eim', 'factor') #'cum_ei', 'factor'
-#lgb_vars = c('ei', 'LOAN_AGE', 'season', 'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL','PROP', 'DTI', 'CSCORE_B', 'co_borrower','score_diff', 'FIRST_FLAG', 'CLTV', 'OLTV', 'rate_1m48', 'sato', 'cum_eim', 'geo_ny', 'geo_pr', 'NO_UNITS', 'hpa', 'hpa_life', 'busday') %!in_set% c('id') #best performance
-lgb_vars = c('ei', 'LOAN_AGE', 'season', 'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL','DTI', 'CSCORE_B',  'CLTV') %!in_set% c('id') #best performance
+lgb_vars = c('ei', 'LOAN_AGE', 'season', 'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL','PROP', 'DTI', 'CSCORE_B', 'co_borrower','score_diff', 'FIRST_FLAG', 'CLTV', 'OLTV', 'rate_1m48', 'sato', 'cum_eim', 'geo_ny', 'geo_pr', 'NO_UNITS', 'hpa', 'hpa_life', 'busday') %!in_set% c('id') #best performance
+#lgb_vars = c('ei', 'LOAN_AGE', 'season', 'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL','DTI', 'CSCORE_B',  'CLTV') %!in_set% c('id') #best performance
 
 my_cat_vars =  names(which(sapply(df[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
 
@@ -444,6 +450,8 @@ plot_act_vs_model(df, 'LOAN_AGE', bucket_count = 50)
 plot_act_vs_model(df, 'date', bucket_count = 50)
 plot_act_vs_model(df, 'ei', bucket_count = 50)
 plot_act_vs_model(df, 'sato', bucket_count = 50)
+plot_act_vs_model(df, 'ei_ratio', bucket_count = 50)
+
 
 #turnover
 vname = 'LOAN_AGE'
@@ -518,13 +526,312 @@ data_mat = data.matrix(df[pdp_index,lgb_vars, with = FALSE])
 plots = llply(lgb_importance$Feature, function(my_var){
   df_plot = partialPlot(model.lgb, data_mat, xname = my_var, n.pt = 100)
   ggplot(df_plot, aes(x, smm2cpr(y) )) + geom_line() + 
-    geom_rug(data = df[pdp_index,my_var, with = FALSE], aes_string(x=my_var), sides = 'b', alpha = 0.2, size = 0.1, inherit.aes = FALSE) + 
+    #geom_rug(data = df[pdp_index, my_var, with = FALSE], aes_string(x=my_var), sides = 'b', alpha = 0.2, size = 0.1, inherit.aes = FALSE) + 
     ggtitle(my_var) + xlab(my_var) + ylab('cpr')
 })
 marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
 
-ggsave(filename = "D:/loan_level/partial_profiles.pdf", plot = marrangeGrob(plots, nrow=3, ncol=3,top = vname), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+ggsave(filename = "D:/loan_level/partial_profiles_baseline.pdf", plot = marrangeGrob(plots, nrow=3, ncol=3,top = NULL), device = 'pdf', width = 14, height = 8.5, dpi = 360)
 
+```
+
+#Parametric Model
+```{r parametric_model}
+
+t_index_v = sample.int(nrow(df), 5e6)
+
+
+plot_act_vs_model2 <-function(df, profile, index = NULL, ...){
+  p = NULL
+  if(is.null(index)) {
+    p = plot_profile(df[['model_smm']], df[['po_ind']], df[[profile]], map_fun = smm2cpr, ...)
+  }else{
+    p = plot_profile(df[['model_smm']][index], df[['po_ind']][index], df[[profile]][index], map_fun = smm2cpr, ...)
+  }
+  return( p )
+}
+
+smm_model <- function(x, params){
+    turn_scurve = params[['turn_low']] + (params[['turn_high']] - params[['turn_low']])*logistic((x$ei - params[['turn_scurve_shift']])/params[['turn_scurve_slope']])
+    turn_ramp = approx(params[['turn_ramp_x']], params[['turn_ramp_y']], rule = 2, x$LOAN_AGE)$y
+    turn_season = approx(params[['turn_season_x']], params[['turn_season_y']], rule = 2, x$season)$y
+    turn_fico = approx(params[['turn_fico_x']], params[['turn_fico_y']], rule = 2, x$CSCORE_B)$y
+    turn_fico[is.na(x$CSCORE_B)] = 1.0
+    turn_cltv = approx(params[['turn_cltv_x']], params[['turn_cltv_y']], rule = 2, x$CLTV)$y
+    turn_als = approx(params[['turn_als_x']], params[['turn_als_y']], rule = 2, x$upb)$y
+    turn_occ =  params[['turn_occ_y']][ match(x$OCC_STAT, params[['turn_occ_x']])]
+    turn_hpal = approx(params[['turn_hpal_x']], params[['turn_hpal_y']], rule = 2, x$hpa_life)$y
+    
+    refi_scurve = params[['refi_low']] + (params[['refi_high']] - params[['refi_low']])*logistic((x$ei - params[['refi_scurve_shift']])/params[['refi_scurve_slope']])
+    refi_ramp = approx(params[['refi_ramp_x']], params[['refi_ramp_y']], rule = 2, x$LOAN_AGE)$y
+    refi_als = approx(params[['refi_als_x']], params[['refi_als_y']], rule = 2, x$upb)$y
+    refi_cltv = approx(params[['refi_cltv_x']], params[['refi_cltv_y']], rule = 2, x$CLTV)$y
+    refi_fico = approx(params[['refi_fico_x']], params[['refi_fico_y']], rule = 2, x$CSCORE_B)$y
+    refi_fico[is.na(x$CSCORE_B)] = 1.0
+    
+    curt_als = approx(params[['curt_als_x']], params[['curt_als_y']], rule = 2, x$upb)$y
+    curt_factor = approx(params[['curt_factor_x']], params[['curt_factor_y']], rule = 2, x$factor)$y
+    
+    refi_burn = approx(params[['refi_burn_x']], params[['refi_burn_y']], rule = 2, x$cum_eim)$y
+    refi_hpal = approx(params[['refi_hpal_x']], params[['refi_hpal_y']], rule = 2, x$hpa_life)$y
+    
+    media_scurve = params[['media_low']] + (params[['media_high']] - params[['media_low']])*logistic((x$media_ei_lin - params[['media_scurve_shift']])/params[['media_scurve_slope']])
+    
+    refi_occ =  params[['refi_occ_y']][ match(x$OCC_STAT, params[['refi_occ_x']])]
+    refi_chn =  params[['refi_chn_y']][ match(x$CHANNEL,  params[['refi_chn_x']])]
+    
+    
+    
+    total_smm = turn_scurve * turn_ramp * turn_season * turn_fico * turn_cltv * turn_als * turn_occ * turn_hpal + 
+      refi_scurve * refi_ramp * refi_als * refi_fico * refi_cltv * refi_occ * refi_burn * media_scurve * refi_chn * refi_hpal + 
+      curt_als * curt_factor
+    #total_smm = turn_scurve 
+    
+    return( pmin(1.0-1e-9, pmax(1e-9, total_smm)) )
+}
+
+#library(microbenchmark)
+#microbenchmark(approx(params[['turn_season_x']], params[['turn_season_y']], rule = 2, sample.int(12, 100000, replace = TRUE))$y)
+
+objective_function <- function(df_in, index){
+  return( df_in[index, mean(sbal * (po_ind * log(model_smm) + (1-po_ind) * log(1-model_smm)),rm.na = TRUE)  ] )
+}
+
+turn_objective_function <- function(params_in){
+  df[turn_index, model_smm := smm_model(.SD, params_in)]
+  objective_function(df, turn_index)
+}
+refi_objective_function <- function(params_in){
+  df[t_index_v, model_smm := smm_model(.SD, params_in)]
+  objective_function(df, t_index_v)
+}
+
+## FIT Turnover S-Curve (-8.078541)
+params = list('turn_low' = cpr2smm(6.2), 'turn_high' = cpr2smm( 10.1), 'turn_scurve_shift' = -22.48904, 'turn_scurve_slope' = 18.61279 , #'turn_scurve_slope' = 18.61279, 
+              'turn_ramp_x' = c(0,    3,    6,  12,  24,  36), 
+              'turn_ramp_y' = c(0.1, 0.3, 0.5, 0.8, 0.9, 1.0),
+              'turn_fico_x' = c(680,   720, 760,  780, 800), 
+              'turn_fico_y' = c(1.16, 1.11, 1.05, 1.0, 0.9),
+              'turn_cltv_x' = c(80,  90), 
+              'turn_cltv_y' = c(1.0, 0.6),
+              'turn_als_x' = c(50,  100), 
+              'turn_als_y' = c(1.3, 1.0),
+              'turn_hpal_x' = c(-0.05, 0), 
+              'turn_hpal_y' = c( 0.5, 1),
+              'turn_occ_x' = c('I', 'P', 'S'),
+              'turn_occ_y' = c(0.9, 1.0, 1.1),
+              'turn_season_x' = c(1,     2,  3,   4,   5,   6,  7,  8,    9, 10, 11, 12),
+              'turn_season_y' = c(0.85,1.12,1.15,1.2,1.2,1.15,1.1,1.05,1.05,1.0,0.9,0.8),
+              'refi_low' = cpr2smm(0), 'refi_high' = cpr2smm(20), 'refi_scurve_shift' =  64.95642243, 'refi_scurve_slope' = 20.74949680,
+              'refi_ramp_x' = c(0,    3,    6,  12), 
+              'refi_ramp_y' = c(0.1, 0.4, 0.9, 1.0),
+              'refi_als_x' = c(50, 100, 200, 300, 400, 450), 
+              'refi_als_y' = c(0, 0.4, 1.0, 1.7, 2.2, 2.8),
+              'refi_fico_x' = c(650, 680, 700,  740, 760, 800), 
+              'refi_fico_y' = c(0.6, 0.7, 0.8,  1.0, 1.2, 1.3),
+              'refi_cltv_x' = c(75,  90), 
+              'refi_cltv_y' = c(1.0, 0.6),
+              'refi_burn_x' = c(30,  60), 
+              'refi_burn_y' = c(1.0, 0.8),
+              
+              'refi_hpal_x' = c(-0.1, 0), 
+              'refi_hpal_y' = c( 0.5, 1),
+              'refi_occ_x' = c('I', 'P', 'S'),
+              'refi_occ_y' = c(0.55, 1.0, 0.7),
+              'refi_chn_x' = c('B', 'R', 'C'),
+              'refi_chn_y' = c(1.15, 0.95, 1.0),
+              
+              'media_low' = 0.7, 'media_high' = 1.6, 'media_scurve_shift' = -0.45, 'media_scurve_slope' = -0.12,
+              
+              'curt_als_x' = c(5, 10, 15, 20, 35), 
+              'curt_als_y' = c(cpr2smm(80),cpr2smm(28), cpr2smm(20),cpr2smm(10), 0.0),
+              'curt_factor_x' = c(0, 0.1, 0.5), 
+              'curt_factor_y' = c(2.0, 1.5, 1.0)
+              )  
+
+#    -15.98697
+
+df[, model_smm := smm_model(.SD, params)]
+objective_function(df, t_index_v)
+#plot_act_vs_model2(df, 'ei', bucket_count = 25)
+plot_act_vs_model2(df, 'media_ei_lin', bucket_count = 10)
+plot_act_vs_model2(df, 'busday', bucket_count = 10)
+
+plot_act_vs_model2(df, 'upb', bucket_count =  100)
+plot_act_vs_model2(df, 'date', bucket_count =  25)
+plot_act_vs_model2(df, 'CLTV', bucket_count =  100)
+plot_act_vs_model2(df, 'ei', bucket_count = 100)
+plot_act_vs_model2(df, 'LOAN_AGE', bucket_count = 100)
+plot_act_vs_model2(df, 'upb', bucket_count = 100)
+plot_act_vs_model2(df, 'CSCORE_B', bucket_count = 50)
+plot_act_vs_model2(df, 'rate_1m48', bucket_count = 10)
+plot_act_vs_model2(df, 'media_ei_lin', bucket_count = 10)
+plot_act_vs_model2(df, 'cum_eim', bucket_count = 50)
+plot_act_vs_model2(df, 'ei_ratio', bucket_count = 50)
+plot_act_vs_model2(df, 'factor', bucket_count = 100)
+plot_act_vs_model2(df, 'OCC_STAT', bucket_count = 100)
+plot_act_vs_model2(df, 'CHANNEL', bucket_count = 100)
+plot_act_vs_model2(df, 'DTI', bucket_count = 100)
+plot_act_vs_model2(df, 'hpa_life', bucket_count = 100)
+
+#S-Curves
+plot_profile(df$DTI, df$DTI, df$date, bucket_count = 25)
+
+my_index =  df$ei<0
+plot_act_vs_model2(df, 'DTI', my_index, bucket_count = 100)
+plot_act_vs_model2(df, 'season_s', my_index, bucket_count = 100)
+plot_act_vs_model2(df, 'OCC_STAT', my_index, bucket_count = 100)
+plot_act_vs_model2(df, 'CHANNEL', my_index, bucket_count = 100)
+plot_act_vs_model2(df, 'hpa_life',my_index, bucket_count = 100)
+plot_act_vs_model2(df, 'CSCORE_B',my_index, bucket_count = 50)
+
+
+
+plot_act_vs_model2(df, 'upb', my_index, bucket_count = 50)
+plot_act_vs_model2(df, 'ei', my_index, bucket_count = 50)
+plot_act_vs_model2(df, 'factor', my_index, bucket_count = 50)
+plot_act_vs_model2(df, 'CLTV', my_index, bucket_count = 50)
+plot_act_vs_model2(df, 'LOAN_AGE', my_index, bucket_count = 50)
+plot_profile(df$upb[my_index], df$upb[my_index], df$CLTV[my_index], bucket_count = 25)
+
+
+my_vars = c('ei', 'LOAN_AGE', 'season_s',  'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL','PROP', 'CSCORE_B',  'CLTV', 'OLTV',  'cum_ei','cum_eim', 'media_ei_lin')
+plots = llply(my_vars, function(my_var){
+  plot_act_vs_model2(df, my_var, bucket_count = 10) + ggtitle(my_var)
+})
+marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+
+
+#s-curves  
+buckets = cutq(df$upb, seq(0, 1, length.out = 13))
+plots = llply(levels(buckets), function(my_level){
+  plot_act_vs_model2(df, 'LOAN_AGE', buckets == my_level, bucket_count = 25) + ggtitle(my_level)
+})
+marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+
+buckets = df$CHANNEL
+plots = llply(unique(buckets), function(my_level){
+  plot_act_vs_model2(df, 'ei', buckets == my_level, bucket_count = 25) + ggtitle(my_level)
+})
+marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+
+
+
+
+turn_index = which(df$ei < 0) %in_set% t_index_v
+objective_function(df, turn_index)
+plot_act_vs_model2(df, 'ei', turn_index, bucket_count = 10)
+plot_act_vs_model2(df, 'LOAN_AGE', turn_index, bucket_count = 25)
+plot_act_vs_model2(df, 'date', turn_index, bucket_count = 25)
+plot_act_vs_model2(df, 'season_s', turn_index, bucket_count = 25)
+plot_act_vs_model2(df, 'CLTV', turn_index, bucket_count = 50)
+plot_act_vs_model2(df, 'upb', turn_index, bucket_count = 100)
+plot_act_vs_model2(df, 'CSCORE_B',turn_index, bucket_count = 10)
+
+
+my_vars = c('ei', 'LOAN_AGE', 'season_s',  'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL','PROP', 'CSCORE_B',  'CLTV', 'OLTV',  'cum_ei')
+plots = llply(my_vars, function(my_var){
+  plot_act_vs_model2(df, my_var, bucket_count = 10) + ggtitle(my_var)
+})
+marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+
+
+library(rBayesianOptimization)
+turn_obj <- function(turn_low,turn_high, turn_scurve_shift, turn_scurve_slope) {
+  
+  params_ex = params
+  params_ex['turn_low'] = turn_low
+  params_ex['turn_high'] = turn_high
+  params_ex['turn_scurve_shift'] = turn_scurve_shift
+  params_ex['turn_scurve_slope'] = turn_scurve_slope
+  
+  df[order(date), model_smm := smm_model(.SD, params_ex), by = .(LOAN_ID)]
+
+  list(Score = objective_function(df, index),    Pred = 0)
+}
+## Set larger init_points and n_iter for better optimization result
+OPT_Res <- BayesianOptimization(turn_obj,
+                                bounds = list('turn_low' = c(cpr2smm(3), cpr2smm(6)),
+                                              'turn_high' = c(cpr2smm(6), cpr2smm(12)),
+                                              'turn_scurve_shift' = c(-100, 0),
+                                              'turn_scurve_slope' = c(10, 100)),
+                                init_points = 4, n_iter = 20,
+                                acq = "ei", #ucb, ei, poi
+                                kappa = 2.576, eps = 0.0,
+                                verbose = TRUE)
+
+#1D optimization variable -------------
+turn_obj_1d <- function(x, param_name, param_index = 0) {
+  params_mod = params
+  
+  if(param_index == 0){
+    params_mod[[param_name]] = x
+  }else{
+    params_mod[[param_name]][param_index] = x
+  }
+  
+  df[t_index_v, model_smm := smm_model(.SD, params_mod)]
+
+  objective_function(df, index)
+}
+optimize(function(x) turn_obj_1d(x,"turn_low"),interval = c(cpr2smm(4), cpr2smm(6)), maximum = TRUE) #2.000866
+
+#grid search 
+res = ldply(seq(10, 50, by = 5), function(x) c(x, turn_obj_1d(x, "turn_scurve_slope")) )
+ggplot(res, aes(V1, V2)) + geom_point() + geom_line()
+
+
+### GRID search
+#'media_low' = 0.7, 'media_high' = 1.6, 'media_scurve_shift' = -0.45, 'media_scurve_slope' = -0.1,
+param_grid = expand.grid(media_low = seq(0.5, 1.0, length.out = 10), media_high = seq(1.0, 2.0, length.out = 10))
+res = ldply(seq(nrow(param_grid)), function(i){
+  print(i)
+  
+  my_params = params
+  my_params[['media_low']] = param_grid$media_low[i]
+  my_params[['media_high']] = param_grid$media_high[i]
+  
+  df[, model_smm := smm_model(.SD, my_params)]
+
+   data.frame(objective = objective_function(df, t_index_v), 
+              media_low = param_grid$media_low[i], 
+              media_high =  param_grid$media_high[i])
+  #data.frame(x, deviance = summary(glm.model)$deviance)
+})
+setDT(res)
+res[objective==max(objective)]
+ggplot(res, aes(media_scurve_shift, media_scurve_slope, fill = (objective-min(objective)), label = sprintf("%.4f",objective-min(objective) ) )) + geom_tile() +  scale_fill_custom('mixed', discrete = FALSE) + theme_bw() +  geom_text()
+ggplot(res, aes(media_scurve_shift, media_scurve_slope, fill = (objective), label = sprintf("%.4f",objective ) )) + geom_tile() +  scale_fill_custom('mixed', discrete = FALSE) + theme_bw() +  geom_text()
+
+
+
+
+#using R optimization --------------
+turn_obj_ex <- function(x, param_names, params) {
+  params_in = params
+  for(i in 1:length(x)){
+    params_in[[param_names[i]]] =x[i] 
+  }
+  return( -turn_objective_function(params_in))
+}
+
+refi_obj_ex <- function(x, param_names, params) {
+  params_in = params
+  for(i in 1:length(x)){
+    params_in[[param_names[i]]] =x[i] 
+  }
+  return( -refi_objective_function(params_in))
+}
+
+#param_names = c('refi_scurve_shift', 'refi_scurve_slope', 'refi_low', 'refi_high')
+param_names =c('media_low', 'media_high', 'media_scurve_shift', 'media_scurve_slope')
+init_params = sapply(param_names, function(x) params[[x]])
+optim(init_params, function(x)refi_obj_ex(x, param_names, params), method  = "Nelder-Mead", control = list(trace = 6, maxit = 600)) #2.000866
+
+#using dfoptim -------------- "-8.06527"
+library(dfoptim)
+hjk(init_params,  function(x)refi_obj_ex(x, param_names, params), control = list(maxfeval = 100, info = TRUE))
+mads(init_params, function(x)refi_obj_ex(x, param_names, params), control = list(maxfeval = 100, info = TRUE))
 ```
 
 #Burnout optimization
@@ -586,8 +893,8 @@ res = ldply(seq(nrow(burn_params)), function(i){
 })
 setDT(res)
 res[error == min(error)]
-ggplot(res, aes(shift, width, fill = 100*(error/min(error)-1), label = sprintf("%.4f", 100*(error/min(error) - 1) ) )) + geom_tile() + geom_text() +  scale_fill_custom('mixed', discrete = FALSE)
-ggplot(res, aes(shift, width, fill = it, label = sprintf("%d", it) )) + geom_tile() + geom_text() +  scale_fill_custom('mixed', discrete = FALSE)
+ggplot(res, aes(shift, width, fill = 100*(error/min(error)-1), label = sprintf("%.4f", 100*(error/min(error) - 1) ) )) + geom_tile() +  scale_fill_custom('mixed', discrete = FALSE) + theme_bw()# +  geom_text()
+ggplot(res, aes(shift, width, fill = it, label = sprintf("%d", it) )) + geom_tile() + scale_fill_custom('mixed', discrete = FALSE)# + geom_text()
 
 
 

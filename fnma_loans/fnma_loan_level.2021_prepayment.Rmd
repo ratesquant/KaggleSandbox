@@ -574,6 +574,7 @@ smm_model <- function(x, params){
     
     refi_burn = approx(params[['refi_burn_x']], params[['refi_burn_y']], rule = 2, x$cum_eim)$y
     refi_hpal = approx(params[['refi_hpal_x']], params[['refi_hpal_y']], rule = 2, x$hpa_life)$y
+    refi_hpa = approx(params[['refi_hpa_x']], params[['refi_hpa_y']], rule = 2, x$hpa)$y
     
     media_scurve = params[['media_low']] + (params[['media_high']] - params[['media_low']])*logistic((x$media_ei_lin - params[['media_scurve_shift']])/params[['media_scurve_slope']])
     
@@ -583,7 +584,7 @@ smm_model <- function(x, params){
     
     
     total_smm = turn_scurve * turn_ramp * turn_season * turn_fico * turn_cltv * turn_als * turn_occ * turn_hpal + 
-      refi_scurve * refi_ramp * refi_als * refi_fico * refi_cltv * refi_occ * refi_burn * media_scurve * refi_chn * refi_hpal + 
+      refi_scurve * refi_ramp * refi_als * refi_fico * refi_cltv * refi_occ * refi_burn * media_scurve * refi_chn * refi_hpal * refi_hpa+ 
       curt_als * curt_factor
     #total_smm = turn_scurve 
     
@@ -631,17 +632,21 @@ params = list('turn_low' = cpr2smm(6.2), 'turn_high' = cpr2smm( 10.1), 'turn_scu
               'refi_fico_y' = c(0.6, 0.7, 0.8,  1.0, 1.2, 1.3),
               'refi_cltv_x' = c(75,  90), 
               'refi_cltv_y' = c(1.0, 0.6),
-              'refi_burn_x' = c(30,  60), 
-              'refi_burn_y' = c(1.0, 0.8),
+              'refi_burn_x' = c(25,  50, 100), 
+              'refi_burn_y' = c(1.0, 0.7, 0.6),
               
               'refi_hpal_x' = c(-0.1, 0), 
               'refi_hpal_y' = c( 0.5, 1),
+              'refi_hpa_x' = c(0,   5, 12, 15), 
+              'refi_hpa_y' = c(0.8, 1, 1,  1.2),
+              
+              
               'refi_occ_x' = c('I', 'P', 'S'),
               'refi_occ_y' = c(0.55, 1.0, 0.7),
               'refi_chn_x' = c('B', 'R', 'C'),
               'refi_chn_y' = c(1.15, 0.95, 1.0),
               
-              'media_low' = 0.7, 'media_high' = 1.6, 'media_scurve_shift' = -0.45, 'media_scurve_slope' = -0.12,
+              'media_low' = 0.7222222, 'media_high' = 1.633333, 'media_scurve_shift' = -0.45, 'media_scurve_slope' = -0.12,
               
               'curt_als_x' = c(5, 10, 15, 20, 35), 
               'curt_als_y' = c(cpr2smm(80),cpr2smm(28), cpr2smm(20),cpr2smm(10), 0.0),
@@ -649,10 +654,11 @@ params = list('turn_low' = cpr2smm(6.2), 'turn_high' = cpr2smm( 10.1), 'turn_scu
               'curt_factor_y' = c(2.0, 1.5, 1.0)
               )  
 
-#    -15.98697
+#    -15.98637
 
 df[, model_smm := smm_model(.SD, params)]
 objective_function(df, t_index_v)
+plot_act_vs_model2(df, 'cum_eim', bucket_count = 50)
 #plot_act_vs_model2(df, 'ei', bucket_count = 25)
 plot_act_vs_model2(df, 'media_ei_lin', bucket_count = 10)
 plot_act_vs_model2(df, 'busday', bucket_count = 10)
@@ -673,9 +679,14 @@ plot_act_vs_model2(df, 'OCC_STAT', bucket_count = 100)
 plot_act_vs_model2(df, 'CHANNEL', bucket_count = 100)
 plot_act_vs_model2(df, 'DTI', bucket_count = 100)
 plot_act_vs_model2(df, 'hpa_life', bucket_count = 100)
+plot_act_vs_model2(df, 'uer_1y', bucket_count = 10)
+plot_act_vs_model2(df, 'uer_1m60', bucket_count = 10)
+plot_act_vs_model2(df, 'uer', bucket_count = 10)
+plot_act_vs_model2(df, 'hpa', bucket_count = 10)
+
 
 #S-Curves
-plot_profile(df$DTI, df$DTI, df$date, bucket_count = 25)
+plot_profile(df$hpa, df$hpa, df$date, bucket_count = 25)
 
 my_index =  df$ei<0
 plot_act_vs_model2(df, 'DTI', my_index, bucket_count = 100)
@@ -684,18 +695,21 @@ plot_act_vs_model2(df, 'OCC_STAT', my_index, bucket_count = 100)
 plot_act_vs_model2(df, 'CHANNEL', my_index, bucket_count = 100)
 plot_act_vs_model2(df, 'hpa_life',my_index, bucket_count = 100)
 plot_act_vs_model2(df, 'CSCORE_B',my_index, bucket_count = 50)
-
+plot_act_vs_model2(df, 'CHANNEL',my_index, bucket_count = 100)
+plot_act_vs_model2(df, 'uer_1y',my_index, bucket_count = 10)
+plot_act_vs_model2(df, 'uer_1m60',my_index, bucket_count = 10)
+plot_act_vs_model2(df, 'uer',my_index, bucket_count = 10)
 
 
 plot_act_vs_model2(df, 'upb', my_index, bucket_count = 50)
 plot_act_vs_model2(df, 'ei', my_index, bucket_count = 50)
-plot_act_vs_model2(df, 'factor', my_index, bucket_count = 50)
+plot_act_vs_model2(df, 'factor', my_index, bucket_count = 100)
 plot_act_vs_model2(df, 'CLTV', my_index, bucket_count = 50)
 plot_act_vs_model2(df, 'LOAN_AGE', my_index, bucket_count = 50)
 plot_profile(df$upb[my_index], df$upb[my_index], df$CLTV[my_index], bucket_count = 25)
 
 
-my_vars = c('ei', 'LOAN_AGE', 'season_s',  'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL','PROP', 'CSCORE_B',  'CLTV', 'OLTV',  'cum_ei','cum_eim', 'media_ei_lin')
+my_vars = c('ei', 'LOAN_AGE', 'season_s',  'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL','PROP', 'CSCORE_B',  'CLTV', 'OLTV',  'cum_ei','cum_eim', 'media_ei_lin','hpa', 'hpa_life', 'uer')
 plots = llply(my_vars, function(my_var){
   plot_act_vs_model2(df, my_var, bucket_count = 10) + ggtitle(my_var)
 })
@@ -783,7 +797,7 @@ ggplot(res, aes(V1, V2)) + geom_point() + geom_line()
 
 ### GRID search
 #'media_low' = 0.7, 'media_high' = 1.6, 'media_scurve_shift' = -0.45, 'media_scurve_slope' = -0.1,
-param_grid = expand.grid(media_low = seq(0.5, 1.0, length.out = 10), media_high = seq(1.0, 2.0, length.out = 10))
+param_grid = expand.grid(media_low = seq(0.5, 1.0, length.out = 10), media_high = seq(1.5, 1.8, length.out = 10))
 res = ldply(seq(nrow(param_grid)), function(i){
   print(i)
   
@@ -800,8 +814,7 @@ res = ldply(seq(nrow(param_grid)), function(i){
 })
 setDT(res)
 res[objective==max(objective)]
-ggplot(res, aes(media_scurve_shift, media_scurve_slope, fill = (objective-min(objective)), label = sprintf("%.4f",objective-min(objective) ) )) + geom_tile() +  scale_fill_custom('mixed', discrete = FALSE) + theme_bw() +  geom_text()
-ggplot(res, aes(media_scurve_shift, media_scurve_slope, fill = (objective), label = sprintf("%.4f",objective ) )) + geom_tile() +  scale_fill_custom('mixed', discrete = FALSE) + theme_bw() +  geom_text()
+ggplot(res, aes(media_high, media_low, fill = (objective), label = sprintf("%.4f",objective ) )) + geom_tile() +  scale_fill_custom('mixed', discrete = FALSE) + theme_bw() +  geom_text()
 
 
 

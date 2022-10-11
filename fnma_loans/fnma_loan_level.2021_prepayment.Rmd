@@ -621,7 +621,7 @@ refi_objective_function <- function(params_in){
 #Round = 43	turn_low = 0.004791479	turn_high = 0.008352092	turn_scurve_shift = -20.20749	turn_scurve_slope = 20.0000	Value = -15.96594 
 
 ## FIT Turnover S-Curve (-8.078541)
-params = list('turn_scurve_low' = cpr2smm(5.393896), 'turn_scurve_high' = cpr2smm( 10.04244), 'turn_scurve_shift' = -16.03189, 'turn_scurve_slope' = 29.90699 , #'turn_scurve_slope' = 18.61279, 
+params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2smm( 9.476048), 'turn_scurve_shift' =  -10.99395, 'turn_scurve_slope' = 34.38446 , 
               'turn_ramp_x' = c(0,    3,    6,  12,  24,  36), 
               'turn_ramp_y' = c(0.1, 0.3, 0.5, 0.8, 0.9, 1.0),
               'turn_fico_x' = c(680,   720, 760,  780, 800), 
@@ -637,14 +637,11 @@ params = list('turn_scurve_low' = cpr2smm(5.393896), 'turn_scurve_high' = cpr2sm
               'turn_occ_y' = c(0.9, 1.0, 1.1),
               'turn_geo_x' = c('NY', 'PR', 'NV', 'AZ', 'NJ', 'PA', 'MD'),
               'turn_geo_y' = c(0.65,  0.26, 1.4,  1.4,  0.7,  0.67, 0.67),
-              
               'turn_season_x' = c(1,     2,  3,   4,   5,   6,  7,  8,    9, 10, 11, 12),
               'turn_season_y' = c(0.85,1.12,1.15,1.2,1.2,1.15,1.1,1.05,1.05,1.0,0.9,0.8),
               #'refi_low' = cpr2smm(0), 'refi_high' = cpr2smm(20), 'refi_scurve_shift' =  64.95642243, 'refi_scurve_slope' = 20.74949680,
-              'refi_scurve_low' = cpr2smm(0), 'refi_scurve_high' = cpr2smm( 20.26784), 'refi_scurve_shift' = 66.79951,	'refi_scurve_slope' = 27.3186, 
-              
-              'refi_boost_low' = 0.9788007, 'refi_boost_high' = 1.176804, 'refi_boost_shift' =  197.1352,	'refi_boost_slope' = 31.29238,
-              
+              'refi_scurve_low' = cpr2smm(0), 'refi_scurve_high' = cpr2smm( 19.68443), 'refi_scurve_shift' =  62.17133,	'refi_scurve_slope' = 25.90914, 
+              'refi_boost_low' = 0.9813189, 'refi_boost_high' = 1.185357, 'refi_boost_shift' =   162.9560,	'refi_boost_slope' =  26.07849,
               'refi_ramp_x' = c(0,    3,    6,  12), 
               'refi_ramp_y' = c(0.1, 0.4, 0.9, 1.0),
               'refi_als_x' = c(50, 100, 200, 300, 400, 450), 
@@ -656,26 +653,22 @@ params = list('turn_scurve_low' = cpr2smm(5.393896), 'turn_scurve_high' = cpr2sm
               'refi_cltv_y' = c(1.0, 0.6),
               'refi_burn_x' = c(25,  50, 100), 
               'refi_burn_y' = c(1.0, 0.7, 0.6),
-              
               'refi_hpal_x' = c(-0.1, 0), 
               'refi_hpal_y' = c( 0.5, 1),
               'refi_hpa_x' = c(0,   5, 12, 15), 
               'refi_hpa_y' = c(0.8, 1, 1,  1.2),
-              
               'refi_occ_x' = c('I', 'P', 'S'),
               'refi_occ_y' = c(0.55, 1.0, 0.7),
               'refi_chn_x' = c('B', 'R', 'C'),
               'refi_chn_y' = c(1.15, 0.95, 1.0),
-              
               'refi_geo_x' = c('NY', 'PR',  'AZ', 'NJ', 'PA', 'MD'),
               'refi_geo_y' = c(0.38,  0.18, 1.17, 0.9, 0.92, 0.95),
-              
               'refi_dti_x' = c(30,   42,  50), 
               'refi_dti_y' = c(1.1,  1.0, 0.9),
               'refi_dti_na' = 1.0,
               
               #'media_low' = 0.7222222, 'media_high' = 1.633333, 'media_scurve_shift' = -45, 'media_scurve_slope' = -12,
-              'media_scurve_low' = 0.7196269, 'media_scurve_high' = 1.669281, 'media_scurve_shift' = -46.93137, 'media_scurve_slope' = -12.89006,
+              'media_scurve_low' = 0.8200419, 'media_scurve_high' = 1.693147, 'media_scurve_shift' =  -46.62588, 'media_scurve_slope' = -13.4158,
               
               'curt_als_x' = c(5, 10, 15, 20, 35), 
               'curt_als_y' = c(cpr2smm(80),cpr2smm(28), cpr2smm(20),cpr2smm(10), 0.0),
@@ -683,11 +676,10 @@ params = list('turn_scurve_low' = cpr2smm(5.393896), 'turn_scurve_high' = cpr2sm
               'curt_factor_y' = c(2.0, 1.5, 1.0)
               )  
 
-#     -15.90532
-
+#      -15.90073
 df[, model_smm := smm_model(.SD, params)]
 objective_function(df, t_index_v)
-plot_act_vs_model2(df, 'cum_eim', bucket_count = 50)
+plot_act_vs_model2(df, 'ei', bucket_count = 50)
 #plot_act_vs_model2(df, 'ei', bucket_count = 25)
 plot_act_vs_model2(df, 'media_ei_lin', bucket_count = 10)
 plot_act_vs_model2(df, 'busday', bucket_count = 10)
@@ -910,83 +902,44 @@ mads(init_params, function(x)refi_obj_ex(x, param_names, params), control = list
 #Tuning 
 
 ```{r tuning}
-refi_obj <- function(refi_high, refi_scurve_shift, refi_scurve_slope) {
-  
+prepay_obj <- function(...) {
+ input_params <- list(...)
   params_ex = params
-  params_ex['refi_high'] = refi_high
-  params_ex['refi_scurve_shift'] = refi_scurve_shift
-  params_ex['refi_scurve_slope'] = refi_scurve_slope
-  
+  for(param_name in names(input_params)) {  params_ex[[param_name]] = input_params[[param_name]]  }
   df[t_index_v, model_smm := smm_model(.SD, params_ex)]
-
   list(Score = objective_function(df, t_index_v),    Pred = 0)
 }
 ## Round = 25	refi_high = 0.01822716	refi_scurve_shift = 65.62192	refi_scurve_slope = 25.41931	Value = -15.96843 
-## Round = 100	refi_high = 0.01836412	refi_scurve_shift = 66.1442	refi_scurve_slope = 25.55715	Value = -15.96842 
-OPT_Res <- BayesianOptimization(refi_obj,
-                                bounds = list('refi_high' = c(cpr2smm(15), cpr2smm(30)),
+OPT_Res <- BayesianOptimization(prepay_obj,
+                                bounds = list('refi_scurve_high' = c(cpr2smm(15), cpr2smm(30)),
                                               'refi_scurve_shift' = c(60, 70),
                                               'refi_scurve_slope' = c(20, 30)),
                                 init_points = 10, n_iter = 40, verbose = TRUE)
 #Round = 43	turn_low = 0.004791479	turn_high = 0.008352092	turn_scurve_shift = -20.20749	turn_scurve_slope = 20.0000	Value = -15.96594 
 #'turn_low' = cpr2smm(6.2), 'turn_high' = cpr2smm( 10.1), 'turn_scurve_shift' = -22.48904, 'turn_scurve_slope' = 18.61279 , #'turn_scurve_slope' = 18.61279, 
-turn_obj <- function(turn_low, turn_high, turn_scurve_shift, turn_scurve_slope) {
-  
-  params_ex = params
-  params_ex['turn_low'] = turn_low
-  params_ex['turn_high'] = turn_high
-  params_ex['turn_scurve_shift'] = turn_scurve_shift
-  params_ex['turn_scurve_slope'] = turn_scurve_slope
-  
-  df[t_index_v, model_smm := smm_model(.SD, params_ex)]
 
-  list(Score = objective_function(df, t_index_v),    Pred = 0)
-}
-OPT_Res <- BayesianOptimization(turn_obj,
-                                bounds = list('turn_low' = c(cpr2smm(5), cpr2smm(7)),
-                                              'turn_high' = c(cpr2smm(8), cpr2smm(11)),
-                                              'turn_scurve_shift' = c(-25,-15),
-                                              'turn_scurve_slope' = c(15, 30)),
+OPT_Res <- BayesianOptimization(prepay_obj,
+                                bounds = list('turn_scurve_low' = c(cpr2smm(5), cpr2smm(7)),
+                                              'turn_scurve_high' = c(cpr2smm(8), cpr2smm(11)),
+                                              'turn_scurve_shift' = c(-20,-10),
+                                              'turn_scurve_slope' = c(20, 35)),
                                 init_points = 10, n_iter = 40, verbose = TRUE)
 
 
 #'media_low' = 0.7222222, 'media_high' = 1.633333, 'media_scurve_shift' = -45, 'media_scurve_slope' = -12,
-media_obj <- function(media_low, media_high, media_scurve_shift, media_scurve_slope) {
-
-  params_ex = params
-  params_ex['media_low'] = media_low
-  params_ex['media_high'] = media_high
-  params_ex['media_scurve_shift'] = media_scurve_shift
-  params_ex['media_scurve_slope'] = media_scurve_slope
-  
-  df[t_index_v, model_smm := smm_model(.SD, params_ex)]
-
-  list(Score = objective_function(df, t_index_v),    Pred = 0)
-}
 #Round = 35	media_low = 0.7000	media_high = 1.656156	media_scurve_shift = -45.01727	media_scurve_slope = -13.09944	Value = -15.96422
 OPT_Res <- BayesianOptimization(media_obj,
                                 bounds = list('media_low'  = c(0.6, 1.0),
                                               'media_high' = c(1.0, 1.7),
                                               'media_scurve_shift' = c(-50, -10),
-                                              'media_scurve_slope' = c(-80, -10)),
+                                              'media_scurve_slope' = c(-40, -10)),
                                 init_points = 10, n_iter = 50, verbose = TRUE)
 
 # boost optimization ---------------
-boost_obj <- function(...) {
-  input_params <- list(...)
-  params_ex = params
-  for(param_name in names(input_params)) {
-    params_ex[[param_name]] = input_params[[param_name]]
-  }
-  
-  df[t_index_v, model_smm := smm_model(.SD, params_ex)]
-
-  list(Score = objective_function(df, t_index_v),    Pred = 0)
-}
 #Round = 54	refi_boost_low = 0.9763489	refi_boost_high = 1.070678	refi_boost_shift = 150.0000	refi_boost_slope = 31.04256	Value = -15.96382 
 #Round = 60	refi_boost_low = 0.9739461	refi_boost_high = 1.186103	refi_boost_shift = 193.3127	refi_boost_slope = 30.51417	Value = -15.96333 
 OPT_Res <- BayesianOptimization(boost_obj,
-                                bounds = list('refi_boost_low'  = c(0.8, 1.0),
+                                bounds = list('refi_boost_low'  = c(0.9, 1.0),
                                               'refi_boost_high' = c(1.0, 1.2),
                                               'refi_boost_shift' = c(100, 200),
                                               'refi_boost_slope' = c(25, 60)),
@@ -995,20 +948,9 @@ OPT_Res <- BayesianOptimization(boost_obj,
 
 
 # SCURVE optimization ---------------
-scurve_obj <- function(...) {
-  input_params <- list(...)
-  params_ex = params
-  for(param_name in names(input_params)) {
-    params_ex[[param_name]] = input_params[[param_name]]
-  }
-  
-  df[t_index_v, model_smm := smm_model(.SD, params_ex)]
-
-  list(Score = objective_function(df, t_index_v),    Pred = 0)
-}
-#-15.90532
+# -15.90388
 OPT_Res <- BayesianOptimization(scurve_obj,
-                                bounds = list('refi_boost_low'   = c(0.8, 1.0),
+                                bounds = list('refi_boost_low'   = c(0.9, 1.0),
                                               'refi_boost_high'  = c(1.0, 1.2),
                                               'refi_boost_shift' = c(100, 200),
                                               'refi_boost_slope' = c(25, 60),
@@ -1016,7 +958,7 @@ OPT_Res <- BayesianOptimization(scurve_obj,
                                               'media_scurve_low'   = c(0.6, 1.0),
                                               'media_scurve_high'  = c(1.0, 1.7),
                                               'media_scurve_shift' = c(-50, -10),
-                                              'media_scurve_slope' = c(-80, -10),
+                                              'media_scurve_slope' = c(-40, -10),
                                               
                                               'turn_scurve_low'   = c(cpr2smm(5), cpr2smm(7)),
                                               'turn_scurve_high'  = c(cpr2smm(8), cpr2smm(11)),

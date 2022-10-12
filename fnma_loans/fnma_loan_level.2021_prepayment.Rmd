@@ -699,7 +699,7 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
               'curt_factor_y' = c(2.0, 1.5, 1.0)
               )  
 
-#       -15.87677
+# -15.89001
 #params[['refi_boost2_shift']] = 150.6814
 #params[['refi_boost2_high']] = 1.55
 #params[['turn_scurve_high']] = cpr2smm( 10.5)
@@ -932,7 +932,7 @@ refi_obj_ex <- function(x, param_names, params) {
 #param_names = c('refi_scurve_shift', 'refi_scurve_slope', 'refi_low', 'refi_high')
 param_names =c('media_scurve_low', 'media_scurve_high', 'media_scurve_shift', 'media_scurve_slope')
 init_params = sapply(param_names, function(x) params[[x]])
-optim(init_params, function(x)refi_obj_ex(x, param_names, params), method  = "Nelder-Mead", control = list(trace = 6, maxit = 20)) #2.000866
+optim(init_params, function(x)refi_obj_ex(x, param_names, params), method  = "Nelder-Mead", control = list(trace = 6, maxit = 2)) #2.000866
 
 #using dfoptim -------------- "-8.06527"
 library(dfoptim)

@@ -218,6 +218,11 @@ df[order(date), delq_24 := frollsum(as.numeric(DLQ_STATUS!='00'), 24), by =.(LOA
 df = df[!is.na(po_ind)] #remove last date 
 ```
 
+## Load FNMA loan data
+load 1% of loans
+```{r load_data}
+df <- readRDS('D:/loan_level/fnma_1pct.rds')
+```
 ## show data
 
 ```{r show_data}
@@ -278,6 +283,8 @@ df_mev[order(date), rate_3m60:=frollmean(rate, 3) - frollmean(rate, 60)]
 df_mev[order(date), rate_1m60:=rate               - frollmean(rate, 60)]
 df_mev[order(date), uer_1m60 :=uer                - frollmean(uer,  60)]
 df_mev[order(date), uer_1y :=uer - shift(uer, 12)]
+df_mev[order(date), hpi_1m60 :=hpi                - frollmean(hpi,  60)]
+df_mev[order(date), hpi_1m36 :=hpi                - frollmean(hpi,  36)]
 
 setkey(df_mev,'date')
 
@@ -347,6 +354,9 @@ df[df_mev, rate_1m48  := i.rate_1m48, on =.(date)]
 df[df_mev, rate_3m48  := i.rate_3m48, on =.(date)]
 df[df_mev, rate_1m60  := i.rate_1m60, on =.(date)]
 df[df_mev, rate_3m60  := i.rate_3m60, on =.(date)]
+
+df[df_mev, hpi_1m60  := i.hpi_1m60, on =.(date)]
+df[df_mev, hpi_1m36  := i.hpi_1m36, on =.(date)]
 
 df[df_mev, uer       := i.uer,      on =.(date)]
 df[df_mev, uer_1m60  := i.uer_1m60, on =.(date)]
@@ -553,9 +563,10 @@ plot_act_vs_model2 <-function(df, profile, index = NULL, ...){
   return( p )
 }
 
-scurve <- function(x, a, b, shift, slope){
-  a + (b - a)*logistic((x - shift)/slope)
-}
+skewed_logistic1 <-function(x, alpha = 1){  (1+exp(-x))^(-alpha) }
+skewed_logistic2 <-function(x, alpha){  1-exp(-alpha * x) / (1+exp(-x))^alpha }
+scurve <- function(x, a, b, shift, slope){   a + (b - a)*logistic((x - shift)/slope) }
+scurve_skew <- function(x, a, b, shift, slope, skew = 1){   a + (b - a)*skewed_logistic1((x - shift)/slope, skew) }
 
 smm_model <- function(x, params){
     turn_scurve = scurve(x$ei, params[['turn_scurve_low']], params[['turn_scurve_high']], params[['turn_scurve_shift']], params[['turn_scurve_slope']])
@@ -572,6 +583,7 @@ smm_model <- function(x, params){
     
     refi_scurve =  scurve(x$ei, params[['refi_scurve_low']], params[['refi_scurve_high']],  params[['refi_scurve_shift']], params[['refi_scurve_slope']])
     refi_boost   = scurve(x$ei, params[['refi_boost_low']],  params[['refi_boost_high']],   params[['refi_boost_shift']],  params[['refi_boost_slope']])
+    refi_boost2  = scurve(x$ei, params[['refi_boost2_low']],  params[['refi_boost2_high']],   params[['refi_boost2_shift']],  params[['refi_boost2_slope']])
     
     refi_ramp = approx(params[['refi_ramp_x']], params[['refi_ramp_y']], rule = 2, x$LOAN_AGE)$y
     refi_als = approx(params[['refi_als_x']], params[['refi_als_y']], rule = 2, x$upb)$y
@@ -588,6 +600,12 @@ smm_model <- function(x, params){
     refi_dti = approx(params[['refi_dti_x']], params[['refi_dti_y']], rule = 2, x$DTI)$y
     refi_dti[is.na(x$DTI)] =params[['refi_dti_na']]
     
+    refi_mi = approx(params[['refi_mi_x']], params[['refi_mi_y']], rule = 2, x$MI_PCT)$y
+    refi_mi[is.na(x$MI_PCT)] =params[['refi_mi_na']]
+    
+    
+    #refi_hpi1m36 = approx(params[['refi_hpi1m36_x']], params[['refi_hpi1m36_y']], rule = 2, x$hpi_1m36)$y
+    
     media_scurve = scurve(x$media_ei_lin , params[['media_scurve_low']], params[['media_scurve_high']], params[['media_scurve_shift']], params[['media_scurve_slope']])
     
     refi_occ =  params[['refi_occ_y']][ match(x$OCC_STAT, params[['refi_occ_x']])]
@@ -596,7 +614,7 @@ smm_model <- function(x, params){
     refi_geo[is.na(refi_geo)] = 1.0
     
     total_smm = turn_scurve * turn_ramp * turn_season * turn_fico * turn_cltv * turn_als * turn_occ * turn_hpal * turn_geo + 
-      refi_scurve * refi_ramp * refi_als * refi_fico * refi_cltv * refi_occ * refi_burn * media_scurve * refi_chn * refi_hpal * refi_hpa * refi_dti * refi_boost * refi_geo + 
+refi_scurve * refi_ramp * refi_als * refi_fico * refi_cltv * refi_occ * refi_burn * media_scurve * refi_chn * refi_hpal * refi_hpa * refi_dti * refi_boost * refi_geo * refi_mi * refi_boost2+ 
       curt_als * curt_factor
     #total_smm = turn_scurve 
     
@@ -621,7 +639,7 @@ refi_objective_function <- function(params_in){
 #Round = 43	turn_low = 0.004791479	turn_high = 0.008352092	turn_scurve_shift = -20.20749	turn_scurve_slope = 20.0000	Value = -15.96594 
 
 ## FIT Turnover S-Curve (-8.078541)
-params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2smm( 9.476048), 'turn_scurve_shift' =  -10.99395, 'turn_scurve_slope' = 34.38446 , 
+params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2smm( 10.5), 'turn_scurve_shift' =  -10.99395, 'turn_scurve_slope' = 34.38446 , 
               'turn_ramp_x' = c(0,    3,    6,  12,  24,  36), 
               'turn_ramp_y' = c(0.1, 0.3, 0.5, 0.8, 0.9, 1.0),
               'turn_fico_x' = c(680,   720, 760,  780, 800), 
@@ -639,9 +657,11 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
               'turn_geo_y' = c(0.65,  0.26, 1.4,  1.4,  0.7,  0.67, 0.67),
               'turn_season_x' = c(1,     2,  3,   4,   5,   6,  7,  8,    9, 10, 11, 12),
               'turn_season_y' = c(0.85,1.12,1.15,1.2,1.2,1.15,1.1,1.05,1.05,1.0,0.9,0.8),
-              #'refi_low' = cpr2smm(0), 'refi_high' = cpr2smm(20), 'refi_scurve_shift' =  64.95642243, 'refi_scurve_slope' = 20.74949680,
-              'refi_scurve_low' = cpr2smm(0), 'refi_scurve_high' = cpr2smm( 19.68443), 'refi_scurve_shift' =  62.17133,	'refi_scurve_slope' = 25.90914, 
-              'refi_boost_low' = 0.9813189, 'refi_boost_high' = 1.185357, 'refi_boost_shift' =   162.9560,	'refi_boost_slope' =  26.07849,
+              'refi_scurve_low' = cpr2smm(0), 'refi_scurve_high' = cpr2smm(   17.05326), 'refi_scurve_shift' =  64,	'refi_scurve_slope' = 24.1824, 
+              #'refi_boost_low' = 0.9813189, 'refi_boost_high' = 1.185357, 'refi_boost_shift' =   162.9560,	'refi_boost_slope' =  26.07849,
+              'refi_boost_low' = 1, 'refi_boost_high' = 1.0, 'refi_boost_shift' =   162.9560,	'refi_boost_slope' =  26.07849,
+              'refi_boost2_low' = 1, 'refi_boost2_high' =  1.55, 'refi_boost2_shift' =   150.6814,	'refi_boost2_slope' =  29.37753,
+              #'refi_boost2_low' = 1, 'refi_boost2_high' = 1.058981, 'refi_boost2_shift' =   199.8496,	'refi_boost2_slope' =  5.584044,
               'refi_ramp_x' = c(0,    3,    6,  12), 
               'refi_ramp_y' = c(0.1, 0.4, 0.9, 1.0),
               'refi_als_x' = c(50, 100, 200, 300, 400, 450), 
@@ -657,6 +677,9 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
               'refi_hpal_y' = c( 0.5, 1),
               'refi_hpa_x' = c(0,   5, 12, 15), 
               'refi_hpa_y' = c(0.8, 1, 1,  1.2),
+              'refi_mi_x' = c(15,       25),
+              'refi_mi_y' = c(1.053791, 1.126928),
+              'refi_mi_na' = 1.0,
               'refi_occ_x' = c('I', 'P', 'S'),
               'refi_occ_y' = c(0.55, 1.0, 0.7),
               'refi_chn_x' = c('B', 'R', 'C'),
@@ -668,7 +691,7 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
               'refi_dti_na' = 1.0,
               
               #'media_low' = 0.7222222, 'media_high' = 1.633333, 'media_scurve_shift' = -45, 'media_scurve_slope' = -12,
-              'media_scurve_low' = 0.8200419, 'media_scurve_high' = 1.693147, 'media_scurve_shift' =  -46.62588, 'media_scurve_slope' = -13.4158,
+              'media_scurve_low' = 0.8075042, 'media_scurve_high' = 1.755866, 'media_scurve_shift' =  -51.03237, 'media_scurve_slope' = -13.56413,
               
               'curt_als_x' = c(5, 10, 15, 20, 35), 
               'curt_als_y' = c(cpr2smm(80),cpr2smm(28), cpr2smm(20),cpr2smm(10), 0.0),
@@ -676,17 +699,24 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
               'curt_factor_y' = c(2.0, 1.5, 1.0)
               )  
 
-#      -15.90073
+#       -15.87677
+#params[['refi_boost2_shift']] = 150.6814
+#params[['refi_boost2_high']] = 1.55
+#params[['turn_scurve_high']] = cpr2smm( 10.5)
+#params[['refi_scurve_shift']] =  64
+
 df[, model_smm := smm_model(.SD, params)]
 objective_function(df, t_index_v)
+#plot_act_vs_model2(df, 'MI_PCT', bucket_count = 100)
 plot_act_vs_model2(df, 'ei', bucket_count = 50)
-#plot_act_vs_model2(df, 'ei', bucket_count = 25)
 plot_act_vs_model2(df, 'media_ei_lin', bucket_count = 10)
 plot_act_vs_model2(df, 'busday', bucket_count = 10)
 
 plot_act_vs_model2(df, 'upb', bucket_count =  100)
 plot_act_vs_model2(df, 'date', bucket_count =  25)
 plot_act_vs_model2(df, 'CLTV', bucket_count =  100)
+plot_act_vs_model2(df, 'OLTV', bucket_count =  20)
+
 plot_act_vs_model2(df, 'ei', bucket_count = 50)
 plot_act_vs_model2(df, 'LOAN_AGE', bucket_count = 100)
 plot_act_vs_model2(df, 'upb', bucket_count = 100)
@@ -703,13 +733,19 @@ plot_act_vs_model2(df, 'factor', bucket_count = 100)
 plot_act_vs_model2(df, 'OCC_STAT', bucket_count = 100)
 plot_act_vs_model2(df, 'CHANNEL', bucket_count = 100)
 plot_act_vs_model2(df, 'DTI', bucket_count = 50)
-plot_act_vs_model2(df, 'hpa', bucket_count = 25)
-plot_act_vs_model2(df, 'hpa_life', bucket_count = 100)
+plot_act_vs_model2(df, 'hpa', bucket_count = 10)
+plot_act_vs_model2(df, 'hpa_life', bucket_count = 10)
 plot_act_vs_model2(df, 'uer_1y', bucket_count = 10)
 plot_act_vs_model2(df, 'uer_1m60', bucket_count = 10)
 plot_act_vs_model2(df, 'uer', bucket_count = 10)
 plot_act_vs_model2(df, 'no_cscore', bucket_count = 10)
 plot_act_vs_model2(df, 'STATE', bucket_count = 10)
+plot_act_vs_model2(df, 'sato', bucket_count = 20)
+plot_act_vs_model2(df, 'hpi_1m60', bucket_count = 50)
+plot_act_vs_model2(df, 'hpi_1m36', bucket_count = 10)
+plot_act_vs_model2(df, 'orig_year', bucket_count = 100)
+plot_act_vs_model2(df, 'CURR_RATE', bucket_count = 100)
+
 
 #sum(is.na(df$CSCORE_B))
 #c('NY', 'PR', 'NV', 'AZ', 'NJ', 'PA', 'MD'),
@@ -727,6 +763,7 @@ plot_profile(df$hpa, df$hpa, df$date, bucket_count = 25)
 #cc(df[, .(.N, mean(po_ind, na.rm = TRUE), mean(model_smm, na.rm = TRUE)), by = .(STATE)])
 
 my_index =  df$ei<0
+plot_act_vs_model2(df, 'orig_year', my_index, bucket_count = 100)
 plot_act_vs_model2(df, 'DTI', my_index, bucket_count = 100)
 plot_act_vs_model2(df, 'season_s', my_index, bucket_count = 100)
 plot_act_vs_model2(df, 'OCC_STAT', my_index, bucket_count = 100)
@@ -740,12 +777,16 @@ plot_act_vs_model2(df, 'uer',my_index, bucket_count = 10)
 plot_act_vs_model2(df, 'no_cscore',my_index, bucket_count = 10)
 plot_act_vs_model2(df, 'DTI',my_index, bucket_count = 100)
 plot_act_vs_model2(df, 'STATE',my_index, bucket_count = 100)
+plot_act_vs_model2(df, 'MI_PCT',my_index, bucket_count = 100)
+plot_act_vs_model2(df, 'CURR_RATE',my_index, bucket_count = 100)
 
 plot_act_vs_model2(df, 'upb', my_index, bucket_count = 50)
 plot_act_vs_model2(df, 'ei', my_index, bucket_count = 50)
 plot_act_vs_model2(df, 'factor', my_index, bucket_count = 100)
 plot_act_vs_model2(df, 'CLTV', my_index, bucket_count = 50)
 plot_act_vs_model2(df, 'LOAN_AGE', my_index, bucket_count = 50)
+
+
 plot_profile(df$upb[my_index], df$upb[my_index], df$CLTV[my_index], bucket_count = 25)
 
 
@@ -754,14 +795,14 @@ my_vars = c('ei', 'LOAN_AGE', 'season_s',  'upb', 'PURPOSE', 'OCC_STAT', 'CHANNE
 plots = llply(my_vars, function(my_var){
   plot_act_vs_model2(df, my_var, bucket_count = 10) + ggtitle(my_var)
 })
-marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+marrangeGrob(plots, nrow = 4, ncol = 5, top = NULL)
 
 #s-curves  
-buckets = cutq(df$upb, seq(0, 1, length.out = 13))
+buckets = cutq(df$upb, seq(0, 1, length.out = 10))
 plots = llply(levels(buckets), function(my_level){
   plot_act_vs_model2(df, 'LOAN_AGE', buckets == my_level, bucket_count = 25) + ggtitle(my_level)
 })
-marrangeGrob(plots, nrow = 3, ncol = 4, top = NULL)
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 
 buckets = df$CHANNEL
 plots = llply(unique(buckets), function(my_level){
@@ -840,12 +881,12 @@ turn_obj_1d <- function(x, param_name, param_index = 0) {
   
   df[t_index_v, model_smm := smm_model(.SD, params_mod)]
 
-  objective_function(df, index)
+  objective_function(df, t_index_v)
 }
-optimize(function(x) turn_obj_1d(x,"turn_low"),interval = c(cpr2smm(4), cpr2smm(6)), maximum = TRUE) #2.000866
+optimize(function(x) turn_obj_1d(x,"refi_mi_y", 2),interval = c(0.9, 1.2), maximum = TRUE) #2.000866
 
 #grid search 
-res = ldply(seq(10, 50, by = 5), function(x) c(x, turn_obj_1d(x, "turn_scurve_slope")) )
+res = ldply(seq(0.9, 1.1, by = 5), function(x) c(x, turn_obj_1d(x, "refi_hpi1m36_y", 1)) )
 ggplot(res, aes(V1, V2)) + geom_point() + geom_line()
 
 
@@ -889,14 +930,31 @@ refi_obj_ex <- function(x, param_names, params) {
 }
 
 #param_names = c('refi_scurve_shift', 'refi_scurve_slope', 'refi_low', 'refi_high')
-param_names =c('media_low', 'media_high', 'media_scurve_shift', 'media_scurve_slope')
+param_names =c('media_scurve_low', 'media_scurve_high', 'media_scurve_shift', 'media_scurve_slope')
 init_params = sapply(param_names, function(x) params[[x]])
-optim(init_params, function(x)refi_obj_ex(x, param_names, params), method  = "Nelder-Mead", control = list(trace = 6, maxit = 600)) #2.000866
+optim(init_params, function(x)refi_obj_ex(x, param_names, params), method  = "Nelder-Mead", control = list(trace = 6, maxit = 20)) #2.000866
 
 #using dfoptim -------------- "-8.06527"
 library(dfoptim)
 hjk(init_params,  function(x)refi_obj_ex(x, param_names, params), control = list(maxfeval = 100, info = TRUE))
 mads(init_params, function(x)refi_obj_ex(x, param_names, params), control = list(maxfeval = 100, info = TRUE))
+```
+
+#PD Profile
+
+```{r pd_profile}
+
+df_pd = ldply(seq(-200, 300, length.out = 100), function(ei_in){ 
+  a = df[1,]
+  a[, ei:=ei_in]
+  return (a) })
+
+setDT(df_pd)
+
+df_pd[, model_smm := smm_model(.SD, params)]
+
+ggplot(df_pd, aes(ei, model_smm )) + geom_line() + geom_point()  #+ geom_line(aes(ei, model_smm * scurve(ei, 1.0, 1.2, 100, 50)))
+
 ```
 
 #Tuning 
@@ -912,8 +970,8 @@ prepay_obj <- function(...) {
 ## Round = 25	refi_high = 0.01822716	refi_scurve_shift = 65.62192	refi_scurve_slope = 25.41931	Value = -15.96843 
 OPT_Res <- BayesianOptimization(prepay_obj,
                                 bounds = list('refi_scurve_high' = c(cpr2smm(15), cpr2smm(30)),
-                                              'refi_scurve_shift' = c(60, 70),
-                                              'refi_scurve_slope' = c(20, 30)),
+                                              'refi_scurve_shift' = c(50, 80),
+                                              'refi_scurve_slope' = c(20, 40)),
                                 init_points = 10, n_iter = 40, verbose = TRUE)
 #Round = 43	turn_low = 0.004791479	turn_high = 0.008352092	turn_scurve_shift = -20.20749	turn_scurve_slope = 20.0000	Value = -15.96594 
 #'turn_low' = cpr2smm(6.2), 'turn_high' = cpr2smm( 10.1), 'turn_scurve_shift' = -22.48904, 'turn_scurve_slope' = 18.61279 , #'turn_scurve_slope' = 18.61279, 
@@ -928,17 +986,17 @@ OPT_Res <- BayesianOptimization(prepay_obj,
 
 #'media_low' = 0.7222222, 'media_high' = 1.633333, 'media_scurve_shift' = -45, 'media_scurve_slope' = -12,
 #Round = 35	media_low = 0.7000	media_high = 1.656156	media_scurve_shift = -45.01727	media_scurve_slope = -13.09944	Value = -15.96422
-OPT_Res <- BayesianOptimization(media_obj,
-                                bounds = list('media_low'  = c(0.6, 1.0),
-                                              'media_high' = c(1.0, 1.7),
-                                              'media_scurve_shift' = c(-50, -10),
+OPT_Res <- BayesianOptimization(prepay_obj,
+                                bounds = list('media_scurve_low'  = c(0.6, 1.0),
+                                              'media_scurve_high' = c(1.0, 2.0),
+                                              'media_scurve_shift' = c(-60, -10),
                                               'media_scurve_slope' = c(-40, -10)),
-                                init_points = 10, n_iter = 50, verbose = TRUE)
+                                init_points = 10, n_iter = 40, verbose = TRUE)
 
 # boost optimization ---------------
 #Round = 54	refi_boost_low = 0.9763489	refi_boost_high = 1.070678	refi_boost_shift = 150.0000	refi_boost_slope = 31.04256	Value = -15.96382 
 #Round = 60	refi_boost_low = 0.9739461	refi_boost_high = 1.186103	refi_boost_shift = 193.3127	refi_boost_slope = 30.51417	Value = -15.96333 
-OPT_Res <- BayesianOptimization(boost_obj,
+OPT_Res <- BayesianOptimization(prepay_obj,
                                 bounds = list('refi_boost_low'  = c(0.9, 1.0),
                                               'refi_boost_high' = c(1.0, 1.2),
                                               'refi_boost_shift' = c(100, 200),
@@ -946,10 +1004,18 @@ OPT_Res <- BayesianOptimization(boost_obj,
                                 init_points = 10, n_iter = 50, verbose = TRUE)
 
 
+OPT_Res <- BayesianOptimization(prepay_obj,
+                                bounds = list(
+                                              'refi_boost2_high'  = c(1.0, 1.5),
+                                              'refi_boost2_shift' = c(100, 200),
+                                              'refi_boost2_slope' = c(2, 60)),
+                                init_points = 10, n_iter = 50, verbose = TRUE)
+
+
 
 # SCURVE optimization ---------------
 # -15.90388
-OPT_Res <- BayesianOptimization(scurve_obj,
+OPT_Res <- BayesianOptimization(prepay_obj,
                                 bounds = list('refi_boost_low'   = c(0.9, 1.0),
                                               'refi_boost_high'  = c(1.0, 1.2),
                                               'refi_boost_shift' = c(100, 200),
@@ -968,22 +1034,13 @@ OPT_Res <- BayesianOptimization(scurve_obj,
                                               'refi_scurve_high'  = c(cpr2smm(15), cpr2smm(30)),
                                               'refi_scurve_shift' = c(60, 70),
                                               'refi_scurve_slope' = c(20, 30)),
-                                init_points = 10, n_iter = 50, verbose = TRUE)
+                                init_points = 100, n_iter = 100, verbose = TRUE)
 
 
 ```
 
 #SCurves
 ```{r scurve_parameters}
-
-skewed_logistic1 <-function(x, alpha = 1){
-  (1+exp(-x))^(-alpha)
-}
-
-
-skewed_logistic2 <-function(x, alpha){
-  1-exp(-alpha * x) / (1+exp(-x))^alpha
-}
 
 df_sc = data.table(ei = seq(-200, 200))
 
@@ -1102,5 +1159,6 @@ ggplot(res[deviance<null.deviance], aes(shift, width, fill = 1-deviance/null.dev
 ggplot(df[LOAN_ID == '000097473153'], aes(date, cum_eim)) + geom_line()
 ggplot(df[LOAN_ID == '000097473153'], aes(date, ei_1m)) + geom_line()
 ```
+
 
 

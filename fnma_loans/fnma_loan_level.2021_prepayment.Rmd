@@ -294,11 +294,13 @@ df_busday[, date_week := wday(date)]
 df_busday = df_busday[date_week %!in% c(1, 7),.(.N), by=date_month][N>15]
 
 # ----------------------------------------
-ggplot(df_mev[date>'2000-01-01'], aes(date, rate)) + geom_line()
-ggplot(df_mev[date>'2000-01-01'], aes(date, rate_3m48)) + geom_line()
-ggplot(df_mev[date>'2000-01-01'], aes(date, rate_1m60)) + geom_line()
-ggplot(df_mev[date>'2000-01-01'], aes(date, hpi)) + geom_line()
-ggplot(df_mev[date>'2000-01-01'], aes(date, hpa)) + geom_line()
+if(FALSE){
+  ggplot(df_mev[date>'2000-01-01'], aes(date, rate)) + geom_line()
+  ggplot(df_mev[date>'2000-01-01'], aes(date, rate_3m48)) + geom_line()
+  ggplot(df_mev[date>'2000-01-01'], aes(date, rate_1m60)) + geom_line()
+  ggplot(df_mev[date>'2000-01-01'], aes(date, hpi)) + geom_line()
+  ggplot(df_mev[date>'2000-01-01'], aes(date, hpa)) + geom_line()
+}
 
 ```
 
@@ -388,24 +390,26 @@ df_agg = df[,.(.N, upb = sum(upb, na.rm = TRUE), po = mean(po_ind, na.rm = TRUE)
 #ccf(df_agg$smm, df_agg$ei, lag.max = 5)
 ccf(df_agg$smm, df_agg$ei, lag.max = 5, plot = FALSE)
 
-#ggplot(df_agg, aes(smm, inc)) + geom_point()
-ggplot(df_agg, aes(date, N)) + geom_point()
-ggplot(df_agg, aes(date, upb)) + geom_point()
-ggplot(df_agg, aes(date, upb/N)) + geom_point()
-ggplot(df_agg, aes(date, ei)) + geom_point() + geom_line() 
-ggplot(df_agg, aes(date, po)) + geom_point() + geom_line() + geom_line(aes(date, smm), color = 'red')
-ggplot(df_agg, aes(date, ei/2)) + geom_point() + geom_line() + geom_line(aes(date, smm2cpr(smm)), color = 'red')
-
-df_agg = df[,.(.N, upb = sum(upb, na.rm = TRUE), po = mean(po_ind), 
-               smm = weighted.mean(po_ind, sbal, na.rm = TRUE )), by=.(LOAN_AGE)]
-
-ggplot(df_agg, aes(LOAN_AGE, upb/N)) + geom_point()
-ggplot(df_agg[N>100], aes(LOAN_AGE, po)) + geom_point() + geom_line() + geom_line(aes(LOAN_AGE, smm), color = 'red')
-
-plot_profile(df$po_ind, df$po_ind, df$date)
-plot_profile(df$po_ind, df$po_ind, df$ei)
-plot_profile(df$po_ind, df$po_ind, df$cum_ei)
-plot_profile(df$po_ind, df$po_ind, df$cum_eim)
+if(FALSE){
+  #ggplot(df_agg, aes(smm, inc)) + geom_point()
+  ggplot(df_agg, aes(date, N)) + geom_point()
+  ggplot(df_agg, aes(date, upb)) + geom_point()
+  ggplot(df_agg, aes(date, upb/N)) + geom_point()
+  ggplot(df_agg, aes(date, ei)) + geom_point() + geom_line() 
+  ggplot(df_agg, aes(date, po)) + geom_point() + geom_line() + geom_line(aes(date, smm), color = 'red')
+  ggplot(df_agg, aes(date, ei/2)) + geom_point() + geom_line() + geom_line(aes(date, smm2cpr(smm)), color = 'red')
+  
+  df_agg = df[,.(.N, upb = sum(upb, na.rm = TRUE), po = mean(po_ind), 
+                 smm = weighted.mean(po_ind, sbal, na.rm = TRUE )), by=.(LOAN_AGE)]
+  
+  ggplot(df_agg, aes(LOAN_AGE, upb/N)) + geom_point()
+  ggplot(df_agg[N>100], aes(LOAN_AGE, po)) + geom_point() + geom_line() + geom_line(aes(LOAN_AGE, smm), color = 'red')
+  
+  plot_profile(df$po_ind, df$po_ind, df$date)
+  plot_profile(df$po_ind, df$po_ind, df$ei)
+  plot_profile(df$po_ind, df$po_ind, df$cum_ei)
+  plot_profile(df$po_ind, df$po_ind, df$cum_eim)
+}
 ```
 
 
@@ -1161,4 +1165,153 @@ ggplot(df[LOAN_ID == '000097473153'], aes(date, ei_1m)) + geom_line()
 ```
 
 
+#Simple paramatric model
+
+     par1         par2         par3         par4         par5         par6         par7         par8         par9        par10        par11        par12        par13        par14 
+  4.87201650   6.19723842 -12.47976449  33.25313274   0.16833252   0.33770630   0.24760142   0.62744220   0.93352558   0.77902162   0.70219527   1.20314616   1.49708316   1.08563802 
+       par15        par16        par17        par18        par19        par20        par21        par22        par23        par24        par25        par26        par27        par28 
+  1.46764033   1.39246333   1.15373780   0.58280189   0.99389601   1.03518826   1.00540658   0.80723339   0.84916305  35.13632105  67.12934556  36.19850046   0.06701411   0.38693808 
+       par29        par30 
+  0.81473242   0.81008732 
+  
+```{r burnout_parameters}
+library(DEoptim)
+library(optimx)
+library(dfoptim)
+library(pso)
+
+t_index_v = sample.int(nrow(df), 1e5)
+
+plot_act_vs_model2 <-function(df, profile, index = NULL, ...){
+  p = NULL
+  if(is.null(index)) {
+    p = plot_profile(df[['model_smm']], df[['po_ind']], df[[profile]], map_fun = smm2cpr, ...)
+  }else{
+    p = plot_profile(df[['model_smm']][index], df[['po_ind']][index], df[[profile]][index], map_fun = smm2cpr, ...)
+  }
+  return( p )
+}
+
+scurve <- function(x, a, b, shift, slope){   a + (b - a)*logistic((x - shift)/slope) }
+
+smm_model <- function(x, params){
+    turn_scurve = scurve(x$ei, params[['turn_scurve_low']], params[['turn_scurve_high']], params[['turn_scurve_shift']], params[['turn_scurve_slope']])
+    turn_ramp = approx(params[['turn_ramp_x']], params[['turn_ramp_y']], rule = 2, x$LOAN_AGE)$y
+    turn_season = approx(params[['turn_season_x']], params[['turn_season_y']], rule = 2, x$season)$y
+    
+    refi_scurve =  scurve(x$ei, params[['refi_scurve_low']], params[['refi_scurve_high']],  params[['refi_scurve_shift']], params[['refi_scurve_slope']])
+    refi_ramp = approx(params[['refi_ramp_x']], params[['refi_ramp_y']], rule = 2, x$LOAN_AGE)$y
+    media_scurve = scurve(x$media_ei_lin , params[['media_scurve_low']], params[['media_scurve_high']], params[['media_scurve_shift']], params[['media_scurve_slope']])
+    
+    total_smm = turn_scurve * turn_ramp * turn_season  + refi_scurve * refi_ramp * media_scurve
+    #total_smm = turn_scurve 
+    
+    return( pmin(1.0-1e-9, pmax(1e-9, total_smm)) )
+}
+
+## FIT Turnover S-Curve (-8.078541)
+params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2smm( 10.5), 'turn_scurve_shift' =  -10.99395, 'turn_scurve_slope' = 34.38446 , 
+              'turn_ramp_x' = c(0,    3,    6,  12,  24,  36), 
+              'turn_ramp_y' = c(0.1, 0.3, 0.5, 0.8, 0.9, 1.0),
+              'turn_season_x' = c(1,     2,  3,   4,   5,   6,  7,  8,    9, 10, 11, 12),
+              'turn_season_y' = c(0.85,1.12,1.15,1.2,1.2,1.15,1.1,1.05,1.05,1.0,0.9,0.8),
+              
+              'refi_scurve_low' = cpr2smm(0), 'refi_scurve_high' = cpr2smm(   17.05326), 'refi_scurve_shift' =  64,	'refi_scurve_slope' = 24.1824, 
+              'refi_ramp_x' = c(0,    3,    6,  12), 
+              'refi_ramp_y' = c(0.1, 0.4, 0.9, 1.0),
+              'media_scurve_low' = 0.8075042, 'media_scurve_high' = 1.755866, 'media_scurve_shift' =  -51.03237, 'media_scurve_slope' = -13.56413
+              )  
+
+# -15.89001
+#params[['refi_boost2_shift']] = 150.6814
+#params[['refi_boost2_high']] = 1.55
+#params[['turn_scurve_high']] = cpr2smm( 10.5)
+#params[['refi_scurve_shift']] =  64
+
+get_smm_params<-function(x){
+    my_params = list('turn_scurve_low' = cpr2smm(x[1]), 'turn_scurve_high' = cpr2smm( x[2]), 'turn_scurve_shift' =  x[3], 'turn_scurve_slope' = x[4] , 
+              'turn_ramp_x' = c(0,    3,    6,  12,  24,  36), 
+              'turn_ramp_y' = x[5:10],
+              'turn_season_x' = c(1,     2,  3,   4,   5,   6,  7,  8,    9, 10, 11, 12),
+              'turn_season_y' = x[11:22],
+              
+              'refi_scurve_low' =  cpr2smm(  x[23] ), 'refi_scurve_high' = cpr2smm(   x[24]), 'refi_scurve_shift' =  x[25],	'refi_scurve_slope' = x[26], 
+              'refi_ramp_x' = c(0,    3,    6,  12), 
+              'refi_ramp_y' = x[27:30],
+              'media_scurve_low' = x[31], 'media_scurve_high' = x[32], 'media_scurve_shift' =  x[33], 'media_scurve_slope' = x[34]
+              ) 
+    return (my_params)
+}
+objective_function_optim <- function(x){
+  my_params = get_smm_params(x)
+  df[t_index_v, model_smm := smm_model(.SD, my_params)]
+  return( df[t_index_v, -sum( po_ind * log(model_smm) + (1-po_ind) * log(1-model_smm),rm.na = TRUE)  ] )
+}
+
+df[, model_smm := smm_model(.SD, params)]
+plot_act_vs_model2(df, 'ei', bucket_count = 50)
+
+
+#DEoptim --------------------------------------
+           #turn_scurve     turn_ramp         turn_season     refi_scurve     refi_ramp
+lo_lim = c(1,   5, -20, 10,   0, rep(0.1, 5),   rep(0.5, 12),  0,   0,   0, 10,   rep(0.0, 4), 1.0,1.0, -70, -30)
+up_lim = c(5,  12,   0, 40,   1, rep(1.0, 5),   rep(1.5, 12),  1,  50, 100, 40,   rep(1.0, 4), 1.8,1.8, -30, -10)
+init_params = c(5.721711, 10.5, -10.99395, 34.38446, 0.1, 0.3, 0.5, 0.8, 0.9, 1.0, 0.85,1.12,1.15,1.2,1.2,1.15,1.1,1.05,1.05,1.0,0.9,0.8, 0, 17.05326, 64, 24.1824, 0.1, 0.4, 0.9, 1.0, 1.1,  1.755866, -51.03237, -13.56413)
+#res = DEoptim(objective_function_optim, lo_lim, up_lim, control = DEoptim.control(itermax = 10, trace = TRUE,  parallelType=1, parVar = c('get_smm_params', 'cpr2smm', 'df', 't_index_v') ))
+#6943.463
+res = DEoptim(objective_function_optim, lo_lim, up_lim, control = DEoptim.control(itermax = 1000, trace = TRUE ))
+
+objective_function_optim(init_params) #6871.019
+objective_function_optim(res$optim$bestmem)
+
+df[, model_smm := smm_model(.SD, get_smm_params(init_params))]
+df[, model_smm := smm_model(.SD, get_smm_params(up_lim))]
+df[, model_smm := smm_model(.SD, get_smm_params(res$optim$bestmem))]
+plot_act_vs_model2(df, 'date', bucket_count = 50)
+plot_act_vs_model2(df, 'ei', bucket_count = 50)
+
+#optimx --------------------------------------
+#optimx(init_params, objective_function_optim, lower=lo_lim, upper=up_lim, method="Nelder-Mead", itnmax=100, control  = list(trace = 1))
+optimx(init_params, objective_function_optim, lower=lo_lim, upper=up_lim, method="L-BFGS-B", itnmax=10, control  = list(trace = 1))
+
+#6936.693
+res = hjkb(init_params, objective_function_optim, lower=lo_lim, upper=up_lim,  control = list(maxfeval = 10000, info = TRUE))
+#res = nmkb(par=init_params, fn=objective_function_optim, lower=lo_lim, upper=up_lim,  control = list(maxfeval = 100, info = TRUE))
+
+objective_function_optim(init_params)
+objective_function_optim(res$par)
+
+df[, model_smm := smm_model(.SD, get_smm_params(res$par))]
+plot_act_vs_model2(df, 'ei', bucket_count = 50)
+plot_act_vs_model2(df, 'date', bucket_count = 50)
+
+#### PD profiles
+df_pd = ldply(seq(-200, 300, length.out = 100), function(ei_in){ 
+  a = df[30,]
+  a[, ei:=ei_in]
+  return (a) })
+
+setDT(df_pd)
+
+df_pd[, model_smm := smm_model(.SD, get_smm_params(init_params))]
+
+ggplot(df_pd, aes(ei, smm2cpr(model_smm) )) + geom_line() + geom_point()  #+ geom_line(aes(ei, model_smm * scurve(ei, 1.0, 1.2, 100, 50)))
+
+#VS date
+df_pd = ldply(seq(-200, 300, by = 50), function(ei_in){ 
+  df_pd = ldply(sort(unique(df$date)), function(my_date){ 
+    a = df[30,]
+    a[, season:=month(my_date)]
+    a[, date:=my_date]
+    a[, ei:=ei_in]
+    return (a) })
+  return (df_pd)
+})
+setDT(df_pd)
+
+df_pd[, model_smm := smm_model(.SD, get_smm_params(init_params))]
+
+ggplot(df_pd, aes(date, smm2cpr(model_smm), group = ei, color = factor(ei) )) + geom_line() + geom_point()  #+ geom_line(aes(ei, model_smm * scurve(ei, 1.0, 1.2, 100, 50)))
+
+```
 

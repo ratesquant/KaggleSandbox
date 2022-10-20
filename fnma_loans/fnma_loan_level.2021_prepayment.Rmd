@@ -27,6 +27,15 @@ working_folder = 'D:/Github/KaggleSandbox'
 #working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
 source(file.path(working_folder, '/Utils/common.R'))
 
+#test_df = data.table(i = seq(0, 360))
+#test_df[, pay := pmt(6.0, 360-i)]
+#test_df[, n_sb := next_sched_balance(6.0, 360-i)]
+#test_df[, sb := sched_balance(i, 6.0, 360)]
+```
+
+## Functions
+```{r unit_functions}
+
 smm2cpr <- function(smm){
   100.0*(1.0 - (1.0 - smm)^12)
 }
@@ -65,18 +74,33 @@ uwac_model <- function(rate, logistic = FALSE){
   return(uwac)
 }
 
-#test_df = data.table(i = seq(0, 360))
-#test_df[, pay := pmt(6.0, 360-i)]
-#test_df[, n_sb := next_sched_balance(6.0, 360-i)]
-#test_df[, sb := sched_balance(i, 6.0, 360)]
-```
-
-
-## Load FNMA loan data
-load 1% of loans
-```{r load_data}
-data_folder = 'W:/loan_level/fnma/raw'
-#data_folder = 'D:/loan_level/'
+plot_model_coefs <- function(params){
+  df_names = data.table(name = names(params))
+  df_names[, suffix := tstrsplit(name, '_', keep = 3)]
+  df_names[, c("name1", "name2") := tstrsplit(name, '_', keep = 1:2)]
+  df_names[, prefix := stri_join(name1, name2, sep = '_')]
+  
+  ei = seq(-200, 200, by = 10)
+  
+  plots = llply(unique(df_names$prefix), function(x){
+    
+    p = ggplot() + geom_blank() + ggtitle(x)
+    if(length(grep('scurve', x))>0 || length(grep('boost', x))>0  ){
+      a = params[[stri_join(x, '_low')]]
+      b = params[[stri_join(x, '_high')]]
+      shift = params[[stri_join(x, '_shift')]]
+      slope = params[[stri_join(x, '_slope')]]
+      p = ggplot(data.table(ei, scurve = scurve(ei, a, b, shift, slope) )) + geom_line(aes(ei, scurve)) + ggtitle(x)
+    }else{
+      xi = params[[stri_join(x, '_x')]]
+      yi = params[[stri_join(x, '_y')]]
+      p = ggplot(data.table(xi,yi), aes(xi, yi)) + geom_line() + geom_point() + ggtitle(x)
+    }
+    return (p)
+  })
+  
+  return (plots)
+}
 
 to_date<-function(date_string){
   as.Date(stri_join(ifelse(stri_length(date_string) == 5, '010','01'), date_string), format = '%d%m%Y')
@@ -85,6 +109,14 @@ to_date2<-function(date_string){
  ns = stri_length(date_string)
  make_date(as.numeric(stri_sub(date_string, ns-3)), as.numeric(stri_sub(date_string, to = ns-4)), 1)
 }
+```
+
+## Load FNMA loan data
+load 1% of loans
+```{r load_data}
+data_folder = 'W:/loan_level/fnma/raw'
+#data_folder = 'D:/loan_level/'
+
 #to_date(c('52003','122003'))
 #to_date2(c('52003','122003'))
 #library(microbenchmark)
@@ -702,6 +734,10 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
               'curt_factor_x' = c(0, 0.1, 0.5), 
               'curt_factor_y' = c(2.0, 1.5, 1.0)
               )  
+plots = plot_model_coefs(params)
+marrangeGrob(plots, nrow = 5, ncol = 6, top = NULL)
+
+
 
 # -15.89001
 #params[['refi_boost2_shift']] = 150.6814
@@ -1242,6 +1278,7 @@ get_smm_params<-function(x){
               ) 
     return (my_params)
 }
+
 objective_function_optim <- function(x){
   my_params = get_smm_params(x)
   df[t_index_v, model_smm := smm_model(.SD, my_params)]
@@ -1255,14 +1292,24 @@ plot_act_vs_model2(df, 'ei', bucket_count = 50)
 #DEoptim --------------------------------------
            #turn_scurve     turn_ramp         turn_season     refi_scurve     refi_ramp
 lo_lim = c(1,   5, -20, 10,   0, rep(0.1, 5),   rep(0.5, 12),  0,   0,   0, 10,   rep(0.0, 4), 1.0,1.0, -70, -30)
-up_lim = c(5,  12,   0, 40,   1, rep(1.0, 5),   rep(1.5, 12),  1,  50, 100, 40,   rep(1.0, 4), 1.8,1.8, -30, -10)
+up_lim = c(6,  12,   0, 40,   1, rep(1.0, 5),   rep(1.5, 12),  1,  50, 100, 40,   rep(1.0, 4), 1.8,1.8, -30, -10)
 init_params = c(5.721711, 10.5, -10.99395, 34.38446, 0.1, 0.3, 0.5, 0.8, 0.9, 1.0, 0.85,1.12,1.15,1.2,1.2,1.15,1.1,1.05,1.05,1.0,0.9,0.8, 0, 17.05326, 64, 24.1824, 0.1, 0.4, 0.9, 1.0, 1.1,  1.755866, -51.03237, -13.56413)
 #res = DEoptim(objective_function_optim, lo_lim, up_lim, control = DEoptim.control(itermax = 10, trace = TRUE,  parallelType=1, parVar = c('get_smm_params', 'cpr2smm', 'df', 't_index_v') ))
 #6943.463
+  # par1         par2         par3         par4         par5         par6         par7         par8         par9        par10        par11        par12        par13        par14 
+  # 4.96602977   5.04735202 -19.79704236  39.13488733   0.20673266   0.10033608   0.64569598   0.60007013   0.99029971   0.84551981   0.63640578   1.34951256   1.08520220   1.31727090 
+  #      par15        par16        par17        par18        par19        par20        par21        par22        par23        par24        par25        par26        par27        par28 
+  # 1.40219324   0.95774065   1.41190460   1.20647324   0.92434590   1.30611005   1.19228784   0.50338422   0.05020826  23.60089310  43.16731782  32.12933219   0.02915692   0.32908846 
+  #      par29        par30        par31        par32        par33        par34 
+  # 0.63760826   0.76892106   1.00004218   1.79987754 -40.88195143 -10.00027833 
 res = DEoptim(objective_function_optim, lo_lim, up_lim, control = DEoptim.control(itermax = 1000, trace = TRUE ))
 
 objective_function_optim(init_params) #6871.019
-objective_function_optim(res$optim$bestmem)
+objective_function_optim(res$optim$bestmem) #6847.991
+
+plots = plot_model_coefs(get_smm_params(res$par) )
+marrangeGrob(plots, nrow = 2, ncol = 3, top = NULL)
+
 
 df[, model_smm := smm_model(.SD, get_smm_params(init_params))]
 df[, model_smm := smm_model(.SD, get_smm_params(up_lim))]
@@ -1274,16 +1321,19 @@ plot_act_vs_model2(df, 'ei', bucket_count = 50)
 #optimx(init_params, objective_function_optim, lower=lo_lim, upper=up_lim, method="Nelder-Mead", itnmax=100, control  = list(trace = 1))
 optimx(init_params, objective_function_optim, lower=lo_lim, upper=up_lim, method="L-BFGS-B", itnmax=10, control  = list(trace = 1))
 
-#6936.693
+#6936.693   -> 6847.352
 res = hjkb(init_params, objective_function_optim, lower=lo_lim, upper=up_lim,  control = list(maxfeval = 10000, info = TRUE))
 #res = nmkb(par=init_params, fn=objective_function_optim, lower=lo_lim, upper=up_lim,  control = list(maxfeval = 100, info = TRUE))
 
 objective_function_optim(init_params)
 objective_function_optim(res$par)
+objective_function_optim(res$optim$bestmem)
 
 df[, model_smm := smm_model(.SD, get_smm_params(res$par))]
 plot_act_vs_model2(df, 'ei', bucket_count = 50)
 plot_act_vs_model2(df, 'date', bucket_count = 50)
+plot_act_vs_model2(df, 'date',  df$ei < 0, bucket_count = 50)
+plot_act_vs_model2(df, 'season_s', bucket_count = 50)
 
 #### PD profiles
 df_pd = ldply(seq(-200, 300, length.out = 100), function(ei_in){ 
@@ -1293,13 +1343,14 @@ df_pd = ldply(seq(-200, 300, length.out = 100), function(ei_in){
 
 setDT(df_pd)
 
-df_pd[, model_smm := smm_model(.SD, get_smm_params(init_params))]
+#df_pd[, model_smm := smm_model(.SD, get_smm_params(res$par))]
+df_pd[, model_smm := smm_model(.SD, get_smm_params(res$optim$bestmem))]
 
 ggplot(df_pd, aes(ei, smm2cpr(model_smm) )) + geom_line() + geom_point()  #+ geom_line(aes(ei, model_smm * scurve(ei, 1.0, 1.2, 100, 50)))
 
 #VS date
-df_pd = ldply(seq(-200, 300, by = 50), function(ei_in){ 
-  df_pd = ldply(sort(unique(df$date)), function(my_date){ 
+df_pd = ldply(seq(-200, 200, by = 50), function(ei_in){ 
+  df_pd = ldply(sort(unique(df$date)[1:12]), function(my_date){ 
     a = df[30,]
     a[, season:=month(my_date)]
     a[, date:=my_date]
@@ -1309,9 +1360,10 @@ df_pd = ldply(seq(-200, 300, by = 50), function(ei_in){
 })
 setDT(df_pd)
 
-df_pd[, model_smm := smm_model(.SD, get_smm_params(init_params))]
+df_pd[, model_smm := smm_model(.SD, get_smm_params(res$par))]
+df_pd[, model_smm := smm_model(.SD, get_smm_params(res$optim$bestmem))]
 
-ggplot(df_pd, aes(date, smm2cpr(model_smm), group = ei, color = factor(ei) )) + geom_line() + geom_point()  #+ geom_line(aes(ei, model_smm * scurve(ei, 1.0, 1.2, 100, 50)))
+ggplot(df_pd, aes(date, smm2cpr(model_smm), group = ei, color = factor(ei) )) + geom_line() + geom_point() + scale_color_custom('mixed') #+ geom_line(aes(ei, model_smm * scurve(ei, 1.0, 1.2, 100, 50)))
 
 ```
 

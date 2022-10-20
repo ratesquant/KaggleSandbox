@@ -639,6 +639,8 @@ smm_model <- function(x, params){
     refi_mi = approx(params[['refi_mi_x']], params[['refi_mi_y']], rule = 2, x$MI_PCT)$y
     refi_mi[is.na(x$MI_PCT)] =params[['refi_mi_na']]
     
+    refi_sato = approx(params[['refi_sato_x']], params[['refi_sato_y']], rule = 2, x$sato)$y
+    
     
     #refi_hpi1m36 = approx(params[['refi_hpi1m36_x']], params[['refi_hpi1m36_y']], rule = 2, x$hpi_1m36)$y
     
@@ -650,8 +652,7 @@ smm_model <- function(x, params){
     refi_geo[is.na(refi_geo)] = 1.0
     
     total_smm = turn_scurve * turn_ramp * turn_season * turn_fico * turn_cltv * turn_als * turn_occ * turn_hpal * turn_geo + 
-refi_scurve * refi_ramp * refi_als * refi_fico * refi_cltv * refi_occ * refi_burn * media_scurve * refi_chn * refi_hpal * refi_hpa * refi_dti * refi_boost * refi_geo * refi_mi * refi_boost2+ 
-      curt_als * curt_factor
+refi_scurve * refi_ramp * refi_als * refi_fico * refi_cltv * refi_occ * refi_burn * media_scurve * refi_chn * refi_hpal * refi_hpa * refi_dti * refi_boost * refi_geo * refi_mi * refi_boost2 * refi_sato +   curt_als * curt_factor
     #total_smm = turn_scurve 
     
     return( pmin(1.0-1e-9, pmax(1e-9, total_smm)) )
@@ -724,6 +725,8 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
               'refi_geo_y' = c(0.38,  0.18, 1.17, 0.9, 0.92, 0.95),
               'refi_dti_x' = c(30,   42,  50), 
               'refi_dti_y' = c(1.1,  1.0, 0.9),
+              'refi_sato_x' = c(-50, 0, 30,   50), 
+              'refi_sato_y' = c(1.1, 1.0, 1.0,  0.9),
               'refi_dti_na' = 1.0,
               
               #'media_low' = 0.7222222, 'media_high' = 1.633333, 'media_scurve_shift' = -45, 'media_scurve_slope' = -12,
@@ -737,9 +740,7 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
 plots = plot_model_coefs(params)
 marrangeGrob(plots, nrow = 5, ncol = 6, top = NULL)
 
-
-
-# -15.89001
+#  -15.90242
 #params[['refi_boost2_shift']] = 150.6814
 #params[['refi_boost2_high']] = 1.55
 #params[['turn_scurve_high']] = cpr2smm( 10.5)
@@ -831,16 +832,16 @@ plot_profile(df$upb[my_index], df$upb[my_index], df$CLTV[my_index], bucket_count
 
 
 my_vars = c('ei', 'LOAN_AGE', 'season_s',  'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL','PROP', 'CSCORE_B',  'CLTV', 'OLTV',  'cum_ei','cum_eim', 'media_ei_lin','hpa', 'hpa_life', 'uer',
-            'factor','DTI','no_cscore')
+            'factor','DTI','no_cscore', 'sato')
 plots = llply(my_vars, function(my_var){
   plot_act_vs_model2(df, my_var, bucket_count = 10) + ggtitle(my_var)
 })
 marrangeGrob(plots, nrow = 4, ncol = 5, top = NULL)
 
 #s-curves  
-buckets = cutq(df$upb, seq(0, 1, length.out = 10))
+buckets = cutq(df$sato, seq(0, 1, length.out = 10))
 plots = llply(levels(buckets), function(my_level){
-  plot_act_vs_model2(df, 'LOAN_AGE', buckets == my_level, bucket_count = 25) + ggtitle(my_level)
+  plot_act_vs_model2(df, 'ei', buckets == my_level, bucket_count = 25) + ggtitle(my_level)
 })
 marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 

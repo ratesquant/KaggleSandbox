@@ -402,6 +402,7 @@ df[, date_year_s:= as.character(date_year)]
 
 df[, factor := upb / (1e-3*ORIG_UPB) ]
 df[, CLTV   :=  OLTV * factor * hpi_orig / hpi ]
+df[, house_value :=  (hpi / hpi_orig) * (0.1*ORIG_UPB /OLTV)]
 df[, hpa_life  :=   hpi/hpi_orig - 1 ]
 df[, season := month(date)]
 df[, season_s := sprintf('%02d', season) ]
@@ -632,6 +633,7 @@ smm_model <- function(x, params){
     
     refi_burn = approx(params[['refi_burn_x']], params[['refi_burn_y']], rule = 2, x$cum_eim)$y
     refi_hpal = approx(params[['refi_hpal_x']], params[['refi_hpal_y']], rule = 2, x$hpa_life)$y
+    refi_hval = approx(params[['refi_hval_x']], params[['refi_hval_y']], rule = 2, x$house_value)$y
     refi_hpa = approx(params[['refi_hpa_x']], params[['refi_hpa_y']], rule = 2, x$hpa)$y
     refi_dti = approx(params[['refi_dti_x']], params[['refi_dti_y']], rule = 2, x$DTI)$y
     refi_dti[is.na(x$DTI)] =params[['refi_dti_na']]
@@ -652,7 +654,7 @@ smm_model <- function(x, params){
     refi_geo[is.na(refi_geo)] = 1.0
     
     total_smm = turn_scurve * turn_ramp * turn_season * turn_fico * turn_cltv * turn_als * turn_occ * turn_hpal * turn_geo + 
-refi_scurve * refi_ramp * refi_als * refi_fico * refi_cltv * refi_occ * refi_burn * media_scurve * refi_chn * refi_hpal * refi_hpa * refi_dti * refi_boost * refi_geo * refi_mi * refi_boost2 * refi_sato +   curt_als * curt_factor
+refi_scurve * refi_ramp * refi_als * refi_fico * refi_cltv * refi_occ * refi_burn * media_scurve * refi_chn * refi_hpal * refi_hpa * refi_dti * refi_boost * refi_geo * refi_mi * refi_boost2 * refi_sato * refi_hval +   curt_als * curt_factor
     #total_smm = turn_scurve 
     
     return( pmin(1.0-1e-9, pmax(1e-9, total_smm)) )
@@ -662,7 +664,8 @@ refi_scurve * refi_ramp * refi_als * refi_fico * refi_cltv * refi_occ * refi_bur
 #microbenchmark(approx(params[['turn_season_x']], params[['turn_season_y']], rule = 2, sample.int(12, 100000, replace = TRUE))$y)
 
 objective_function <- function(df_in, index){
-  return( df_in[index, mean(sbal * (po_ind * log(model_smm) + (1-po_ind) * log(1-model_smm)),rm.na = TRUE)  ] )
+  #return( df_in[index, mean(sbal * (po_ind * log(model_smm) + (1-po_ind) * log(1-model_smm)),rm.na = TRUE)  ] )
+  return( df_in[index, 100*mean((po_ind * log(model_smm) + (1-po_ind) * log(1-model_smm)),rm.na = TRUE)  ] )
 }
 
 turn_objective_function <- function(params_in){
@@ -680,7 +683,7 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
               'turn_ramp_x' = c(0,    3,    6,  12,  24,  36), 
               'turn_ramp_y' = c(0.1, 0.3, 0.5, 0.8, 0.9, 1.0),
               'turn_fico_x' = c(680,   720, 760,  780, 800), 
-              'turn_fico_y' = c(1.16, 1.11, 1.05, 1.0, 0.9),
+              'turn_fico_y' = c(1.2, 1.2, 1.05, 1.0, 0.9),
               'turn_fico_na' = 1.1,
               'turn_cltv_x' = c(80,  90), 
               'turn_cltv_y' = c(1.0, 0.6),
@@ -689,11 +692,11 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
               'turn_hpal_x' = c(-0.05, 0), 
               'turn_hpal_y' = c( 0.5, 1),
               'turn_occ_x' = c('I', 'P', 'S'),
-              'turn_occ_y' = c(0.9, 1.0, 1.1),
+              'turn_occ_y' = c(0.85, 1.0, 1.1),
               'turn_geo_x' = c('NY', 'PR', 'NV', 'AZ', 'NJ', 'PA', 'MD'),
               'turn_geo_y' = c(0.65,  0.26, 1.4,  1.4,  0.7,  0.67, 0.67),
               'turn_season_x' = c(1,     2,  3,   4,   5,   6,  7,  8,    9, 10, 11, 12),
-              'turn_season_y' = c(0.85,1.12,1.15,1.2,1.2,1.15,1.1,1.05,1.05,1.0,0.9,0.8),
+              'turn_season_y' = c(0.85,1.12,1.15,1.2,1.25,1.15,1.1,1.05,1.05,1.0,0.9,0.8),
               'refi_scurve_low' = cpr2smm(0), 'refi_scurve_high' = cpr2smm(   17.05326), 'refi_scurve_shift' =  64,	'refi_scurve_slope' = 24.1824, 
               #'refi_boost_low' = 0.9813189, 'refi_boost_high' = 1.185357, 'refi_boost_shift' =   162.9560,	'refi_boost_slope' =  26.07849,
               'refi_boost_low' = 1, 'refi_boost_high' = 1.0, 'refi_boost_shift' =   162.9560,	'refi_boost_slope' =  26.07849,
@@ -701,11 +704,11 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
               #'refi_boost2_low' = 1, 'refi_boost2_high' = 1.058981, 'refi_boost2_shift' =   199.8496,	'refi_boost2_slope' =  5.584044,
               'refi_ramp_x' = c(0,    3,    6,  12), 
               'refi_ramp_y' = c(0.1, 0.4, 0.9, 1.0),
-              'refi_als_x' = c(50, 100, 200, 300, 400, 450), 
-              'refi_als_y' = c(0, 0.4, 1.0, 1.7, 2.2, 2.8),
+              'refi_als_x' = c(50, 100, 200, 300, 400, 450, 500), 
+              'refi_als_y' = c(0.0, 0.4, 1.0, 1.7, 2.2, 2.8, 3.0),
               'refi_fico_x' = c(650,  680,  700,   740, 760, 780, 800), 
-              'refi_fico_y'  = c(0.55, 0.7, 0.85,  1.0, 1.2, 1.3, 1.30),
-              'refi_fico_na' = 0.8,
+              'refi_fico_y'  = c(0.50, 0.7, 0.8,  1.0, 1.2, 1.3, 1.30),
+              'refi_fico_na' = 0.7,
               'refi_cltv_x' = c(75,  90), 
               'refi_cltv_y' = c(1.0, 0.6),
               'refi_burn_x' = c(25,  50, 100), 
@@ -714,13 +717,17 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
               'refi_hpal_y' = c( 0.5, 1),
               'refi_hpa_x' = c(0,   5, 12, 15), 
               'refi_hpa_y' = c(0.8, 1, 1,  1.2),
+              
+              'refi_hval_x' = c(50,  150,  250,  450), 
+              'refi_hval_y' = c(0.1,  0.8, 1.0, 1.05),
+              
               'refi_mi_x' = c(15,       25),
               'refi_mi_y' = c(1.053791, 1.126928),
               'refi_mi_na' = 1.0,
               'refi_occ_x' = c('I', 'P', 'S'),
               'refi_occ_y' = c(0.55, 1.0, 0.7),
               'refi_chn_x' = c('B', 'R', 'C'),
-              'refi_chn_y' = c(1.15, 0.95, 1.0),
+              'refi_chn_y' = c(1.19, 0.95, 1.0),
               'refi_geo_x' = c('NY', 'PR',  'AZ', 'NJ', 'PA', 'MD'),
               'refi_geo_y' = c(0.38,  0.18, 1.17, 0.9, 0.92, 0.95),
               'refi_dti_x' = c(30,   42,  50), 
@@ -733,21 +740,26 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
               'media_scurve_low' = 0.8075042, 'media_scurve_high' = 1.755866, 'media_scurve_shift' =  -51.03237, 'media_scurve_slope' = -13.56413,
               
               'curt_als_x' = c(5, 10, 15, 20, 35), 
-              'curt_als_y' = c(cpr2smm(80),cpr2smm(28), cpr2smm(20),cpr2smm(10), 0.0),
+              'curt_als_y' = c(cpr2smm(80),cpr2smm(30), cpr2smm(25),cpr2smm(15), 0.0),
               'curt_factor_x' = c(0, 0.1, 0.5), 
               'curt_factor_y' = c(2.0, 1.5, 1.0)
               )  
+#plot_act_vs_model2(df, 'factor', my_index, bucket_count = 500)
+#plot_act_vs_model2(df, 'upb', my_index & df$upb < 50, bucket_count = 100)
+df[, model_smm := smm_model(.SD, params)]
+objective_function(df, t_index_v)
+plot_act_vs_model2(df, 'ei', df$upb < 100, bucket_count = 100)
+
+
 plots = plot_model_coefs(params)
 marrangeGrob(plots, nrow = 5, ncol = 6, top = NULL)
 
-#  -15.90242
+#      -6.7393
 #params[['refi_boost2_shift']] = 150.6814
 #params[['refi_boost2_high']] = 1.55
 #params[['turn_scurve_high']] = cpr2smm( 10.5)
 #params[['refi_scurve_shift']] =  64
 
-df[, model_smm := smm_model(.SD, params)]
-objective_function(df, t_index_v)
 #plot_act_vs_model2(df, 'MI_PCT', bucket_count = 100)
 plot_act_vs_model2(df, 'ei', bucket_count = 50)
 plot_act_vs_model2(df, 'media_ei_lin', bucket_count = 10)
@@ -786,7 +798,9 @@ plot_act_vs_model2(df, 'hpi_1m60', bucket_count = 50)
 plot_act_vs_model2(df, 'hpi_1m36', bucket_count = 10)
 plot_act_vs_model2(df, 'orig_year', bucket_count = 100)
 plot_act_vs_model2(df, 'CURR_RATE', bucket_count = 100)
-
+plot_act_vs_model2(df, 'house_value', bucket_count = 50)
+plot_act_vs_model2(df, 'ORIG_UPB', bucket_count = 50)
+plot_act_vs_model2(df, 'upb', bucket_count = 50)
 
 #sum(is.na(df$CSCORE_B))
 #c('NY', 'PR', 'NV', 'AZ', 'NJ', 'PA', 'MD'),
@@ -796,6 +810,10 @@ marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 plots = llply(params[['refi_geo_x']], function(my_geo) plot_act_vs_model2(df, 'date_year_s', df$STATE == 'NY', bucket_count = 100) + ggtitle(my_geo) )
 marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 
+
+plots = llply(c('CA', 'NY', 'FL', 'TX', 'NJ', 'IL', 'NC', 'VI'), function(my_geo) plot_act_vs_model2(df, 'date', df$STATE == my_geo, bucket_count = 100) + ggtitle(my_geo) )
+plots = c(plots, list(plot_act_vs_model2(df, 'date', bucket_count = 100) + ggtitle('USA')) )
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
 
 #S-Curves
 plot_profile(df$hpa, df$hpa, df$date, bucket_count = 25)
@@ -826,13 +844,16 @@ plot_act_vs_model2(df, 'ei', my_index, bucket_count = 50)
 plot_act_vs_model2(df, 'factor', my_index, bucket_count = 100)
 plot_act_vs_model2(df, 'CLTV', my_index, bucket_count = 50)
 plot_act_vs_model2(df, 'LOAN_AGE', my_index, bucket_count = 50)
+plot_act_vs_model2(df, 'house_value', my_index, bucket_count = 100)
+plot_act_vs_model2(df, 'ORIG_UPB', my_index, bucket_count = 50)
+
 
 
 plot_profile(df$upb[my_index], df$upb[my_index], df$CLTV[my_index], bucket_count = 25)
 
 
 my_vars = c('ei', 'LOAN_AGE', 'season_s',  'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL','PROP', 'CSCORE_B',  'CLTV', 'OLTV',  'cum_ei','cum_eim', 'media_ei_lin','hpa', 'hpa_life', 'uer',
-            'factor','DTI','no_cscore', 'sato')
+            'factor','DTI','no_cscore', 'sato', 'house_value')
 plots = llply(my_vars, function(my_var){
   plot_act_vs_model2(df, my_var, bucket_count = 10) + ggtitle(my_var)
 })

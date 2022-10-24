@@ -284,6 +284,76 @@ ggplot(df_agg, aes(date, upb/N, group = PROP, color = PROP)) + geom_line()
 
 ```
 
+## Objective Function
+
+```{r obj_function}
+
+df_obj = data.table(smm = seq(cpr2smm(1), cpr2smm(50), by = 0.0001 ))
+df_obj[, lsqr_10 := (smm - cpr2smm(10))^2]
+df_obj[, lsqr_20 := (smm - cpr2smm(20))^2]
+df_obj[, lsqr_30 := (smm - cpr2smm(30))^2]
+
+df_obj[, loglik_10 := -(cpr2smm(10)  * log(smm) + (1-cpr2smm(10)) * log(1-smm)) ]
+df_obj[, loglik_20 := -(cpr2smm(20)  * log(smm) + (1-cpr2smm(20)) * log(1-smm)) ]
+df_obj[, loglik_30 := -(cpr2smm(30)  * log(smm) + (1-cpr2smm(30)) * log(1-smm)) ]
+
+ggplot(melt(df_obj, id.vars = 'smm')) + geom_line(aes(smm2cpr( smm ), value, group = variable, color = variable  )) + facet_wrap(~variable, scales = 'free')
+
+ggplot(melt(df_obj, id.vars = 'smm')) + geom_line(aes( smm, value, group = variable, color = variable  )) + facet_wrap(~variable, scales = 'free')
+
+```
+
+## Sampling
+
+```{r sampling}
+
+#sample loans
+
+df_agg = df[,.(.N, sbal = sum(upb, na.rm = TRUE), 
+               po = mean(po_ind,na.rm = TRUE), 
+               smm = weighted.mean(po_ind, sbal, na.rm = TRUE)), by=.(date)]
+
+df_boot = ldply(seq(100), function(i){
+  df_temp = df[sample.int(nrow(df), 0.1*nrow(df)),.(.N, sbal = sum(sbal, na.rm = TRUE), 
+               po = mean(po_ind,na.rm = TRUE), 
+               smm = weighted.mean(po_ind, sbal, na.rm = TRUE)), by=.(date)]
+  df_temp[, boot := i]
+})
+setDT(df_boot)
+
+ggplot(df_boot, aes(date,  smm2cpr(smm), group = boot  )) + geom_line(color = 'blue', alpha = 0.1) + 
+  geom_line(data = df_agg, aes(date,  smm2cpr(smm)), inherit.aes = FALSE, size = 1 )
+
+
+ggplot(df_boot[,.(smm = weighted.mean(smm, sbal, na.rm = TRUE)), by =.(date)], aes(date,  smm2cpr(smm))) + geom_line(color = 'blue', size = 1) + 
+  geom_line(data = df_agg, aes(date,  smm2cpr(smm)), inherit.aes = FALSE, size = 1 )
+
+
+### Sample by loans
+all_loans = unique(df$LOAN_ID)
+
+df_boot = ldply(seq(100), function(i){
+  df_temp = df[LOAN_ID %in% sample(all_loans, length(all_loans), replace = TRUE),.(.N, sbal = sum(sbal, na.rm = TRUE), 
+               po = mean(po_ind,na.rm = TRUE), 
+               smm = weighted.mean(po_ind, sbal, na.rm = TRUE)), by=.(date)]
+  df_temp[, boot := i]
+})
+setDT(df_boot)
+
+ggplot(df_boot, aes(date,  smm2cpr(smm), group = boot  )) + geom_line(color = 'blue', alpha = 0.1) + 
+  geom_line(data = df_agg, aes(date,  smm2cpr(smm)), inherit.aes = FALSE, size = 1 )
+
+df_boot_conf =  df_boot[,.(smm = weighted.mean(smm, sbal, na.rm = TRUE), smm_up = quantile(smm, 1-0.05/2), smm_dn = quantile(smm, 0.05/2)), by =.(date)]
+
+ggplot(df_boot_conf) + geom_ribbon(fill = 'blue', aes(date, ymin = smm2cpr(smm_dn), ymax = smm2cpr(smm_up)), alpha = 0.6) + 
+  geom_line(data = df_agg, aes(date,  smm2cpr(smm)), inherit.aes = FALSE, size = 1 )
+
+ggplot(df_boot_conf) + geom_line(aes(date,smm2cpr(smm_up) - smm2cpr(smm_dn)))
+
+
+```
+
+
 ##Load MEV
 
 ```{r load_mev}
@@ -748,6 +818,7 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
 #plot_act_vs_model2(df, 'upb', my_index & df$upb < 50, bucket_count = 100)
 df[, model_smm := smm_model(.SD, params)]
 objective_function(df, t_index_v)
+plot_act_vs_model2(df, 'ei', bucket_count = 100)
 plot_act_vs_model2(df, 'ei', df$upb < 100, bucket_count = 100)
 
 
@@ -1388,4 +1459,232 @@ df_pd[, model_smm := smm_model(.SD, get_smm_params(res$optim$bestmem))]
 ggplot(df_pd, aes(date, smm2cpr(model_smm), group = ei, color = factor(ei) )) + geom_line() + geom_point() + scale_color_custom('mixed') #+ geom_line(aes(ei, model_smm * scurve(ei, 1.0, 1.2, 100, 50)))
 
 ```
+
+#Stacked ML Model
+
+```{r stacked_model}
+library(EIX)
+library(lightgbm)
+
+#starting model 
+parametric_model_smm = smm_model(df, params)
+df[, model_smm := parametric_model_smm]
+objective_function(df, t_index_v) # -6.514769 (-6.353111- lightGBM)
+plot_act_vs_model2(df, 'ei', bucket_count = 100)
+
+index   = sample.int(nrow(df), 2e6)
+index_v = sample.int(nrow(df), 2e6) %!in_set% index
+
+my_vars = c('ei', 'LOAN_AGE', 'season', 'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL','PROP', 'DTI', 'CSCORE_B', 'co_borrower','score_diff', 'FIRST_FLAG', 'CLTV', 'OLTV', 'rate_1m48', 'sato', 'cum_eim', 'geo_ny', 'geo_pr', 'NO_UNITS', 'hpa', 'hpa_life', 'busday', 'house_value', 'factor', 'uer_1y', 'uer_1m60', 'uer', 'media_ei_lin', 'media_ei_log', 'cum_ei') %!in_set% c('id') #best performance
+
+  dtrain.t <- lgb.Dataset(                       data.matrix(df[index,   my_vars,  with = FALSE]), label = df$po_ind[index],    init_score = logit(parametric_model_smm[index]))
+  dtest.t  <- lgb.Dataset.create.valid(dtrain.t, data.matrix(df[index_v, my_vars,  with = FALSE]), label = df$po_ind[index_v],  init_score = logit(parametric_model_smm[index_v]))
+
+  model.lgb.test = lgb.train(params = list(objective = "binary"), data = dtrain.t, learning_rate = 0.01,
+                        valids = list(test = dtest.t),
+                        num_threads = 4, nrounds = 10000,  eval_freq = 50, early_stopping_rounds = 100, force_row_wise=TRUE)
+  
+  cv_error = as.numeric(model.lgb.test$record_evals$test$binary_logloss$eval)
+  ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line()
+        
+  po_pred.test_logodds =  predict(model.lgb.test, data.matrix(df[,my_vars, with = FALSE]), rawscore=TRUE)
+  po_pred.test = logistic(po_pred.test_logodds +  logit(parametric_model_smm))
+  df[, model_smm := po_pred.test]
+  #plot_profile(po_pred.test, df$po_ind, df$date)
+  #plot_profile(po_pred.test_logodds, df$po_ind, df$date)
+  #plot_profile(logistic(po_pred.test_logodds +  logit(parametric_model_smm)),  parametric_model_smm, df$ei, bucket_count = 50)
+  #plot_act_vs_model2(df, 'date', bucket_count = 100)
+
+  
+  lgb_importance = lgb.importance(model.lgb.test, percentage = TRUE)
+  ggplot(lgb_importance[Gain > 0.001], aes(fct_reorder(Feature,Gain), Gain)) + geom_bar(stat = 'identity') + coord_flip()
+
+ 
+  inter <- interactions(model.lgb.test, dtest.t, option = "interactions")
+  #plot(inter)
+  ggplot(data.table(inter), aes(Parent, Child, fill = sumGain)) + geom_tile() + scale_fill_custom('mixed', discrete = FALSE) + theme(axis.text.x  = element_text(angle=90))
+  ggplot(data.table(inter)[order(-sumGain)][1:20], aes(Parent, sumGain, fill = sumGain, label = Child, group =Child )) + geom_bar(stat = 'identity', position = 'dodge') + scale_fill_custom('mixed', discrete = FALSE) + coord_flip() + 
+    geom_text(size = 3, hjust = 'right', vjust = 0, nudge_x = 0.2, nudge_y = 0.5)
+  
+  imp <- importance(model.lgb.test, dtest.t, option = "both", digits = 4)
+  plot(imp)
+  
+ 
+  
+  #using XGBOOST
+  library(xgboost)
+  
+  dtrain <- xgb.DMatrix(data.matrix(df[index,  my_vars, with = F]), label = df$po_ind[index],   base_margin =  logit(parametric_model_smm[index]) ) #'D2' %in% colnames(dtrain)
+  deval  <- xgb.DMatrix(data.matrix(df[index_v,my_vars, with = F]), label = df$po_ind[index_v], base_margin =  logit(parametric_model_smm[index_v]) ) #'D2' %in% colnames(dtrain)
+
+  
+my_params <- list(max_depth = 3, 
+              eta =  0.01, 
+              nthread = 14,
+              objective = "binary:logistic" )
+
+
+model.xgb <- xgb.train(my_params, data = dtrain, 
+                       watchlist = list(train = dtrain, eval = deval),
+                       nrounds = 10000, 
+                       verbose = 1, 
+                       print_every_n = 10)
+
+ggplot(model.xgb$evaluation_log, aes(iter, train_logloss )) + geom_line() + geom_line(aes(iter, eval_logloss), color = 'red')
+
+pred.xgb_logodds <- predict(model.xgb, data.matrix(df[,my_vars, with = F]), outputmargin=TRUE ) #logit
+pred.xgb_full <- logistic(pred.xgb_logodds +  logit(parametric_model_smm))
+
+df[, model_smm := pred.xgb_full]
+objective_function(df, t_index_v) # -6.514769 (-6.353111- lightGBM)
+plot_act_vs_model2(df, 'date', bucket_count = 100)
+
+
+plot_profile(pred.xgb_full,  parametric_model_smm, df$ei, bucket_count = 50)
+plot_profile(pred.xgb_full,  df$po_ind, df$ei, bucket_count = 50)
+#plot_profile(logistic(po_pred.test_logodds +  logit(parametric_model_smm)),  parametric_model_smm, df$ei, bucket_count = 50)
+
+vip(model.xgb)
+importance_matrix <- xgb.importance(model = model.xgb)
+#print(importance_matrix)
+xgb.ggplot.importance(importance_matrix = importance_matrix)
+xgb.ggplot.deepness(model.xgb)
+xgb.ggplot.deepness(model.xgb, which = "max.depth")
+
+
+lolli<-lollipop(model.xgb,deval)
+plot(lolli)
+
+pairs<-interactions(model.xgb, deval, option = "pairs")
+head(pairs)
+plot(pairs)
+```
+
+#SCurve FIT
+
+```{r burnout_parameters}
+library(DEoptim)
+library(optimx)
+library(dfoptim)
+library(pso)
+
+t_index_v = sample.int(nrow(df), 1e5)
+
+plot_act_vs_model2 <-function(df, profile, index = NULL, ...){
+  p = NULL
+  if(is.null(index)) {
+    p = plot_profile(df[['model_smm']], df[['po_ind']], df[[profile]], map_fun = smm2cpr, ...)
+  }else{
+    p = plot_profile(df[['model_smm']][index], df[['po_ind']][index], df[[profile]][index], map_fun = smm2cpr, ...)
+  }
+  return( p )
+}
+
+scurve <- function(x, a, b, shift, slope){   a + (b - a)*logistic((x - shift)/slope) }
+
+smm_model <- function(x, params){
+    refi_scurve =  scurve(x$ei, params[['refi_scurve_low']], params[['refi_scurve_high']],  params[['refi_scurve_shift']], params[['refi_scurve_slope']])
+    refi_ramp = approx(params[['refi_ramp_x']], params[['refi_ramp_y']], rule = 2, x$LOAN_AGE)$y
+   
+     total_smm = refi_scurve * refi_ramp
+    
+    return( pmin(1.0-1e-9, pmax(1e-9, total_smm)) )
+}
+
+## FIT Turnover S-Curve (-8.078541)
+params = list(
+              'refi_scurve_low' = cpr2smm(0), 'refi_scurve_high' = cpr2smm(   50), 'refi_scurve_shift' =  64,	'refi_scurve_slope' = 24.1824, 
+              'refi_ramp_x' = c(0,    3,    6,  12), 
+              'refi_ramp_y' = c(0.1, 0.4, 0.9, 1.0)
+              )  
+get_smm_params<-function(x){
+    my_params = list(
+              'refi_scurve_low' =  cpr2smm(  x[1] ), 'refi_scurve_high' = cpr2smm(   x[2]), 'refi_scurve_shift' =  x[2],	'refi_scurve_slope' = x[4], 
+              'refi_ramp_x' = c(0,    3,    6,  9,  12), 
+              'refi_ramp_y' = x[5:9]
+              ) 
+    return (my_params)
+}
+
+objective_function_optim <- function(x){
+  my_params = get_smm_params(x)
+  df[t_index_v, model_smm := smm_model(.SD, my_params)]
+  return( df[t_index_v, -sum( po_ind * log(model_smm) + (1-po_ind) * log(1-model_smm),rm.na = TRUE)  ] )
+}
+
+df[, model_smm := smm_model(.SD, params)]
+plot_act_vs_model2(df, 'ei', bucket_count = 50)
+
+
+#DEoptim --------------------------------------
+      #  refi_scurve     refi_ramp
+lo_lim = c(cpr2smm(0),   cpr2smm(0),   0,  10,   rep(0.0, 5))
+up_lim = c(cpr2smm(10),  cpr2smm(50), 100, 50,   rep(1.0, 5))
+init_params = c()
+res = DEoptim(objective_function_optim, lo_lim, up_lim, control = DEoptim.control(itermax = 1000, trace = TRUE ))
+
+objective_function_optim(init_params) #6871.019
+objective_function_optim(res$optim$bestmem) #6847.991
+
+plots = plot_model_coefs(get_smm_params(res$par) )
+marrangeGrob(plots, nrow = 2, ncol = 3, top = NULL)
+
+
+df[, model_smm := smm_model(.SD, get_smm_params(init_params))]
+df[, model_smm := smm_model(.SD, get_smm_params(up_lim))]
+df[, model_smm := smm_model(.SD, get_smm_params(res$optim$bestmem))]
+plot_act_vs_model2(df, 'date', bucket_count = 50)
+plot_act_vs_model2(df, 'ei', bucket_count = 50)
+
+#optimx --------------------------------------
+#optimx(init_params, objective_function_optim, lower=lo_lim, upper=up_lim, method="Nelder-Mead", itnmax=100, control  = list(trace = 1))
+optimx(init_params, objective_function_optim, lower=lo_lim, upper=up_lim, method="L-BFGS-B", itnmax=10, control  = list(trace = 1))
+
+#6936.693   -> 6847.352
+res = hjkb(init_params, objective_function_optim, lower=lo_lim, upper=up_lim,  control = list(maxfeval = 10000, info = TRUE))
+#res = nmkb(par=init_params, fn=objective_function_optim, lower=lo_lim, upper=up_lim,  control = list(maxfeval = 100, info = TRUE))
+
+objective_function_optim(init_params)
+objective_function_optim(res$par)
+objective_function_optim(res$optim$bestmem)
+
+df[, model_smm := smm_model(.SD, get_smm_params(res$par))]
+plot_act_vs_model2(df, 'ei', bucket_count = 50)
+plot_act_vs_model2(df, 'date', bucket_count = 50)
+plot_act_vs_model2(df, 'date',  df$ei < 0, bucket_count = 50)
+plot_act_vs_model2(df, 'season_s', bucket_count = 50)
+
+#### PD profiles
+df_pd = ldply(seq(-200, 300, length.out = 100), function(ei_in){ 
+  a = df[30,]
+  a[, ei:=ei_in]
+  return (a) })
+
+setDT(df_pd)
+
+#df_pd[, model_smm := smm_model(.SD, get_smm_params(res$par))]
+df_pd[, model_smm := smm_model(.SD, get_smm_params(res$optim$bestmem))]
+
+ggplot(df_pd, aes(ei, smm2cpr(model_smm) )) + geom_line() + geom_point()  #+ geom_line(aes(ei, model_smm * scurve(ei, 1.0, 1.2, 100, 50)))
+
+#VS date
+df_pd = ldply(seq(-200, 200, by = 50), function(ei_in){ 
+  df_pd = ldply(sort(unique(df$date)[1:12]), function(my_date){ 
+    a = df[30,]
+    a[, season:=month(my_date)]
+    a[, date:=my_date]
+    a[, ei:=ei_in]
+    return (a) })
+  return (df_pd)
+})
+setDT(df_pd)
+
+df_pd[, model_smm := smm_model(.SD, get_smm_params(res$par))]
+df_pd[, model_smm := smm_model(.SD, get_smm_params(res$optim$bestmem))]
+
+ggplot(df_pd, aes(date, smm2cpr(model_smm), group = ei, color = factor(ei) )) + geom_line() + geom_point() + scale_color_custom('mixed') #+ geom_line(aes(ei, model_smm * scurve(ei, 1.0, 1.2, 100, 50)))
+
+```
+
+
 

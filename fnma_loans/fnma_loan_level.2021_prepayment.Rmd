@@ -887,7 +887,7 @@ plot_act_vs_model2(df, 'sato', bucket_count = 10)
 plot_act_vs_model2(df, 'hpa', bucket_count = 10)
 plot_act_vs_model2(df, 'score_diff', df$ei < 0, bucket_count = 10)
 plot_act_vs_model2(df, 'NO_UNITS', df$ei < 0, bucket_count = 10)
-plot_act_vs_model2(df, 'LOAN_AGE',df$ei < 0, bucket_count = 20)
+plot_act_vs_model2(df, 'LOAN_AGE', bucket_count = 100)
 
 #plot_act_vs_model2(df, 'CLTV',df$ei < 0, bucket_count = 200)
 #plot_act_vs_model2(df, 'upb',df$ei < 0, bucket_count = 200)

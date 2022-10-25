@@ -384,6 +384,8 @@ df_mev[order(date), rate_1m48:=rate               - frollmean(rate, 48)]
 df_mev[order(date), rate_3m60:=frollmean(rate, 3) - frollmean(rate, 60)]
 df_mev[order(date), rate_1m60:=rate               - frollmean(rate, 60)]
 df_mev[order(date), uer_1m60 :=uer                - frollmean(uer,  60)]
+df_mev[order(date), uer_1m36 :=uer                - frollmean(uer,  36)]
+df_mev[order(date), uer_3m36 := frollmean(uer,  3) - frollmean(uer,  36)]
 df_mev[order(date), uer_1y :=uer - shift(uer, 12)]
 df_mev[order(date), hpi_1m60 :=hpi                - frollmean(hpi,  60)]
 df_mev[order(date), hpi_1m36 :=hpi                - frollmean(hpi,  36)]
@@ -464,6 +466,8 @@ df[df_mev, hpi_1m36  := i.hpi_1m36, on =.(date)]
 
 df[df_mev, uer       := i.uer,      on =.(date)]
 df[df_mev, uer_1m60  := i.uer_1m60, on =.(date)]
+df[df_mev, uer_1m36  := i.uer_1m36, on =.(date)]
+df[df_mev, uer_3m36  := i.uer_3m36, on =.(date)]
 df[df_mev, uer_1y    := i.uer_1y,   on =.(date)]
 df[df_busday, busday := i.N,   on =.(date = date_month  )]
 df[, date_year_s:= as.character(date_year)]
@@ -685,11 +689,19 @@ smm_model <- function(x, params){
     turn_als = approx(params[['turn_als_x']], params[['turn_als_y']], rule = 2, x$upb)$y
     turn_occ =  params[['turn_occ_y']][ match(x$OCC_STAT, params[['turn_occ_x']])]
     turn_hpal = approx(params[['turn_hpal_x']], params[['turn_hpal_y']], rule = 2, x$hpa_life)$y
+    turn_uer = approx(params[['turn_uer_x']], params[['turn_uer_y']], rule = 2, x$uer)$y
+    turn_uer1m60 = approx(params[['turn_uer1m60_x']], params[['turn_uer1m60_y']], rule = 2, x$uer_1m60)$y
     turn_geo =  params[['turn_geo_y']][ match(x$STATE,  params[['turn_geo_x']])]
     turn_geo[is.na(turn_geo)] = 1.0
+    turn_nounit = approx(params[['turn_nounit_x']], params[['turn_nounit_y']], rule = 2, x$NO_UNITS)$y
+    turn_sato = approx(params[['turn_sato_x']], params[['turn_sato_y']], rule = 2, x$sato)$y
     
     turn_purpose =  params[['turn_purpose_y']][ match(x$PURPOSE,  params[['turn_purpose_x']])]
     turn_purpose[is.na(turn_purpose)] =1.0
+    
+    
+    turn_prop =  params[['turn_prop_y']][ match(x$PROP,  params[['turn_prop_x']])]
+    turn_prop[is.na(turn_prop)] =1.0
     
     refi_scurve =  scurve(x$ei, params[['refi_scurve_low']], params[['refi_scurve_high']],  params[['refi_scurve_shift']], params[['refi_scurve_slope']])
     refi_boost   = scurve(x$ei, params[['refi_boost_low']],  params[['refi_boost_high']],   params[['refi_boost_shift']],  params[['refi_boost_slope']])
@@ -726,7 +738,7 @@ smm_model <- function(x, params){
     refi_geo =  params[['refi_geo_y']][ match(x$STATE,  params[['refi_geo_x']])]
     refi_geo[is.na(refi_geo)] = 1.0
     
-    total_smm = turn_scurve * turn_ramp * turn_season * turn_fico * turn_cltv * turn_als * turn_occ * turn_hpal * turn_geo * turn_purpose + 
+    total_smm = turn_scurve * turn_ramp * turn_season * turn_fico * turn_cltv * turn_als * turn_occ * turn_hpal * turn_geo * turn_purpose * turn_uer * turn_uer1m60 * turn_nounit * turn_prop * turn_sato + 
 refi_scurve * refi_ramp * refi_als * refi_fico * refi_cltv * refi_occ * refi_burn * media_scurve * refi_chn * refi_hpal * refi_hpa * refi_dti * refi_boost * refi_geo * refi_mi * refi_boost2 * refi_sato * refi_hval +   curt_als * curt_factor
     #total_smm = turn_scurve 
     
@@ -756,8 +768,8 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
               'turn_ramp_x' = c(0,    3,    6,   12,   24,  36), 
               'turn_ramp_y' = c(0.1, 0.3, 0.5,  0.71, 0.9, 1.0),
               'turn_fico_x' = c(680,   720, 760,  780, 800), 
-              'turn_fico_y' = c(1.2, 1.2, 1.05, 1.0, 0.9),
-              'turn_fico_na' = 1.1,
+              'turn_fico_y' = c(1.25, 1.25, 1.1, 1.0, 0.9),
+              'turn_fico_na' = 1.19,
               'turn_cltv_x' = c(5, 10, 25, 80,  90), 
               'turn_cltv_y' = c(2.5,  1.8, 1.0, 1.0, 0.6),
               'turn_als_x' = c(50,  100, 250, 450), 
@@ -766,8 +778,25 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
               'turn_hpal_y' = c( 0.5, 1),
               'turn_occ_x' = c('I', 'P', 'S'),
               'turn_occ_y' = c(0.85, 1.0, 1.1),
+              'turn_sato_x' = c(-50, -25, 0, 25, 50), 
+              'turn_sato_y' = c(0.9,1.0,1.0, 1.0, 1.1),
               'turn_purpose_x' = c('C', 'P', 'R'),
-              'turn_purpose_y' = c(1.00, 0.97, 1.04),
+              'turn_purpose_y' = c(1.05, 0.97, 1.04),
+              
+              'turn_purpose_x' = c('C', 'P', 'R'),
+              'turn_purpose_y' = c(1.05, 0.97, 1.04),
+              
+              'turn_prop_x' = c('CO', 'CP', 'MH', 'PU', 'SF'),
+              'turn_prop_y' = c(1.15, 1.15, 0.75, 1.1, 0.95),
+              
+              'turn_nounit_x' = c(1, 2, 3),
+              'turn_nounit_y' = c(1.0,0.7, 0.6),
+              
+              'turn_uer_x' = c( 5,  6, 7, 8,  9,  10),
+              'turn_uer_y' = c(1.0, 0.9, 0.8, 0.8,  0.8,  0.8),
+              
+              'turn_uer1m60_x' = c( -2, -1.5, -1, 0, 1),
+              'turn_uer1m60_y' = c(0.9, 1.0, 1.05, 1.1, 1.25),
               
               'turn_geo_x' = c('NY', 'PR', 'NV', 'AZ', 'NJ', 'PA', 'MD', 'CO', 'IL', 'TX', 'VA'),
               'turn_geo_y' = c(0.65,  0.26, 1.4,  1.4,  0.7,  0.62, 0.67,1.30, 0.89, 1.10, 0.83 ),
@@ -823,16 +852,34 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
 #plot_act_vs_model2(df, 'factor', my_index, bucket_count = 500)
 #plot_act_vs_model2(df, 'upb', my_index & df$upb < 50, bucket_count = 100)
 #params[['refi_fico_y']] = c(0.45, 0.65, 0.75,  1.0, 1.2, 1.3, 1.3)
+                           # c( -2, -1.5, -1, 0, 1),
 
-#params[['turn_purpose_y']] = c(1.00, 0.97, 1.04)
+#'turn_sato_x' =          c(-50, -25, 0, 25, 50), 
+params[['turn_sato_y']] =  c(0.9,1.0,1.0, 1.0, 1.1)
 
 df[, model_smm := smm_model(.SD, params)]
-objective_function(df, t_index_v)
+objective_function(df, t_index_v) # --6.496013
+plot_act_vs_model2(df, 'sato', df$ei < 0, bucket_count = 10)
+plot_act_vs_model2(df, 'date', bucket_count = 10)
+
+plot_act_vs_model2(df, 'no_cscore', df$ei < 0, bucket_count = 50)
+plot_act_vs_model2(df, 'uer_1m60',df$ei < 0, bucket_count = 10)
+plot_act_vs_model2(df, 'uer',df$ei < 0, bucket_count = 10)
+plot_act_vs_model2(df, 'CSCORE_B', df$ei < 0, bucket_count = 50)
+plot_act_vs_model2(df, 'sato', df$ei < 0, bucket_count = 10)
+plot_act_vs_model2(df, 'score_diff', df$ei < 0, bucket_count = 10)
+plot_act_vs_model2(df, 'NO_UNITS', df$ei < 0, bucket_count = 10)
+
+
 #plot_act_vs_model2(df, 'CLTV',df$ei < 0, bucket_count = 200)
 #plot_act_vs_model2(df, 'upb',df$ei < 0, bucket_count = 200)
 plot_act_vs_model2(df, 'orig_year',df$ei < 0, bucket_count = 20)
 plot_act_vs_model2(df, 'DTI',df$ei < 0, bucket_count = 20)
 plot_act_vs_model2(df, 'hpa_life',df$ei < 0, bucket_count = 20)
+plot_act_vs_model2(df, 'uer',df$ei < 0, bucket_count = 10)
+plot_act_vs_model2(df, 'uer_1m60',df$ei < 0, bucket_count = 10)
+plot_act_vs_model2(df, 'uer_3m36',df$ei < 0, bucket_count = 10)
+plot_act_vs_model2(df, 'uer',df$ei < 0, bucket_count = 10)
 
 #cc(df[ei <0, .(.N, mean(model_smm), mean(po_ind )), by = .(STATE)])
 
@@ -947,8 +994,8 @@ plot_act_vs_model2(df, 'ORIG_UPB', my_index, bucket_count = 50)
 plot_profile(df$upb[my_index], df$upb[my_index], df$CLTV[my_index], bucket_count = 25)
 
 
-my_vars = c('ei', 'LOAN_AGE', 'season_s',  'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL','PROP', 'CSCORE_B',  'CLTV', 'OLTV',  'cum_ei','cum_eim', 'media_ei_lin','hpa', 'hpa_life', 'uer',
-            'factor','DTI','no_cscore', 'sato', 'house_value')
+my_vars = unique(c('ei', 'LOAN_AGE', 'season_s',  'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL','PROP', 'CSCORE_B',  'CLTV', 'OLTV',  'cum_ei','cum_eim', 'media_ei_lin','media_ei_log', 'hpa', 'hpa_life', 
+            'uer', 'uer_1m36', 'uer_1m60', 'uer_3m36',  'factor','DTI','no_cscore', 'sato', 'house_value', 'NO_UNITS', 'no_cscore', 'NUM_BO'))
 plots = llply(my_vars, function(my_var){
   plot_act_vs_model2(df, my_var, bucket_count = 10) + ggtitle(my_var)
 })

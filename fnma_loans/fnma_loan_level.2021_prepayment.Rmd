@@ -716,6 +716,7 @@ smm_model <- function(x, params){
     curt_als = approx(params[['curt_als_x']], params[['curt_als_y']], rule = 2, x$upb)$y
     curt_factor = approx(params[['curt_factor_x']], params[['curt_factor_y']], rule = 2, x$factor)$y
     
+    refi_nounit = approx(params[['refi_nounit_x']], params[['refi_nounit_y']], rule = 2, x$NO_UNITS)$y
     refi_burn = approx(params[['refi_burn_x']], params[['refi_burn_y']], rule = 2, x$cum_eim)$y
     refi_hpal = approx(params[['refi_hpal_x']], params[['refi_hpal_y']], rule = 2, x$hpa_life)$y
     refi_hval = approx(params[['refi_hval_x']], params[['refi_hval_y']], rule = 2, x$house_value)$y
@@ -725,6 +726,9 @@ smm_model <- function(x, params){
     
     refi_mi = approx(params[['refi_mi_x']], params[['refi_mi_y']], rule = 2, x$MI_PCT)$y
     refi_mi[is.na(x$MI_PCT)] =params[['refi_mi_na']]
+    
+    refi_purpose =  params[['refi_purpose_y']][ match(x$PURPOSE,  params[['refi_purpose_x']])]
+    refi_purpose[is.na(refi_purpose)] =1.0
     
     refi_sato = approx(params[['refi_sato_x']], params[['refi_sato_y']], rule = 2, x$sato)$y
     
@@ -739,7 +743,7 @@ smm_model <- function(x, params){
     refi_geo[is.na(refi_geo)] = 1.0
     
     total_smm = turn_scurve * turn_ramp * turn_season * turn_fico * turn_cltv * turn_als * turn_occ * turn_hpal * turn_geo * turn_purpose * turn_uer * turn_uer1m60 * turn_nounit * turn_prop * turn_sato + 
-refi_scurve * refi_ramp * refi_als * refi_fico * refi_cltv * refi_occ * refi_burn * media_scurve * refi_chn * refi_hpal * refi_hpa * refi_dti * refi_boost * refi_geo * refi_mi * refi_boost2 * refi_sato * refi_hval +   curt_als * curt_factor
+refi_scurve * refi_ramp * refi_als * refi_fico * refi_cltv * refi_occ * refi_burn * media_scurve * refi_chn * refi_hpal * refi_hpa * refi_dti * refi_boost * refi_geo * refi_mi * refi_boost2 * refi_sato * refi_hval * refi_purpose * refi_nounit +   curt_als * curt_factor
     #total_smm = turn_scurve 
     
     return( pmin(1.0-1e-9, pmax(1e-9, total_smm)) )
@@ -809,28 +813,32 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
               #'refi_boost2_low' = 1, 'refi_boost2_high' = 1.058981, 'refi_boost2_shift' =   199.8496,	'refi_boost2_slope' =  5.584044,
               'refi_ramp_x' = c(0,    3,    6,  12), 
               'refi_ramp_y' = c(0.1, 0.4, 0.9, 1.0),
-              'refi_als_x' = c(50, 100, 200, 300, 400, 450, 500), 
-              'refi_als_y' = c(0.0, 0.4, 1.0, 1.7, 2.2, 2.8, 3.0),
+              'refi_als_x' = c(50, 70, 100, 200, 300, 400, 450, 500), 
+              'refi_als_y' = c(0.0, 0.1, 0.3, 1.0, 1.7, 2.4, 2.9, 3.1),
               'refi_fico_x' = c(650,  680,  700,   740, 760, 780, 800), 
-              'refi_fico_y'  = c(0.45, 0.65, 0.75,  1.0, 1.2, 1.3, 1.3),
-              'refi_fico_na' = 0.7,
+              'refi_fico_y'  = c(0.4, 0.5, 0.7,  0.9, 1.1, 1.3, 1.3),
+              'refi_fico_na' = 0.63,
               'refi_cltv_x' = c(75,  90), 
               'refi_cltv_y' = c(1.0, 0.6),
               'refi_burn_x' = c(25,  50, 100), 
-              'refi_burn_y' = c(1.0, 0.7, 0.6),
+              'refi_burn_y' = c(1.0, 0.7, 0.4),
               'refi_hpal_x' = c(-0.1, 0), 
               'refi_hpal_y' = c( 0.5, 1),
               'refi_hpa_x' = c(0,   5, 12, 15), 
               'refi_hpa_y' = c(0.8, 1, 1,  1.2),
+              'refi_purpose_x' = c('C', 'P', 'R'),
+              'refi_purpose_y' = c(0.92, 1.0, 1.05),
               
               'refi_hval_x' = c(50,  150,  250,  450), 
               'refi_hval_y' = c(0.1,  0.8, 1.0, 1.05),
+              'refi_nounit_x' = c(1, 2, 3),
+              'refi_nounit_y' = c(1.0,0.75, 0.7),
               
               'refi_mi_x' = c(15,       25),
               'refi_mi_y' = c(1.053791, 1.126928),
               'refi_mi_na' = 1.0,
               'refi_occ_x' = c('I', 'P', 'S'),
-              'refi_occ_y' = c(0.55, 1.0, 0.7),
+              'refi_occ_y' = c(0.55, 1.0, 0.62),
               'refi_chn_x' = c('B', 'R', 'C'),
               'refi_chn_y' = c(1.19, 0.95, 1.0),
               'refi_geo_x' = c('NY', 'PR',  'AZ', 'NJ', 'PA', 'MD'),
@@ -845,37 +853,47 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
               'media_scurve_low' = 0.8075042, 'media_scurve_high' = 1.755866, 'media_scurve_shift' =  -51.03237, 'media_scurve_slope' = -13.56413,
               
               'curt_als_x' = c(5, 10, 15, 20, 35), 
-              'curt_als_y' = c(cpr2smm(80),cpr2smm(30), cpr2smm(25),cpr2smm(15), 0.0),
-              'curt_factor_x' = c(0, 0.1, 0.5), 
-              'curt_factor_y' = c(2.0, 1.5, 1.0)
+              'curt_als_y' = c(cpr2smm(80),cpr2smm(20), cpr2smm(12),cpr2smm(10), 0.0),
+              'curt_factor_x' = c(0.1, 0.2, 0.5, 0.75), 
+              'curt_factor_y' = c(2.4, 1.8, 1.3, 1.0)
               )  
 #plot_act_vs_model2(df, 'factor', my_index, bucket_count = 500)
 #plot_act_vs_model2(df, 'upb', my_index & df$upb < 50, bucket_count = 100)
-#params[['refi_fico_y']] = c(0.45, 0.65, 0.75,  1.0, 1.2, 1.3, 1.3)
-                           # c( -2, -1.5, -1, 0, 1),
+#   'refi_hpa_x' = c(0,   5, 12, 15), 
+#params[['refi_burn_y']] =  c(1.0, 0.7, 0.4)
 
-#'turn_sato_x' =          c(-50, -25, 0, 25, 50), 
-params[['turn_sato_y']] =  c(0.9,1.0,1.0, 1.0, 1.1)
+params[['refi_boost_low']] = 0.95
+params[['refi_boost_high']] = 1.25
+params[['refi_boost_shift']] = 150
+params[['refi_boost_slope']] = 35
 
 df[, model_smm := smm_model(.SD, params)]
-objective_function(df, t_index_v) # --6.496013
-plot_act_vs_model2(df, 'sato', df$ei < 0, bucket_count = 10)
+objective_function(df, t_index_v) #  -6.490202
+#plot_act_vs_model2(df, 'upb', df$upb < 100, bucket_count = 100)
+plot_act_vs_model2(df, 'ei', bucket_count = 40)
+plot_act_vs_model2(df, 'date', bucket_count = 20)
+plot_act_vs_model2(df, 'cum_ei', bucket_count = 100)
+plot_act_vs_model2(df, 'CLTV', df$ei <0, bucket_count = 100)
+
+plot_act_vs_model2(df, 'upb', bucket_count = 100)
+plot_act_vs_model2(df, 'score_diff',  bucket_count = 10)
 plot_act_vs_model2(df, 'date', bucket_count = 10)
 
 plot_act_vs_model2(df, 'no_cscore', df$ei < 0, bucket_count = 50)
-plot_act_vs_model2(df, 'uer_1m60',df$ei < 0, bucket_count = 10)
-plot_act_vs_model2(df, 'uer',df$ei < 0, bucket_count = 10)
-plot_act_vs_model2(df, 'CSCORE_B', df$ei < 0, bucket_count = 50)
-plot_act_vs_model2(df, 'sato', df$ei < 0, bucket_count = 10)
+plot_act_vs_model2(df, 'uer_1m60', bucket_count = 10)
+plot_act_vs_model2(df, 'uer', bucket_count = 10)
+plot_act_vs_model2(df, 'CSCORE_B', bucket_count = 50)
+plot_act_vs_model2(df, 'sato', bucket_count = 10)
+plot_act_vs_model2(df, 'hpa', bucket_count = 10)
 plot_act_vs_model2(df, 'score_diff', df$ei < 0, bucket_count = 10)
 plot_act_vs_model2(df, 'NO_UNITS', df$ei < 0, bucket_count = 10)
-
+plot_act_vs_model2(df, 'LOAN_AGE',df$ei < 0, bucket_count = 20)
 
 #plot_act_vs_model2(df, 'CLTV',df$ei < 0, bucket_count = 200)
 #plot_act_vs_model2(df, 'upb',df$ei < 0, bucket_count = 200)
-plot_act_vs_model2(df, 'orig_year',df$ei < 0, bucket_count = 20)
+plot_act_vs_model2(df, 'orig_year', bucket_count = 20)
 plot_act_vs_model2(df, 'DTI',df$ei < 0, bucket_count = 20)
-plot_act_vs_model2(df, 'hpa_life',df$ei < 0, bucket_count = 20)
+plot_act_vs_model2(df, 'hpa_life', bucket_count = 20)
 plot_act_vs_model2(df, 'uer',df$ei < 0, bucket_count = 10)
 plot_act_vs_model2(df, 'uer_1m60',df$ei < 0, bucket_count = 10)
 plot_act_vs_model2(df, 'uer_3m36',df$ei < 0, bucket_count = 10)
@@ -884,10 +902,10 @@ plot_act_vs_model2(df, 'uer',df$ei < 0, bucket_count = 10)
 #cc(df[ei <0, .(.N, mean(model_smm), mean(po_ind )), by = .(STATE)])
 
 plot_act_vs_model2(df, 'sato', bucket_count = 20)
-plot_act_vs_model2(df, 'ei', df$upb < 100, bucket_count = 100)
+plot_act_vs_model2(df, 'ei',  bucket_count = 20)
 
 plots = plot_model_coefs(params)
-marrangeGrob(plots, nrow = 5, ncol = 6, top = NULL)
+marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
 
 #     -6.502647
 #params[['refi_boost2_shift']] = 150.6814
@@ -999,7 +1017,7 @@ my_vars = unique(c('ei', 'LOAN_AGE', 'season_s',  'upb', 'PURPOSE', 'OCC_STAT', 
 plots = llply(my_vars, function(my_var){
   plot_act_vs_model2(df, my_var, bucket_count = 10) + ggtitle(my_var)
 })
-marrangeGrob(plots, nrow = 4, ncol = 5, top = NULL)
+marrangeGrob(plots, nrow = 5, ncol = 6, top = NULL)
 
 #s-curves  
 buckets = cutq(df$sato, seq(0, 1, length.out = 10))

@@ -485,6 +485,7 @@ df[, geo_pr  := as.numeric(STATE == 'PR')]
 df[, co_borrower  := as.numeric(!is.na(CSCORE_C))]
 df[, score_diff   := CSCORE_B - CSCORE_C]
 df[, no_cscore := is.na(CSCORE_B)]
+df[, adj_age := 360-ADJ_REM_MONTHS-LOAN_AGE]
 
 #cum incentive
 df[order(date), cum_ei   := 0.01*cumsum(pmax(0, ei - 10)), by =.(LOAN_ID)]
@@ -727,6 +728,8 @@ smm_model <- function(x, params){
     refi_prop =  params[['refi_prop_y']][ match(x$PROP,  params[['refi_prop_x']])]
     refi_prop[is.na(turn_prop)] =1.0
     
+    refi_vintage = approx(params[['refi_vintage_x']], params[['refi_vintage_y']], rule = 2, x$orig_year)$y
+    
     refi_mi = approx(params[['refi_mi_x']], params[['refi_mi_y']], rule = 2, x$MI_PCT)$y
     refi_mi[is.na(x$MI_PCT)] =params[['refi_mi_na']]
     
@@ -746,7 +749,7 @@ smm_model <- function(x, params){
     refi_geo[is.na(refi_geo)] = 1.0
     
     total_smm = turn_scurve * turn_ramp * turn_season * turn_fico * turn_cltv * turn_als * turn_occ * turn_hpal * turn_geo * turn_purpose * turn_uer * turn_uer1m60 * turn_nounit * turn_prop * turn_sato + 
-refi_scurve * refi_ramp * refi_als * refi_fico * refi_cltv * refi_occ * refi_burn * media_scurve * refi_chn * refi_hpal * refi_hpa * refi_dti * refi_boost * refi_geo * refi_mi * refi_boost2 * refi_sato * refi_hval * refi_purpose * refi_nounit * refi_prop +   curt_als * curt_factor
+refi_scurve * refi_ramp * refi_als * refi_fico * refi_cltv * refi_occ * refi_burn * media_scurve * refi_chn * refi_hpal * refi_hpa * refi_dti * refi_boost * refi_geo * refi_mi * refi_boost2 * refi_sato * refi_hval * refi_purpose * refi_nounit * refi_prop * refi_vintage + curt_als * curt_factor
     #total_smm = turn_scurve 
     
     return( pmin(1.0-1e-9, pmax(1e-9, total_smm)) )
@@ -818,8 +821,8 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
               'refi_boost_low' = 0.95, 'refi_boost_high' =1.25, 'refi_boost_shift' =   150,	'refi_boost_slope' =  35,
               'refi_boost2_low' = 1, 'refi_boost2_high' =  1.55, 'refi_boost2_shift' =   150.6814,	'refi_boost2_slope' =  29.37753,
               #'refi_boost2_low' = 1, 'refi_boost2_high' = 1.058981, 'refi_boost2_shift' =   199.8496,	'refi_boost2_slope' =  5.584044,
-              'refi_ramp_x' = c(0,    3,    6,  12), 
-              'refi_ramp_y' = c(0.1, 0.4, 0.9, 1.0),
+              'refi_ramp_x' = c(0,    3,    6,  9,   12), 
+              'refi_ramp_y' = c(0.1, 0.4, 0.9, 0.95, 1.0),
               'refi_als_x' = c(50, 70, 100, 200, 300, 400, 450, 500), 
               'refi_als_y' = c(0.1756336, 0.2516466, 0.4510727, 1.0433436, 1.7277068, 2.4163047, 2.8860185, 3.0893330),# c(0.0, 0.1, 0.35, 1.05, 1.8, 2.4, 3.0, 3.2),
               'refi_fico_x' = c(650,  680,  700,   740, 760, 780, 800), 
@@ -834,7 +837,10 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
               'refi_hpa_x' = c(0,   5, 12, 15), 
               'refi_hpa_y' = c(0.8, 1, 1,  1.2),
               'refi_purpose_x' = c('C', 'P', 'R'),
-              'refi_purpose_y' = c(0.92, 1.0, 1.05),
+              'refi_purpose_y' = c(0.92, 1.0, 1.1),
+              
+              'refi_vintage_x' = c(2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021), 
+              'refi_vintage_y' = c(0.8,   0.75,0.85,  1.0,  1.0,  1.0,  1.0,  1.0,  1.15,  1.12,  1.1,  1.0),
               
               'refi_prop_x' = c('CO', 'CP', 'MH', 'PU', 'SF'),
               'refi_prop_y' = c(0.9103708, 0.7257421, 0.5, 1.0, 1.0),
@@ -880,16 +886,18 @@ params = list('turn_scurve_low' = cpr2smm(5.721711), 'turn_scurve_high' = cpr2sm
 #params[['refi_als_x']] = c(50, 70, 100, 200, 300, 400, 450, 500)
 #params[['refi_als_y']] = c(0.1756336, 0.2516466, 0.4510727, 1.0433436, 1.7277068, 2.4163047, 2.8860185, 3.0893330)
 #params[['curt_als_y']] = c(cpr2smm(75),cpr2smm(16), cpr2smm(14),cpr2smm(10), 0.0) 
-#74.73414352 16.24744159 13.71078677 10.08456190  0.07797535
-#0.1458336 0.5621026 0.6376452 0.9552909 0.7134339 1.2189778 1.2942568
-
 #cc(df[,.(.N, sum(sbal), mean(po_ind), mean(model_smm), sum((po_ind * log(model_smm) + (1-po_ind) * log(1-model_smm))) ), by = cutq(upb, seq(0, 1, length.out = 10))])
 
+#params[['refi_vintage_x']] = c(2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021) 
+#params[['refi_vintage_y']] = c(0.8,   0.75,0.85,  1.0,  1.0,  1.0,  1.0,  1.0,  1.15,  1.12,  1.1,  1.0)
+            
 
 df[, model_smm := smm_model(.SD, params)]
-objective_function(df) # -6.728516
+objective_function(df) + 6.725576# -6.728472
 
-plot_act_vs_model2(df, 'OCC_STAT',  bucket_count = 10)
+plot_act_vs_model2(df, 'PURPOSE', bucket_count = 100)
+
+plot_act_vs_model2(df, 'uer_1m60',  bucket_count = 10)
 plot_act_vs_model2(df, 'date', bucket_count = 100)
 
 plot_act_vs_model2(df, 'cum_eim', bucket_count = 20)
@@ -918,6 +926,7 @@ plot_act_vs_model2(df, 'score_diff', df$ei < 0, bucket_count = 10)
 plot_act_vs_model2(df, 'NO_UNITS', df$ei < 0, bucket_count = 10)
 plot_act_vs_model2(df, 'LOAN_AGE', bucket_count = 100)
 
+
 #plot_act_vs_model2(df, 'CLTV',df$ei < 0, bucket_count = 200)
 #plot_act_vs_model2(df, 'upb',df$ei < 0, bucket_count = 200)
 plot_act_vs_model2(df, 'orig_year', bucket_count = 20)
@@ -941,6 +950,7 @@ plot_act_vs_model2(df, 'ei',  bucket_count = 20)
 
 plots = plot_model_coefs(params)
 marrangeGrob(plots, nrow = 6, ncol = 7, top = NULL)
+
 
 #     -6.502647
 #params[['refi_boost2_shift']] = 150.6814
@@ -966,7 +976,7 @@ plot_act_vs_model2(df, 'CLTV', bucket_count =  100)
 plot_act_vs_model2(df, 'OLTV', bucket_count =  20)
 
 plot_act_vs_model2(df, 'ei', bucket_count = 50)
-plot_act_vs_model2(df, 'LOAN_AGE', bucket_count = 100)
+plot_act_vs_model2(df, 'LOAN_AGE', df$LOAN_AGE<24, bucket_count = 100)
 plot_act_vs_model2(df, 'upb', bucket_count = 100)
 plot_act_vs_model2(df, 'CSCORE_B', bucket_count = 50)
 plot_act_vs_model2(df, 'rate_1m48', bucket_count = 20)
@@ -994,9 +1004,13 @@ plot_act_vs_model2(df, 'hpi_1m36', bucket_count = 10)
 plot_act_vs_model2(df, 'orig_year', bucket_count = 100)
 plot_act_vs_model2(df, 'CURR_RATE', bucket_count = 100)
 plot_act_vs_model2(df, 'house_value', bucket_count = 50)
+plot_act_vs_model2(df, 'upb', bucket_count = 50)
 plot_act_vs_model2(df, 'ORIG_UPB', bucket_count = 50)
 plot_act_vs_model2(df, 'upb', bucket_count = 50)
-plot_act_vs_model2(df, 'CLTV', bucket_count = 50)
+plot_act_vs_model2(df, 'CLTV', bucket_count = 20)
+plot_act_vs_model2(df, 'ei_1m', bucket_count = 50)
+plot_act_vs_model2(df, 'NUM_BO', bucket_count = 50)
+plot_act_vs_model2(df, 'OLTV', df$ei<0, bucket_count = 10)
 
 
 #sum(is.na(df$CSCORE_B))
@@ -1048,12 +1062,12 @@ plot_act_vs_model2(df, 'ORIG_UPB', my_index, bucket_count = 50)
 plot_profile(df$upb[my_index], df$upb[my_index], df$CLTV[my_index], bucket_count = 25)
 
 
-my_vars = unique(c('ei', 'LOAN_AGE', 'season_s',  'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL','PROP', 'CSCORE_B',  'CLTV', 'OLTV',  'cum_ei','cum_eim', 'media_ei_lin','media_ei_log', 'hpa', 'hpa_life', 'CURR_RATE','MI_PCT',
-            'uer', 'uer_1m36', 'uer_1m60', 'uer_3m36',  'factor','DTI','no_cscore', 'sato', 'house_value', 'NO_UNITS', 'no_cscore', 'NUM_BO', 'orig_year', 'ei_ratio'))
+my_vars = unique(c('ei', 'LOAN_AGE', 'season_s',  'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL','PROP', 'CSCORE_B',  'CLTV', 'OLTV',  'cum_ei','cum_eim', 'media_ei_lin','media_ei_log', 'hpa', 'hpa_life', 'hpi_1m36','hpi_1m60', 'CURR_RATE','MI_PCT',
+            'uer', 'uer_1m36', 'uer_1m60', 'uer_3m36',  'factor','DTI','no_cscore', 'sato', 'house_value', 'NO_UNITS', 'no_cscore', 'NUM_BO', 'orig_year', 'ei_ratio', 'vintage', 'ORIG_UPB'))
 plots = llply(my_vars, function(my_var){
   plot_act_vs_model2(df, my_var, bucket_count = 10) + ggtitle(my_var)
 })
-marrangeGrob(plots, nrow = 5, ncol = 6, top = NULL)
+marrangeGrob(plots, nrow = 6, ncol = 6, top = NULL)
 
 #s-curves  
 buckets = cutq(df$upb, seq(0, 1, length.out = 10))
@@ -1849,5 +1863,16 @@ ggplot(df_pd, aes(date, smm2cpr(model_smm), group = ei, color = factor(ei) )) + 
 
 ```
 
+#Revelant Sampling
 
+```{r relevant_sampling}
+
+df_rel = df[date %in% as.Date(c('2015-01-01', '2020-01-01')) ]
+
+ggplot(df_rel, aes(upb, group = date, color = factor(date))) + geom_density(adjust = 0.5)
+ggplot(df_rel, aes(CLTV, group = date, color = factor(date))) + geom_density(adjust = 1.0)
+ggplot(df_rel, aes(CSCORE_B, group = date, color = factor(date))) + geom_density(adjust = 0.5)
+ggplot(df_rel, aes(PURPOSE, group = date, fill = factor(date))) + geom_histogram( stat="count", position = 'dodge')
+
+```
 

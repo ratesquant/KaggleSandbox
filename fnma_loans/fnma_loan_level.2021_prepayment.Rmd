@@ -328,6 +328,33 @@ ggplot(df_boot, aes(date,  smm2cpr(smm), group = boot  )) + geom_line(color = 'b
 ggplot(df_boot[,.(smm = weighted.mean(smm, sbal, na.rm = TRUE)), by =.(date)], aes(date,  smm2cpr(smm))) + geom_line(color = 'blue', size = 1) + 
   geom_line(data = df_agg, aes(date,  smm2cpr(smm)), inherit.aes = FALSE, size = 1 )
 
+#Single Date --------------------
+my_date = '2020-07-01'
+
+dfs = df[date == my_date]
+   
+dfs[,.(.N, sbal = sum(upb, na.rm = TRUE), 
+               po = smm2cpr(mean(po_ind,na.rm = TRUE)), 
+               smm = smm2cpr(weighted.mean(po_ind, sbal, na.rm = TRUE)) ), by=.(date)]
+
+df_boot_res = ldply(seq(1000, 91310, by = 1000), function(boot_size){
+  df_boot = ldply(seq(100), function(i){
+    df_temp = dfs[sample.int(nrow(dfs), boot_size, replace = TRUE),.(.N, sbal = sum(sbal, na.rm = TRUE),  po = mean(po_ind,na.rm = TRUE), smm = weighted.mean(po_ind, sbal, na.rm = TRUE)), by=.(date)]
+    df_temp[, boot := i]
+  })
+  df_boot$boot_size=boot_size
+  return(df_boot)
+})
+setDT(df_boot_res)
+
+ggplot(df_boot_res, aes(boot_size,  smm)) + geom_point()
+
+ggplot(df_boot_res[, .(.N, cpr_sigma = smm2cpr(sd(smm)) ), by =.(boot_size)], aes(log10(boot_size), cpr_sigma)) + geom_line() + geom_point()
+
+ggplot(df_boot_res[, .(.N, cpr_sigma =  smm2cpr(sd(smm)) ), by =.(boot_size)], aes(log10(boot_size), log10(cpr_sigma) )) + geom_line() + geom_point()
+
+df_boot_res[, .(.N, smm_var = smm2cpr(sd(smm)) ), by =.(boot_size)]
+
 
 ### Sample by loans
 all_loans = unique(df$LOAN_ID)
@@ -350,7 +377,52 @@ ggplot(df_boot_conf) + geom_ribbon(fill = 'blue', aes(date, ymin = smm2cpr(smm_d
 
 ggplot(df_boot_conf) + geom_line(aes(date,smm2cpr(smm_up) - smm2cpr(smm_dn)))
 
+#last Date observations
+dfs = df[date == max(date)]
+dfs[, smm2cpr(mean(po_ind)) ]
+dfs[, smm2cpr(weighted.mean(po_ind, sbal, na.rm = TRUE)) ]
 
+df_boot = ldply(seq(1000), function(i){
+  df_temp = dfs[sample.int(nrow(dfs), nrow(dfs), replace = TRUE),.(.N, sbal = sum(sbal, na.rm = TRUE), po = mean(po_ind,na.rm = TRUE), smm = weighted.mean(po_ind, sbal, na.rm = TRUE)), by=.(date)]
+  df_temp[, boot := i]
+})
+setDT(df_boot)
+
+ggplot(df_boot, aes(smm2cpr(po))) + geom_histogram() + 
+  geom_vline(xintercept = dfs[, smm2cpr(mean(po_ind)) ], linetype = 'dashed', color = 'blue') + 
+  geom_vline(xintercept = quantile(smm2cpr(df_boot$po), prob = c(0.05/2, 1-0.05/2 )), linetype = 'dashed', color = 'red')
+
+ggplot(df_boot, aes(smm2cpr(smm))) + geom_histogram() + 
+  geom_vline(xintercept = dfs[, smm2cpr(weighted.mean(po_ind, sbal, na.rm = TRUE)) ], linetype = 'dashed', color = 'blue') + 
+  geom_vline(xintercept = quantile(smm2cpr(df_boot$smm), prob = c(0.05/2, 1-0.05/2 )), linetype = 'dashed', color = 'red')
+
+smm_avg = dfs[, weighted.mean(po_ind, sbal, na.rm = TRUE) ]
+smm_sigma = smm2cpr(sqrt(smm_avg * (1 - smm_avg)/nrow(dfs)))
+
+neff = effective_size(dfs$sbal)
+smm2cpr(smm_avg + 2*(sqrt(smm_avg * (1 - smm_avg)/neff)))
+
+#https://statisticaloddsandends.wordpress.com/2021/11/11/what-do-we-mean-by-effective-sample-size/
+
+#effective_size_rho2 <- function(w, rho = 0){
+#  sum(w)^2 / (sum(w*w) * (1 - rho) + rho * sum( w %*% t(w)) )
+#}
+
+df_rho = data.table(rho = seq(0, 0.01, by = 0.00001))
+df_rho[, n_eff := effective_size_rho(dfs$sbal, rho)]
+df_rho[, cpr_sigma := smm2cpr((sqrt(smm_avg * (1 - smm_avg)/n_eff)))]
+df_rho[, cpr_ub := smm2cpr(smm_avg + 2*(sqrt(smm_avg * (1 - smm_avg)/n_eff)))]
+df_rho[, cpr_lb := smm2cpr(smm_avg - 2*(sqrt(smm_avg * (1 - smm_avg)/n_eff)))]
+
+ggplot(df_rho, aes(100*rho, n_eff)) + geom_line()
+
+ggplot(df_rho, aes(100*rho, ymin = cpr_ub, ymax = cpr_lb)) + geom_ribbon(alpha = 0.4)
+ggplot(df_rho, aes(100*rho,cpr_sigma)) + geom_line()
+
+m = matrix(rep(0.1, 100), nrow = 10)
+diag(m) <- rep(1, 10)
+eigen(m)$values
+effective_size(eigen(m)$values )
 ```
 
 
@@ -1872,7 +1944,118 @@ df_rel = df[date %in% as.Date(c('2015-01-01', '2020-01-01')) ]
 ggplot(df_rel, aes(upb, group = date, color = factor(date))) + geom_density(adjust = 0.5)
 ggplot(df_rel, aes(CLTV, group = date, color = factor(date))) + geom_density(adjust = 1.0)
 ggplot(df_rel, aes(CSCORE_B, group = date, color = factor(date))) + geom_density(adjust = 0.5)
+ggplot(df_rel, aes(DTI, group = date, color = factor(date))) + geom_density(adjust = 0.5)
+ggplot(df_rel, aes(LOAN_AGE, group = date, color = factor(date))) + geom_density(adjust = 0.5)
 ggplot(df_rel, aes(PURPOSE, group = date, fill = factor(date))) + geom_histogram( stat="count", position = 'dodge')
+ggplot(df_rel, aes(CHANNEL, group = date, fill = factor(date))) + geom_histogram( stat="count", position = 'dodge')
+ggplot(df_rel, aes(OCC_STAT, group = date, fill = factor(date))) + geom_histogram( stat="count", position = 'dodge')
+ggplot(df_rel, aes(STATE, group = date, fill = factor(date))) + geom_histogram( stat="count", position = 'dodge')
+
+
+
+# create classification model 
+library(lightgbm)
+
+set.seed(1321)
+
+df_rel[, cp_flag:=as.numeric(date == max(date))]
+
+t_index_v = sample.int(nrow(df_rel), 0.5*nrow(df_rel))
+v_index_v = seq(nrow(df_rel)) %!in_set% t_index_v
+
+obj_var = 'cp_flag'
+lgb_vars = c('upb', 'CLTV', 'CSCORE_B', 'DTI', 'PURPOSE', 'CHANNEL', 'OCC_STAT', 'PROP') %!in_set% c('id')
+
+my_cat_vars =  names(which(sapply(df_rel[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
+
+### - logistic regression for loss > 0 -----------
+dfs = df_rel[t_index_v, c(obj_var,lgb_vars), with = FALSE]
+
+dtrain <- lgb.Dataset(                     data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
+dtest  <- lgb.Dataset.create.valid(dtrain, data.matrix(df_rel[v_index_v, lgb_vars , with = FALSE]), label = df_rel$cp_flag[v_index_v])
+
+params_bin <- list(objective = "binary")
+
+model.lgb = lgb.train(params = params_bin, data = dtrain, learning_rate = 0.01,
+                      valids = list(test = dtest),
+                      num_threads = 4, nrounds = 3000,
+                      eval_freq = 100, boost_from_average = TRUE, verbose = 1, force_row_wise = TRUE)
+
+cv_error = as.numeric(model.lgb$record_evals$test$binary_logloss$eval)
+ggplot(data.frame( i = seq(length(cv_error)), cv_error ), aes(i, cv_error)) + geom_line() + geom_vline(xintercept = model.lgb$best_iter, linetype = 'dashed')
+
+lgb_importance = lgb.importance(model.lgb, percentage = TRUE)
+ggplot(lgb_importance[Gain > 0.001], aes(fct_reorder(Feature,Gain), Gain)) + geom_bar(stat = 'identity') + coord_flip()
+ 
+df_rel[, cp_flag_pred := predict(model.lgb, data.matrix(df_rel[,lgb_vars, with = F]))]
+df_rel[, cp_weight := (cp_flag_pred + 0.05) / (1 - cp_flag_pred + 0.05)]
+df_rel[date == max(date), cp_weight:=1] 
+
+plot_binmodel_density(df_rel$cp_flag, df_rel$cp_flag_pred)
+plot_binmodel_cdf(df_rel$cp_flag, df_rel$cp_flag_pred)
+plot_binmodel_roc(df_rel$cp_flag, df_rel$cp_flag_pred)
+
+plot_profile(df_rel$cp_flag_pred, df_rel$cp_flag, df_rel$CLTV)
+
+ggplot(df_rel, aes(cp_weight)) + geom_density()
+
+ggplot(df_rel) + 
+  geom_density(aes(CLTV, group = date, color = factor(date), weight = NULL), color = 'black') + 
+  geom_density(aes(CLTV, group = date, color = factor(date), weight = cp_weight))
+
+
+res = ldply(sort(df[date>='2012-01-01' & date < '2020-01-01' & month(date) == 1, unique(date)]), function(my_date){
+  
+  print(my_date)
+  
+  set.seed(1321)
+  
+  df_rel = df[date %in% as.Date(c(my_date, '2020-01-01')) ]
+    
+  df_rel[, cp_flag:=as.numeric(date == max(date))]
+  
+  t_index_v = sample.int(nrow(df_rel), 0.5*nrow(df_rel))
+  v_index_v = seq(nrow(df_rel)) %!in_set% t_index_v
+  
+  obj_var = 'cp_flag'
+  lgb_vars = c('upb', 'CLTV', 'CSCORE_B', 'DTI', 'PURPOSE', 'CHANNEL', 'OCC_STAT', 'PROP') %!in_set% c('id')
+  
+  my_cat_vars =  names(which(sapply(df_rel[,lgb_vars, with = FALSE], function(x) is.factor(x) | is.character(x) )))
+  
+  ### - logistic regression for loss > 0 -----------
+  dfs = df_rel[t_index_v, c(obj_var,lgb_vars), with = FALSE]
+  
+  dtrain <- lgb.Dataset(                     data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[[obj_var]], categorical_feature = my_cat_vars)
+  dtest  <- lgb.Dataset.create.valid(dtrain, data.matrix(df_rel[v_index_v, lgb_vars , with = FALSE]), label = df_rel$cp_flag[v_index_v])
+  
+  params_bin <- list(objective = "binary")
+  
+  model.lgb = lgb.train(params = params_bin, data = dtrain, learning_rate = 0.01,
+                        valids = list(test = dtest),
+                        num_threads = 4, nrounds = 3000,
+                        eval_freq = 100, boost_from_average = TRUE, verbose = 0, force_row_wise = TRUE)
+  
+  df_rel[, cp_flag_pred := predict(model.lgb, data.matrix(df_rel[,lgb_vars, with = F]))]
+  df_rel[, cp_weight := (cp_flag_pred + 0.01) / (1 - cp_flag_pred + 0.01)]
+  df_rel[date == max(date), cp_weight:=1] 
+
+
+  
+  lgb_importance = lgb.importance(model.lgb, percentage = TRUE)
+  setDT(lgb_importance)
+  lgb_importance[, date:= my_date]
+  lgb_importance[, ks := binmodel_ks(df_rel$cp_flag, df_rel$cp_flag_pred)]
+  lgb_importance[, n1 := df_rel[date == my_date, .N]]
+  lgb_importance[, n2 := df_rel[date != my_date, .N]]
+  lgb_importance[, n1_eff := df_rel[date == my_date, effective_size(cp_weight) ] ]
+  lgb_importance[, best_iter := model.lgb$best_iter]
+  
+  return (lgb_importance)
+})
+
+ggplot(res, aes(date, Gain, group = Feature, color = Feature)) + geom_line() + geom_point()
+ggplot(res, aes(date, Gain, group = Feature, fill = Feature)) + geom_area() + scale_fill_custom('mixed')
+ggplot(res, aes(date, n1_eff/n1, group = Feature)) + geom_line() + geom_point()
 
 ```
 

@@ -18,6 +18,12 @@ logit <- function(x){
 
 rms <-function(y1, y2) sqrt( mean( (y1 - y2)^2 ))
 
+#https://en.wikipedia.org/wiki/Design_effect#Effective_sample_size
+effective_size <- function(w){
+  #sum(w)^2 / sum(w*w)
+  length(w) * mean(w)^2 / (mean(w*w))
+}
+
 to_prob <-function(x, train_index){
   xt = x[train_index]
   ecdf(xt)(x) - 0.5/length(xt)

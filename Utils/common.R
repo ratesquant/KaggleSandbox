@@ -24,6 +24,12 @@ effective_size <- function(w){
   length(w) * mean(w)^2 / (mean(w*w))
 }
 
+effective_size_rho <- function(w, rho = 0){
+  neff = effective_size(w)
+  neff / (1 + (neff-1)*rho)
+}
+
+
 to_prob <-function(x, train_index){
   xt = x[train_index]
   ecdf(xt)(x) - 0.5/length(xt)

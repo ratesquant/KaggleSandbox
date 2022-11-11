@@ -1935,6 +1935,92 @@ ggplot(df_pd, aes(date, smm2cpr(model_smm), group = ei, color = factor(ei) )) + 
 
 ```
 
+#logistic regression
+
+```{r logistic_regression}
+
+t_index_v = sample.int(nrow(df), 1e6)
+
+
+add_splines <- function(df, vname, spline_knots, prefix = 'sp_'){
+  
+  nk = length(spline_knots)
+  x_splined = bs(df[[vname]], knots = spline_knots, degree = 1)
+  x_splined[,nk] = x_splined[,nk] + x_splined[,nk + 1]
+  spline_names = make.names(stri_join(prefix, vname, '_', spline_knots))
+  
+  df[, (spline_names) := lapply(seq_len(nk), function(i) x_splined[,i])  ]
+  return (TRUE)
+}
+
+get_vars <- function(all_names, pattern){
+  all_names[grepl(pattern, all_names)]
+}
+
+#plot_act_vs_model2(df, 'upb', bucket_count = 100)
+
+#create splines
+#df[,(get_vars(names(df), 'sp_LOAN_AGE')):=NULL]
+#df[,(get_vars(names(df), 'sp_turn_ei')):=NULL]
+#df[,(get_vars(names(df), 'sp_turn_CSCORE_B')):=NULL]
+
+df[, CSCORE:=CSCORE_B]
+df[is.na(CSCORE), CSCORE:=700]
+
+add_splines(df, 'LOAN_AGE', spline_knots = c(3,    6,   12,   24,  36), prefix = 'sp_turn_')
+add_splines(df, 'ei', spline_knots = c(-50,  0), prefix = 'sp_turn_')
+add_splines(df, 'CSCORE', spline_knots = c(760, 800), prefix = 'sp_turn_')
+ggplot(df[sample.int(nrow(df), 1000)], aes(LOAN_AGE, sp_turn_LOAN_AGE_6)) + geom_line()
+ggplot(df[sample.int(nrow(df), 1000)], aes(CSCORE, sp_turn_CSCORE_800)) + geom_line()
+
+#create vars
+turn.vars = c('season_s', 'OCC_STAT', 'no_cscore',  get_vars(names(df), 'sp_turn_LOAN_AGE'), get_vars(names(df), 'sp_turn_ei'),  get_vars(names(df), 'sp_turn_CSCORE') )
+turn.formula = as.formula(stri_join('po_ind ~ ', stri_join(turn.vars, collapse = '+')))
+
+#turnover
+model.turn = glm(turn.formula, data = df[ei<0], family = binomial(link = "logit") )
+summary(model.turn)
+
+df[, model_smm := predict(model.turn, .SD, type = 'response')]
+#plot_act_vs_model2(df[ei<0], 'date', bucket_count = 100)
+#plot_act_vs_model2(df[ei<0], 'LOAN_AGE', bucket_count = 100)
+#plot_act_vs_model2(df[ei<0], 'ei', bucket_count = 10)
+plot_act_vs_model2(df[ei<0], 'CSCORE_B', bucket_count = 20)
+
+my_vars = unique(c('ei', 'LOAN_AGE', 'season_s',  'upb', 'PURPOSE', 'OCC_STAT', 'CHANNEL','PROP', 'CSCORE_B',  'CLTV', 'OLTV',  'cum_ei','cum_eim', 'media_ei_lin','media_ei_log', 'hpa', 'hpa_life', 'hpi_1m36','hpi_1m60', 'CURR_RATE','MI_PCT',
+            'uer', 'uer_1m36', 'uer_1m60', 'uer_3m36',  'factor','DTI','no_cscore', 'sato', 'house_value', 'NO_UNITS', 'no_cscore', 'NUM_BO', 'orig_year', 'ei_ratio', 'vintage', 'ORIG_UPB'))
+plots = llply(my_vars, function(my_var){
+  plot_act_vs_model2(df[ei<0], my_var, bucket_count = 10) + ggtitle(my_var)
+})
+marrangeGrob(plots, nrow = 6, ncol = 6, top = NULL)
+
+
+#fit REFI
+turn.offset = predict(model.turn, df, type = 'link')
+
+#df[,(get_vars(names(df), 'sp_refi_cum_ei')):=NULL]
+add_splines(df, 'LOAN_AGE',spline_knots = c(3,    6,   12),     prefix = 'sp_refi_')
+add_splines(df, 'ei',      spline_knots = c( 0, 50, 100, 150),  prefix = 'sp_refi_')
+add_splines(df, 'cum_ei',  spline_knots = c( 0, 10),            prefix = 'sp_refi_')
+#ggplot(df[sample.int(nrow(df), 1000)], aes(cum_ei, sp_refi_cum_ei_10)) + geom_line()
+
+refi.vars = c(get_vars(names(df), 'sp_refi_'))
+refi.formula = as.formula(stri_join('po_ind ~ ', stri_join(refi.vars, collapse = '+')))
+
+#model.refi = glm(refi.formula, data = df[t_index_v], family = binomial(link = "logit"), offset =  turn.offset[t_index_v])
+model.refi = glm(refi.formula, data = df, family = binomial(link = "logit"), offset = turn.offset)
+summary(model.refi)
+
+df[, model_smm := predict(model.refi, .SD, type = 'response')]
+#df[, model_smm := logistic(turn.offset)]
+
+plot_act_vs_model2(df, 'ei', bucket_count = 20)
+plot_act_vs_model2(df[ei<0], 'LOAN_AGE', bucket_count = 20)
+plot_act_vs_model2(df, 'cum_ei', bucket_count = 20)
+
+#plot_binmodel_predictions(df$po_ind, df$model_smm)
+```
+
 #Revelant Sampling
 
 ```{r relevant_sampling}

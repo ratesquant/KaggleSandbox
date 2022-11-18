@@ -11,6 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 library(jsonlite)
 library(stringi)
+library(lubridate)
 library(data.table)
 library(ggplot2)
 ```
@@ -30,19 +31,24 @@ setDT(df_pn)
 
 names(df_eq) = make.names( names(df_eq) )
 
-df_pn[, date := as.Date(date)]
-df_eq[, date := as.Date(date)]
-df_pn[order(date), p_diff := personnel - shift(personnel)]
+df = df_eq[df_pn, on =.(date)]
 
-ggplot(df_pn, aes(date, personnel)) + geom_line()
-ggplot(df_pn, aes(date, POW)) + geom_line()
-ggplot(df_pn, aes(date, p_diff)) + geom_line() + geom_point() + geom_smooth(se = FALSE, color = 'red', span = 0.3)
+df[, date := as.Date(date)]
+df[, date_m := as.Date(ISOdate(year(date), month(date), 1)) ]
+df[order(date), p_diff := personnel - shift(personnel)]
 
-df_eq_m =  melt(df_eq[, -c("greatest.losses.direction", "day"), ], id.vars = 'date')
-df_eq_m[, value := as.numeric(value)]
-df_eq_m[order(date),  value_diff := value - shift(value), by = .(variable) ]
-ggplot(df_eq_m, aes(date, value)) + geom_line() + facet_wrap(~variable, scales = 'free' )
-ggplot(df_eq_m, aes(date, value_diff)) + geom_line() + facet_wrap(~variable, scales = 'free' ) + geom_smooth(se = FALSE, color = 'red', span = 0.3)
+ggplot(df, aes(date, personnel)) + geom_line()
+ggplot(df, aes(date, POW)) + geom_line()
+ggplot(df, aes(date, p_diff)) + geom_point() + geom_smooth(se = FALSE, color = 'red', span = 0.3) + 
+  scale_x_date(date_breaks = '1 month') + coord_cartesian(ylim = c(0, 1000))
+
+ggplot(df[, .(pd = sum(p_diff, na.rm = TRUE), .N), by =.(date_m)], aes(date_m, pd)) + geom_line()
+
+df_m =  melt(df[, -c("greatest.losses.direction", "day", "date_m", 'personnel*', 'p_diff', 'POW', 'fuel.tank', 'military.auto', 'mobile.SRBM.system', 'day', 'i.day'), ], id.vars = 'date')
+df_m[, value := as.numeric(value)]
+df_m[order(date),  value_diff := value - shift(value), by = .(variable) ]
+ggplot(df_m, aes(date, value)) + geom_line() + facet_wrap(~variable, scales = 'free' )
+ggplot(df_m, aes(date, value_diff)) + geom_point() + facet_wrap(~variable, scales = 'free' ) + geom_smooth(se = FALSE, color = 'red', span = 0.3)
 ```
 
 ## Including Plots

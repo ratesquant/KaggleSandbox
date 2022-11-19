@@ -1,6 +1,5 @@
 install.packages('devtools')
-devtools::install_url('https://github.com/catboost/catboost/releases/download/v1.0.6/catboost-R-Windows-1.0.6.tgz', INSTALL_opts = c("--no-multiarch"))
-
+devtools::install_url('https://github.com/catboost/catboost/releases/download/v1.1.1/catboost-R-Windows-1.1.1.tgz', INSTALL_opts = c("--no-multiarch"))
 
 #%% Test -----
 
@@ -26,3 +25,5 @@ catboost.get_plain_params(model)
 
 
 sessionInfo()
+
+

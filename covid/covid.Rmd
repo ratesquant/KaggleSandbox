@@ -222,7 +222,7 @@ exclude_states = c('Northern Mariana Islands', 'Puerto Rico', 'Virgin Islands', 
 
 ggplot(df[state %in% c('New Jersey', 'North Carolina')], aes(date, cases, group = state, color = state)) + geom_line()
 ggplot(df[state %in% c('New Jersey', 'North Carolina')], aes(date, new_cases, group = state, color = state)) + geom_line()
-ggplot(df[state %in% c('New Jersey', 'North Carolina')], aes(date, deaths, group = state, color = state)) + geom_line()
+ggplot(df[state %in% c('New Jersey', 'North Carolina')], aes(date, 1E-3*deaths, group = state, color = state)) + geom_line()
 
 ggplot(df[state %in% my_states], aes(date, cases, group = state, color = state)) + geom_line() + facet_wrap(~state, scales = 'free_y')
 ggplot(df[state %in% my_states], aes(date, new_cases)) + geom_line() + geom_line(aes(date, new_cases_avg_7d), size = 1, color = 'red') + facet_wrap(~state, scales = 'free_y')

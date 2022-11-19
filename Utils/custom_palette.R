@@ -41,6 +41,7 @@ plots = llply(names(custom_palettes), function(palette_name){
 marrangeGrob(plots, nrow = 4, ncol = 4, top = NULL)
 
 
+ggplot(df, aes(x, y, fill = z2)) + geom_tile() + scale_fill_custom('cor', discrete = FALSE)
 ggplot(df, aes(x, y, fill = z2)) + geom_tile() + scale_fill_custom('jet', discrete = FALSE)
 ggplot(df, aes(x, y, fill = z2)) + geom_tile() + scale_fill_custom('mixed', discrete = FALSE)
 ggplot(df, aes(x, y, fill = z2)) + geom_tile() + scale_fill_custom('rainbow', discrete = FALSE)

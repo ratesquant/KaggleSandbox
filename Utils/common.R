@@ -208,6 +208,7 @@ custom_palettes <- list(
   `grey`  = custom_cols("light grey", "dark grey"),
   `jet`   = c("#000080","#0000ff","#0080ff", "#00ffff", "#80ff80", "#ffff00","#ff8000","#ff0000", "#800000"),
   `div`   = c("#5548C1","#DDDDDD", "#B10127"),
+  `cor`   = c("#3F7F93","#DDDDDD", "#DA3B46"),
   `rainbow` =  c("#0000FF","#00FFFF","#00FF00","#FFFF00","#FF0000"),
   `rainbow_muted` = c("#3333FF","#33FFFF","#33FF33","#FFFF33","#FF3333"),
   `div2`   = c("#EBA569", "#FCFCFC", "#7296B0"),

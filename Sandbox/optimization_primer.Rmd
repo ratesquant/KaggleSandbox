@@ -73,11 +73,12 @@ res = optim(init_params, objective_2d, method = "Nelder-Mead", control = opt_con
 res = hjk(init_params, objective_2d, control = list(info = TRUE))
 res = mads(init_params, objective_2d,  lower=-10, upper=10, control = list(trace = FALSE)) #too many evaluations
 res = nmk(init_params, objective_2d, control = list(trace = TRUE))
-res = nmkb(init_params, objective_2d, lower=-10, upper=10, control = list(trace = TRUE)) #does not work
+res = nmkb(init_params, objective_2d, control = list(trace = TRUE), lower=-10, upper=10) #does not work
 
 res = psoptim(init_params,objective_2d,lower=-10,upper=10,control=list(abstol=1e-8))
 
 optimx(init_params, objective_2d, control = list(all.methods = TRUE))
+optimx(init_params, objective_2d, method = "nmkb")
 res = optimx(init_params, objective_2d, method = "Nelder-Mead")
 
 DEoptim(objective_2d, c(-10, -10), c(10, 10))
@@ -105,7 +106,9 @@ psoptim(init_params,objective_nd,lower=-10,upper=10,control=list(abstol=1e-8))
 optimx(init_params, objective_nd, control = list(all.methods = TRUE))
 res = optimx(init_params, objective_nd, method = "Nelder-Mead")
 
-res = DEoptim(objective_nd, rep(-10, length(init_params)), rep(10, length(init_params)), DEoptim.control(itermax = 1000, trace = FALSE))
+res = DEoptim(objective_nd, rep(-10, length(init_params)), rep(10, length(init_params)), DEoptim.control(itermax = 4000, trace = FALSE))
+
+plot(log(1 + res$member$bestvalit))
 
 #https://nlopt.readthedocs.io/en/latest/NLopt_Algorithms/
 #res <- nloptr( x0=init_params, eval_f=objective_nd, eval_grad_f=NULL, opts = list("algorithm"="NLOPT_GD_STOGO_RAND", "xtol_rel"=1.0e-8))

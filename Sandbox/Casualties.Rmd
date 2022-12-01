@@ -1,6 +1,7 @@
 ---
 title: "Russian_War_Ukraine"
 output: html_document
+dev: cairo
 date: '2022-06-07'
 editor_options: 
   chunk_output_type: console
@@ -8,6 +9,8 @@ editor_options:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(dev='ragg_png')
+#getOption("RStudioGD.backend")
 
 library(jsonlite)
 library(stringi)
@@ -19,6 +22,8 @@ library(ggplot2)
 ## Load Data
 
 ```{r load_data}
+
+print(getOption("RStudioGD.backend"))
 
 filename_eq = 'https://raw.githubusercontent.com/PetroIvaniuk/2022-Ukraine-Russia-War-Dataset/main/data/russia_losses_equipment.json'
 filename_pn = 'https://raw.githubusercontent.com/PetroIvaniuk/2022-Ukraine-Russia-War-Dataset/main/data/russia_losses_personnel.json'
@@ -48,15 +53,8 @@ df_m =  melt(df[, -c("greatest.losses.direction", "day", "date_m", 'personnel*',
 df_m[, value := as.numeric(value)]
 df_m[order(date),  value_diff := value - shift(value), by = .(variable) ]
 ggplot(df_m, aes(date, value)) + geom_line() + facet_wrap(~variable, scales = 'free' )
-ggplot(df_m, aes(date, value_diff)) + geom_point() + facet_wrap(~variable, scales = 'free' ) + geom_smooth(se = FALSE, color = 'red', span = 0.3)
+ggplot(df_m, aes(date, value_diff)) + geom_point() + facet_wrap(~variable, scales = 'free' ) + geom_smooth(se = FALSE, color = 'red', span = 0.1)
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

@@ -103,6 +103,7 @@ df[, ret := log(price/price_prev) ]
 df[, date_year := year(date)]
 
 ggplot(df[ticker == '^GSPC',], aes(x = date, y = price )) + geom_line()
+ggplot(df[ticker == 'T',], aes(x = date, y = price )) + geom_line()
 ggplot(df[ticker %in% c('^GSPC', 'BND', 'MUB', 'LQD', 'SPIB','VIG','VNQ', 'XLU', 'VCSH') ,], aes(x = date, y = price )) + geom_line() + facet_wrap(~ticker, scales = 'free')
 
 corr_matrix = cor(as.matrix(dcast(df[, .(ret, date, ticker) ], date ~ ticker, value.var = 'ret', fun.aggregate = mean)[,-1]), method  = "spearman", use="pairwise.complete.obs")

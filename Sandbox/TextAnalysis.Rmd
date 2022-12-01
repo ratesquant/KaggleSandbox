@@ -1,0 +1,274 @@
+---
+title: "Text Analysis"
+output: html_document
+date: "2022-11-26"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidytext)
+
+library(syuzhet)
+library(janeaustenr)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(ggplot2)
+library(wordcloud)
+library(wordcloud2)
+library(data.table)
+library(tm)
+
+library(igraph)
+library(ggraph)
+
+working_folder = "D:/Github/KaggleSandbox/"
+source(file.path(working_folder, '/Utils/common.R'))
+
+```
+
+## Sentiment
+
+```{r cars}
+
+tidy_books <- austen_books() %>%
+  group_by(book) %>%
+  mutate(
+    linenumber = row_number(),
+    chapter = cumsum(str_detect(text, 
+                                regex("^chapter [\\divxlc]", 
+                                      ignore_case = TRUE)))) %>%   ungroup() %>% unnest_tokens(word, text)
+jane_austen_sentiment <- tidy_books %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(book, index = linenumber %/% 80, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = positive - negative)
+
+ggplot(jane_austen_sentiment, aes(index, sentiment, fill = book)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~book, ncol = 2, scales = "free_x")
+
+bing_word_counts <- tidy_books %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+bing_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 10) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment",
+       y = NULL)
+
+
+tidy_books %>%
+  anti_join(stop_words) %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.words = 100))
+
+library(wordcloud2)
+demoFreq = data.table(tidy_books %>%   anti_join(stop_words) %>%   count(word))
+demoFreq[, freq:= n / sum(n)]
+
+  wordcloud2(demoFreq)
+
+```
+
+##NASA example
+https://www.tidytextmining.com/nasa.html
+```{r nasa_data, echo=FALSE}
+library(jsonlite)
+metadata <- fromJSON("https://data.nasa.gov/data.json")
+names(metadata$dataset)
+
+nasa_title <- tibble(id = metadata$dataset$`_id`$`$oid`, title = metadata$dataset$title)
+```
+
+## Text Analysis   
+https://www.tidytextmining.com/tfidf.html#a-corpus-of-physics-texts
+```{r nasa_data, echo=FALSE}
+library(readr)
+library(quanteda.textstats)
+text = read_file('https://www.gutenberg.org/cache/epub/37729/pg37729.txt')
+
+str_length(text)
+
+docs <- Corpus(VectorSource(text))
+docs =  docs  %>% tm_map(removeNumbers) %>%
+  tm_map(removePunctuation) %>%
+  tm_map(stripWhitespace) %>%
+  tm_map(content_transformer(tolower)) %>%
+  tm_map(removeWords, stopwords("english"))
+  
+dtm <- TermDocumentMatrix(docs) 
+matrix <- as.matrix(dtm) 
+words <- sort(rowSums(matrix),decreasing=TRUE) 
+df <- data.table(word = names(words),freq=words)
+
+set.seed(1234) # for reproducibility 
+wordcloud(words = df$word, freq = df$freq, min.freq = 1,           max.words=200, random.order=FALSE, rot.per=0.35,            colors=brewer.pal(8, "Dark2"))
+wordcloud2(df, size=1.6, color='random-dark')
+
+#readability
+textstat_readability(text, measure = c('Flesch', 'Flesch.PSK', 'Flesch.Kincaid', 'Coleman.Liau.grade'))
+
+get_sentiment(text)
+
+n_chunk = 1000
+df = data.table(text = substring(text,                     # Apply substring function
+          seq(1, nchar(text), n_chunk),
+          seq(n_chunk, nchar(text), n_chunk)))
+df[, sentiment := get_sentiment(text)]
+df[, readability := textstat_readability(text)$Flesch]
+df[, readability_grade := textstat_readability(text, measure = 'Coleman.Liau.grade')$Coleman.Liau.grade]
+df[, readability_FleschPSK := textstat_readability(text, measure = 'Flesch.PSK')$Flesch.PSK]
+df[, readability_FleschKincaid := textstat_readability(text, measure = 'Flesch.Kincaid')$Flesch.Kincaid]
+df[, i:=seq(nrow(df))]
+
+ggplot(df, aes(i, sentiment)) + geom_bar(stat = 'identity')
+ggplot(df, aes(i, readability)) + geom_bar(stat = 'identity')
+ggplot(df, aes(readability, readability_grade)) + geom_point()
+ggplot(df, aes(readability, readability_FleschPSK)) + geom_point()
+ggplot(df, aes(readability, readability_FleschKincaid)) + geom_point()
+```
+
+## inspirational quotes
+Next, get inspirational quotes from goodreads.com. I again found the xpath syntax for the quotes and extracted the top quotes spread 100 pages, about 3500 quotes.
+```{r quotes, echo=FALSE}
+library(rvest)
+
+html_page_base <-
+'https://www.goodreads.com/quotes/tag/inspirational?page='
+
+get_quotes <- function(url) {
+read_html(url) %>%
+html_nodes(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "quoteText", " " ))]') %>%
+html_text(trim = TRUE) %>%
+str_replace_all(pattern = '“', replacement = "")  %>%
+str_replace_all(pattern = '”', replacement = "") %>%
+str_replace_all(pattern = "\n.*", replacement = "")
+}
+
+quotes <- sapply(paste0(html_page_base, 1:100), get_quotes) # run the above function for 100 pages
+
+quotes_text <- unname(unlist(quotes))
+
+write(quotes_text, file = "D:/Github/KaggleSandbox/data/quotes.txt", append = TRUE)
+#quotes_text = read(file = "D:/Github/KaggleSandbox/data/quotes.txt")
+
+df_quotes = data.table(text = as.character(quotes) )
+df_quotes[, readability := textstat_readability(text)$Flesch]
+df_quotes[, sentiment := get_sentiment(text)]
+
+ggplot(df_quotes, aes(sentiment)) + geom_density()
+ggplot(df_quotes, aes(readability)) + geom_density()
+
+cc(df_quotes[sentiment %in% c(max(sentiment), min(sentiment)), ])
+cc(df_quotes[readability %in% c(max(readability), min(readability)), ])
+```
+
+## FAST AI
+https://github.com/r-tensorflow/gpt2
+```{r fastai, echo=FALSE}
+library(fastai)
+library(magrittr)
+
+tr = reticulate::import('transformers')
+pretrained_weights = 'gpt2'
+tokenizer = tr$GPT2TokenizerFast$from_pretrained(pretrained_weights)
+model = tr$GPT2LMHeadModel$from_pretrained(pretrained_weights)
+
+```
+
+##Little Prince
+https://rpubs.com/nabiilahardini/text-generator
+```{r little_prince, echo=FALSE}
+library(dplyr)
+library(tidyverse)
+
+# text processing
+library(tidytext)
+library(textclean)
+library(tokenizers)
+
+# markov chain
+library(markovchain)
+
+tlp <- read.delim("D:/Github/KaggleSandbox/data/little_prince.txt", col.names = "text")
+
+tlp_clean <- tlp %>% 
+  slice(-1) %>% # remove first line (version info)
+  filter(!str_detect(text, "[/:]"), # remove lines with certain characters
+         !str_detect(text, "Chapter")) # remove lines with certain string
+head(tlp_clean)
+
+tlp_clean  <- tlp_clean %>% 
+  mutate(text = tolower(text) %>% # tolower sentences
+           replace_contraction() %>%  # expand contraction
+           replace_white() %>%  # replace double white space into single space
+           str_remove_all(pattern = "lpp_1943.") %>% # remove pattern
+           str_remove_all(pattern = "[0-9]") %>% # remove numbers
+           str_remove_all(pattern = "[()]") %>% # remove specific punctuation
+           str_remove_all(pattern = "--") %>%
+           str_replace_all(pattern = " - ", replacement = "-") %>%  # replace pattern
+           str_replace_all(pattern = "n't", replacement = "not") %>% 
+           str_remove(pattern = "[.]") %>% # remove first matched pattern
+           str_remove(pattern = " "))
+            
+
+# glimpse data; first 10 sentences
+head(tlp_clean, 10)
+
+text_tlp <- tlp_clean %>% 
+   pull(text) %>% 
+   strsplit(" ") %>% 
+   unlist() 
+
+text_tlp %>% head(27)
+
+fit_markov <- markovchainFit(text_tlp)
+
+create_me <- function(num = 5, first_word = "i", n = 2) {
+  for (i in 1:num) {
+    
+     set.seed(i+5)
+    
+     markovchainSequence(n = n, # generate 2 additional random words
+                         markovchain = fit_markov$estimate,
+                         t0 = tolower(first_word), include.t0 = T) %>% 
+     # joint words
+     paste(collapse = " ") %>% # join generated words with space
+     # create proper sentence form
+     str_replace_all(pattern = " ,", replacement = ",") %>% 
+     str_replace_all(pattern = " [.]", replacement = ".") %>% 
+     str_replace_all(pattern = " [!]", replacement = "!") %>% 
+     str_to_sentence() %>% # start every sentences with capitalization
+     print()
+  }
+}
+
+random_vocab <- function(n = 10, seed = NULL) {
+  
+  set.seed(seed)
+  unique_vocab <- tlp_clean %>% 
+    mutate(text = text %>% 
+           str_remove_all("[:punct:]")) %>% 
+    pull(text) %>% 
+    strsplit(" ") %>% 
+    unlist() %>% 
+    unique()
+    
+  unique_vocab[sample(length(unique_vocab), n)]
+
+  }
+
+create_me(num = 5, first_word = "i", n = 10)
+random_vocab(n = 10, seed = 123)
+```

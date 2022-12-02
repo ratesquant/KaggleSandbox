@@ -9,7 +9,10 @@ editor_options:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_chunk$set(dev='ragg_png')
+#knitr::opts_chunk$set(dev='ragg_png')
+#knitr::opts_chunk$set(dev = "cairo_pdf") #for PDF ONLY
+knitr::opts_chunk$set(dev = "png", dev.args = list(type = "cairo-png"))
+#knitr::opts_chunk$set(dev='cairo_pdf')
 #getOption("RStudioGD.backend")
 
 library(jsonlite)

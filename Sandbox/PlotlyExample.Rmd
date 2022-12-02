@@ -1,0 +1,68 @@
+---
+title: "Plotly Example"
+output: 
+  html_document: 
+    toc: yes
+    theme: lumen
+    number_sections: yes
+    code_folding: show
+date: "2022-12-02"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = FALSE, fig.width = 8, fig.height = 6)
+
+library(ggplot2)
+library(data.table)
+library(plotly)
+library(knitr)
+library(rmarkdown)
+library(DT)
+library(pander)
+
+data_folder = r'(D:\Github\KaggleSandbox\data)'
+
+#output options
+#output: ioslides_presentation
+#knit_theme$set("fruit")
+
+```
+
+
+
+## Data
+https://rstudio-pubs-static.s3.amazonaws.com/180546_e2d5bf84795745ebb5cd3be3dab71fca.html
+https://bookdown.org/yihui/rmarkdown/html-document.html#appearance_and_style
+
+
+```{r load_data, collapse=TRUE}
+
+delayedAssign("df",  fread(file.path(data_folder, 'UNRATE.csv')))
+#df = fread(file.path(data_folder, 'UNRATE.csv'))
+
+kable(tail(df)) 
+
+pander(head(df, n = 4))
+
+datatable(df) 
+```
+
+## Figures
+
+```{r figures, echo=FALSE}
+
+ggplotly( ggplot(df, aes(DATE, UNRATE)) + geom_line() )
+
+```
+
+```{r info}
+devtools::session_info()
+```
+
+ 
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+

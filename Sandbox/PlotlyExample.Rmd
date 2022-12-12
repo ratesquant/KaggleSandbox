@@ -38,16 +38,15 @@ https://rstudio-pubs-static.s3.amazonaws.com/180546_e2d5bf84795745ebb5cd3be3dab7
 https://bookdown.org/yihui/rmarkdown/html-document.html#appearance_and_style
 
 
-```{r load_data, collapse=TRUE}
+```{r load_data}
 
-delayedAssign("df",  fread(file.path(data_folder, 'UNRATE.csv')))
-#df = fread(file.path(data_folder, 'UNRATE.csv'))
+#delayedAssign("df",  fread(file.path(data_folder, 'UNRATE.csv')))
+df = fread(file.path(data_folder, 'UNRATE.csv'))
 
-kable(tail(df)) 
+#kable(tail(df)) 
+#pander(head(df, n = 4))
 
-pander(head(df, n = 4))
-
-datatable(df) 
+datatable(df, filter= "top") 
 ```
 
 ## Figures
@@ -55,6 +54,89 @@ datatable(df)
 ```{r figures, echo=FALSE}
 
 ggplotly( ggplot(df, aes(DATE, UNRATE)) + geom_line() )
+
+#g1 <- graph( edges=c(1,2, 2,3, 3, 1), n=3, directed=F )
+#plot(g1)
+
+```
+
+## Graph
+
+```{r graph, echo=FALSE, eval = FALSE}
+library(igraph)
+library(ggraph)
+#> Loading required package: ggplot2
+library(tidygraph)
+#> 
+#> Attaching package: 'tidygraph'
+#> The following object is masked from 'package:stats':
+#> 
+#>     filter
+
+# Create graph of highschool friendships
+graph <- as_tbl_graph(highschool) %>% 
+    mutate(Popularity = centrality_degree(mode = 'in'))
+
+# plot using ggraph
+p = ggraph(graph, layout = 'kk') + 
+    geom_edge_fan(aes(alpha = after_stat(index)), show.legend = FALSE) + 
+    geom_node_point(aes(size = Popularity)) + 
+    facet_edges(~year) + 
+    theme_graph(foreground = 'steelblue', fg_text_colour = 'white')
+
+ggplotly( p )
+
+gr <- graph_from_data_frame(flare$edges, vertices = flare$vertices)
+ggraph(gr, layout = 'partition') + 
+    geom_node_tile(aes(y = -y, fill = depth))
+
+ggraph(gr, layout = 'dendrogram', circular = TRUE) + 
+    geom_edge_diagonal() + 
+    geom_node_point(aes(filter = leaf)) + 
+    coord_fixed()
+
+ggraph(gr, layout = 'dendrogram') + geom_edge_diagonal()
+
+ggraph(gr, layout = 'partition', circular = TRUE) + geom_node_arc_bar(aes(fill = depth)) + coord_fixed()
+
+flaregraph <- graph_from_data_frame(flare$edges, vertices = flare$vertices)
+from <- match(flare$imports$from, flare$vertices$name)
+to <- match(flare$imports$to, flare$vertices$name)
+ggraph(flaregraph, layout = 'dendrogram', circular = TRUE) + 
+    geom_conn_bundle(data = get_con(from = from, to = to), alpha = 0.1) + 
+    coord_fixed()
+```
+
+```{r, eval = FALSE}
+working_folder = 'D:/Github/KaggleSandbox'
+source(file.path(working_folder, 'Utils/common.R'))
+
+
+library(ambient)
+
+simplex <- noise_simplex(c(500, 500), pertubation = 'normal', 
+                         pertubation_amplitude = 40)
+plot(as.raster(normalise(simplex)))
+
+library(dplyr)
+
+res = long_grid(x = seq(0, 10, length.out = 1400), 
+          y = seq(0, 10, length.out = 1000)) %>% 
+  mutate(
+    x1 = x + gen_simplex(x, y) / 2, 
+    y1 = y + gen_simplex(x, y) / 2,
+    worley = gen_worley(x, y, value = 'distance', seed = 5),
+    worley_frac = fracture(gen_worley, ridged, octaves = 8, x = x, y = y, 
+                           value = 'distance', seed = 5),
+    full = blend(normalise(worley), normalise(worley_frac), gen_spheres(x1, y1))
+  )
+plot(res, full)
+
+ggplot(data.table(res), aes(x, y, fill =full)) + geom_raster() + theme_void() + scale_fill_custom('cor', discrete = FALSE)
+ggplot(data.table(res), aes(x, y, fill =full)) + geom_raster() + theme_void() + scale_fill_custom('jet', discrete = FALSE)
+ggplot(data.table(res), aes(x, y, fill =full)) + geom_raster() + theme_void() + scale_fill_custom('mixed', discrete = FALSE)
+ggplot(data.table(res), aes(x, y, fill =full)) + geom_raster() + theme_void() + scale_fill_custom('cubehelix', discrete = FALSE)
+
 
 ```
 

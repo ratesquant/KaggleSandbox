@@ -15,6 +15,7 @@ library(data.table)
 library(plyr)
 library(stringi)
 library(lubridate)
+library(plotly)
 
 temp_c2f <- function(temp_c) {  temp_c * 1.8 + 32 }
 ```
@@ -33,12 +34,23 @@ client$health()
 client$ready()
 ```
 
-## Load Data
+## Load Tempreture Data
 Changed Air Filter 5/29/2022
 
 ```{r load_data, echo=FALSE}
-tables <- client$query('from(bucket: "home_assistant") |> range(start: -7d)')
+#tables <- client$query('from(bucket: "home_assistant") |> range(start: -7d)')
 #tables <- client$query('from(bucket: "home_assistant")')
+my_query = 'from(bucket: "home_assistant")
+          |> range(start: -7d)
+          |> filter(fn: (r) => r["_measurement"] == "°C")
+          |> filter(fn: (r) => r["_field"] == "value")
+          |> filter(fn: (r) => r["domain"] == "sensor")
+          |> filter(fn: (r) => r["entity_id"] == "temperature_sensor_temperature" or r["entity_id"] == "leak_sensor_temperature" or r["entity_id"] == "temp_bedroom_temperature" or r["entity_id"] == "temp_media_temperature")
+          |> filter(fn: (r) => r["friendly_name"] == "Temperature Sensor (Temperature)" or r["friendly_name"] == "Temp Bedroom (Temperature)" or r["friendly_name"] == "Temp Media (Temperature)" or r["friendly_name"] == "Temp Outside (Temperature)")
+          |> filter(fn: (r) => r["source"] == "HA")
+          |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)
+          |> yield(name: "mean")'
+tables <- client$query(stri_replace_all(my_query, '', fixed = '\n'))
 
 #X = read.table(readLines(file.csv, warn = FALSE),header=TRUE,sep=”,”)
 #X = read.table(readLines(file.choose(), warn = FALSE),header=TRUE,sep=”,”)
@@ -58,59 +70,48 @@ names(df) <- make.names(names(df))
 df[order(time), dt := difftime(time, shift(time), units = 'mins'), by = .(entity_id,X_field)]
 df[order(time), dv := X_value - shift(X_value), by = .(entity_id,X_field)]
 
-id_map = data.table(id= c('bff2ef07', 'ccbfeb07'), name = c('attic', 'bedroom'))
 
-ggplot(df[X_field == 'value' & grepl('power', friendly_name) ], aes(time, X_value, group = friendly_name, color = friendly_name)) + 
-  geom_step() + geom_point()
-
-ggplot(df[X_field == 'value' & grepl('temperature', friendly_name) ], aes(time, temp_c2f(X_value), group = friendly_name, color = friendly_name)) + 
-  geom_step() + geom_point()
-
-ggplot(df[X_field == 'value' & grepl('temperature', friendly_name) ], aes(time, temp_c2f(X_value), group = friendly_name, color = friendly_name)) + 
-  geom_step() + geom_point()
-
-ggplot(df[X_field == 'value' & grepl('temperature', friendly_name) ], aes(make_datetime(2022, 6, 20, hour(time), minute(time), second(time)  ), temp_c2f(X_value), group = friendly_name, color = friendly_name)) + 
-   geom_point()
-
-
-ggplot(df[X_field == 'value' & grepl('temperature', friendly_name) ], aes(X_value, pmax(-10, pmin(10, 60*dv/dt)), group = friendly_name, color = friendly_name)) + 
-   geom_point() + facet_wrap(~friendly_name)
-
-ggplot(df[X_field == 'value' & grepl('temperature', friendly_name) ], aes(time, friendly_name, fill = X_value)) + geom_tile() + scale_fill_distiller(palette = "Spectral")
-
-
-ggplot(df[X_field == 'value' & grepl('humidity', entity_id) ], aes(time, X_value, group = entity_id, color = entity_id)) + 
-  geom_step() + geom_point()
-
-ggplot(df[X_field == 'value' & grepl('pressure', entity_id) ], aes(time, X_value, group = entity_id, color = entity_id)) + 
-  geom_step() + geom_point()
-
-
-df[, time := round_date(time, "second")]
-
-df_h = df[X_field == 'value' & grepl('humidity', entity_id), .(time, entity_id, humidity = X_value) ]
-df_t = df[X_field == 'value' & grepl('temperature', entity_id), .(time, entity_id, temperature = X_value) ]
-df_h[, sensor_id := stri_replace_all_fixed(entity_id, '_humidity', '') ]
-df_t[, sensor_id := stri_replace_all_fixed(entity_id, '_temperature', '') ]
-#DT[CJ(ids,dts),roll=TRUE]
-
-#df_h[df_t, temperature := i.temperature, on = .(sensor_id, time), roll=TRUE]
-df_t[df_h, humidity := i.humidity, on = .(sensor_id, time), roll=TRUE]
-ggplot(df_t) + geom_line( aes(time, humidity)) + geom_line( aes(time, temperature)) + facet_wrap(~sensor_id)
-
-#ggplot() + geom_line(data = df_h, aes(time, humidity)) + geom_line(data = df_t, aes(time, temperature)) + facet_wrap(~sensor_id)
-
-ggplot(df_t) + geom_point( aes(humidity, temperature)) + facet_wrap(~sensor_id)
-ggplot(df_t) + geom_point( aes(humidity, temperature, color = sensor_id))
-
-#TEST 1 time seris
-df1 = df[entity_id == "lumi_lumi_weather_ccbfeb07_temperature"]
-df1[, time_delta := as.numeric(difftime(time, shift(time), 'secs')) ]
-ggplot(df1, aes(time, X_value)) + geom_line() +  geom_point()
-ggplot(df1, aes(as_datetime(X_time), X_value)) + geom_line()
-ggplot(df1, aes(time, time_delta/60)) + geom_line() +  geom_point()
-ggplot(df1, aes(time_delta/60) ) + geom_histogram()
+ggplotly( ggplot(df[X_field == 'value'], aes(time, temp_c2f(X_value), group = friendly_name, color = friendly_name)) + geom_step() + geom_point() )
+ggplotly( ggplot(df[X_field == 'value'], aes(time, X_value, group = friendly_name, color = friendly_name)) + geom_step() + geom_point() )
+ggplot(df[X_field == 'value'], aes(time, X_value, group = friendly_name, color = friendly_name)) + geom_step() + geom_point()
 
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+## Load Humidity Data
+Changed Air Filter 5/29/2022
+
+```{r load_data, echo=FALSE}
+my_query = 'from(bucket: "home_assistant")
+  |> range(start: -7d)
+  |> filter(fn: (r) => r["_measurement"] == "%")
+  |> filter(fn: (r) => r["_field"] == "value")
+  |> filter(fn: (r) => r["domain"] == "sensor")
+  |> filter(fn: (r) => r["entity_id"] == "temp_media_humidity" or r["entity_id"] == "temp_bedroom_humidity")
+  |> filter(fn: (r) => r["friendly_name"] == "Temp Bedroom (Humidity)" or r["friendly_name"] == "Temp Media (Humidity)")
+  |> filter(fn: (r) => r["source"] == "HA")
+  |> aggregateWindow(every: 5m, fn: mean, createEmpty: false)
+  |> yield(name: "mean")'
+tables <- client$query(stri_replace_all(my_query, '', fixed = '\n'))
+
+num_values = sapply(tables, function(x) is.numeric(x[['_value']]))
+str_values = sapply(tables, function(x) is.character(x[['_value']])) 
+
+#df <- data.table(ldply(tables[num_values], data.frame))
+df   = rbindlist(tables[num_values], fill=TRUE)
+df_s = rbindlist(tables[str_values], fill=TRUE)
+
+#df_s[entity_id == 'lumi_lumi_weather_bff2ef07_temperature']
+#df[entity_id == 'lumi_lumi_weather_bff2ef07_temperature']
+
+names(df) <- make.names(names(df))
+df[friendly_name == 'Temperature Sensor (Temperature)', friendly_name:= 'Temp Outside (Temperature)']
+
+df[order(time), dt := difftime(time, shift(time), units = 'mins'), by = .(entity_id,X_field)]
+df[order(time), dv := X_value - shift(X_value), by = .(entity_id,X_field)]
+
+ggplot(df[X_field == 'value'], aes(time, X_value, group = friendly_name, color = friendly_name)) + geom_step() + geom_point()
+ggplot(df[X_field == 'value'], aes(dt, group = friendly_name, fill = friendly_name)) + geom_histogram() + facet_wrap(~friendly_name)
+
+
+```

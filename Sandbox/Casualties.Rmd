@@ -20,6 +20,11 @@ library(stringi)
 library(lubridate)
 library(data.table)
 library(ggplot2)
+
+working_folder = 'D:/Github/KaggleSandbox'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
+source(file.path(working_folder, 'Utils/common.R'))
 ```
 
 ## Load Data
@@ -55,9 +60,52 @@ ggplot(df[, .(pd = sum(p_diff, na.rm = TRUE), .N), by =.(date_m)], aes(date_m, p
 df_m =  melt(df[, -c("greatest.losses.direction", "day", "date_m", 'personnel*', 'p_diff', 'POW', 'fuel.tank', 'military.auto', 'mobile.SRBM.system', 'day', 'i.day'), ], id.vars = 'date')
 df_m[, value := as.numeric(value)]
 df_m[order(date),  value_diff := value - shift(value), by = .(variable) ]
-ggplot(df_m, aes(date, value)) + geom_line() + facet_wrap(~variable, scales = 'free' )
+
 ggplot(df_m, aes(date, value_diff)) + geom_point() + facet_wrap(~variable, scales = 'free' ) + geom_smooth(se = FALSE, color = 'red', span = 0.1)
+
+ggplot(df_m, aes(date, value)) + geom_line() + facet_wrap(~variable, scales = 'free' )
+ggplot(df_m[ variable %in% c('tank', 'drone', 'personnel', 'cruise.missiles')], aes(date, value)) + geom_line() + facet_wrap(~variable, scales = 'free' )
+
+ggplot(df_m[ variable %in% c('tank', 'drone', 'personnel', 'cruise.missiles')], aes(date, value_diff)) + geom_point() + facet_wrap(~variable, scales = 'free' ) + 
+  geom_smooth(se = FALSE, color = 'red', span = 0.2)
 ```
 
+By Tank Type
+```{r load_data}
+
+filename_tanks = 'https://raw.githubusercontent.com/PetroIvaniuk/2022-Ukraine-Russia-War-Dataset/main/data/russia_losses_equipment_oryx.json'
+df_tanks <- fromJSON(sapply(readLines(filename_tanks,  warn=FALSE), function(x) stri_replace_all_fixed(x, "NaN", '"NA"')))
+setDT(df_tanks)
+
+df_agg = df_tanks[, .(losses_total = sum(losses_total)), by =.(equipment_oryx, model)]
+
+library(treemapify)
+
+#ggplot(df_tanks, aes(equipment_oryx, value_diff)) + geom_point() + facet_wrap(~variable, scales = 'free' ) + geom_smooth(se = FALSE, color = 'red', span = 0.1)
+
+ ggplot(df_agg, aes(area = losses_total, fill = losses_total, label = model, subgroup = equipment_oryx)) +
+  geom_treemap() +
+  geom_treemap_text(fontface = "italic", colour = "white", place = "center", grow = FALSE, reflow = T, min.size = 2) + 
+  geom_treemap_subgroup_border() +
+  geom_treemap_subgroup_text(place = "center", grow = T, alpha = 0.4, colour = "black", fontface = "italic", min.size = 0) + 
+    scale_fill_custom('yb', discrete = FALSE)
+ 
+ ggplot(df_agg[equipment_oryx == 'Tanks'], aes(reorder(model,losses_total), losses_total, label = sprintf('%s', losses_total) )) + geom_bar(stat = 'identity') + coord_flip() + geom_text(nudge_y = 10)
+ 
+  ggplot(df_agg[equipment_oryx == 'Tanks'], aes(area = losses_total, fill = losses_total, label = model, subgroup = equipment_oryx)) +
+  geom_treemap() +
+  geom_treemap_text(fontface = "italic", colour = "white", place = "center", grow = FALSE, reflow = T, min.size = 2) + 
+  geom_treemap_subgroup_border() +
+  geom_treemap_subgroup_text(place = "center", grow = T, alpha = 0.4, colour = "black", fontface = "italic", min.size = 0) + 
+    scale_fill_custom('yb', discrete = FALSE)
+ 
+ ggplot(df_tanks, aes(area = losses_total, fill = losses_total, label = model, subgroup = equipment_oryx)) +
+  geom_treemap() +
+  geom_treemap_text(fontface = "italic", colour = "white", place = "topleft", grow = FALSE) + 
+  geom_treemap_subgroup_border() +
+  geom_treemap_subgroup_text(place = "center", grow = T, alpha = 0.4, colour = "black", fontface = "italic", min.size = 0) + 
+    scale_fill_custom('yb', discrete = FALSE)
+
+```
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

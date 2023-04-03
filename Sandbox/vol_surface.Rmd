@@ -1,0 +1,65 @@
+---
+title: "Vol Surface"
+output: html_document
+date: "2023-02-12"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(data.table)
+library(plyr)
+library(gridExtra)
+
+working_folder = 'D:/Github/KaggleSandbox'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+
+source(file.path(working_folder, 'Utils/common.R'))
+```
+
+## R Markdown
+
+```{r cars}
+file_type = 'D:/SourceCode/Python/Finance/lmm_sensetivity.csv'
+
+df = fread(file_type)
+df[, sim_tf :=  factor(sim_t)]
+df[, fwd_tf :=  factor(fwd_t)]
+
+ggplot(df[tenor == 10 & type == 'cap'], aes(sim_tf, fwd_tf, fill = price, label = sprintf('%.3f', vol) )) + geom_tile() + facet_wrap(~tenor) + scale_fill_custom('mixed', discrete = FALSE) + coord_fixed() + geom_text() + theme_minimal()
+
+plots = llply(df[type == 'cap', unique(tenor)], function(my_tenor) {
+  ggplot(df[tenor == my_tenor & type == 'cap'], aes(sim_tf, fwd_tf, fill = vol, label = sprintf('%.3f', vol) )) + geom_tile() + scale_fill_custom('mixed', discrete = FALSE) + coord_fixed() + geom_text(alpha = 0.7, size = 2) + 
+    theme_minimal() + ggtitle(my_tenor) + theme(legend.position = 'None')})
+
+#marrangeGrob(plots, nrow = 2, ncol = 2, top = NULL)
+
+ggsave(filename = "D:/SourceCode/Python/Finance/cap_lmm_sensetivity.pdf", 
+       plot = marrangeGrob(plots, nrow=1, ncol=1, top = NULL), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+
+
+ggplot(df[tenor == 10 & expiry == 2 & type == 'swaption'], aes(sim_tf, fwd_tf, fill = price, label = sprintf('%.3f', vol) )) + geom_tile() + facet_wrap(~tenor) + scale_fill_custom('mixed', discrete = FALSE) + coord_fixed() + geom_text() + theme_minimal()
+
+
+df_agg = df[type == 'swaption', .(.N), by = .(tenor, expiry)]
+plots = llply(seq(nrow(df_agg)), function(i) {
+  ggplot(df[tenor == df_agg$tenor[i] & expiry == df_agg$expiry[i] & type == 'swaption'], aes(sim_tf, fwd_tf, fill = vol, label = sprintf('%.3f', vol) )) + geom_tile() + scale_fill_custom('mixed', discrete = FALSE) + coord_fixed() + geom_text(alpha = 0.7, size = 2) + 
+    theme_minimal() + ggtitle(sprintf('%d x %d',df_agg$expiry[i],  df_agg$tenor[i]) ) + theme(legend.position = 'None')})
+
+ggsave(filename = "D:/SourceCode/Python/Finance/swaption_lmm_sensetivity.pdf", 
+       plot = marrangeGrob(plots, nrow=1, ncol=1, top = NULL), device = 'pdf', width = 14, height = 8.5, dpi = 360)
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

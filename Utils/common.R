@@ -177,6 +177,40 @@ cutq <- function(x, probs = seq(0, 1, 0.1), na.rm = TRUE, include.lowest = TRUE)
   return(res)
 }
 
+stationary_bootstrap <- function(x, n, p_switch = 0.1){
+  xb = rep(0, n)
+  xs = length(x)
+  
+  index = sample.int(xs, 1)
+  
+  for(i in 1:n) {
+    xb[i] = x[index]
+    
+    index = ifelse(runif(1) < p_switch, sample.int(xs, 1),  index + 1)
+    
+    if(index > xs)
+      index = 1
+  }
+  return (xb)
+}
+
+stationary_bootstrap_conditional <- function(x, n, p_switch = 0.1){
+  xb = rep(0, n)
+  xs = length(x)
+  
+  index = sample.int(xs, 1)
+  
+  for(i in 1:n) {
+    xb[i] = x[index]
+    
+    index = ifelse(runif(1) < p_switch, sample.int(xs, 1),  index + 1)
+    
+    if(index > xs)
+      index = 1
+  }
+  return (xb)
+}
+
 ## GGPLOT Colors ----------
 custom_colors <- c(
   `red`        = "#d11141",

@@ -1,0 +1,313 @@
+---
+title: "MEV Monte-Carlo"
+output: html_document
+date: "2023-04-01"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+
+knitr::opts_chunk$set(echo = TRUE, fig.width = 8, fig.height = 5, dpi = 240)
+options(warn=-1)
+
+library(plyr)
+library(foreach)
+library(data.table)
+library(stringi)
+library(ggplot2)
+library(gridExtra)
+library(zip)
+library(forcats)
+library(lubridate)
+library(R.utils)
+
+data_folder = 'V:/FRED'
+working_folder = 'D:/Github/KaggleSandbox'
+#working_folder = file.path(Sys.getenv("HOME"), 'source/github/KaggleSandbox/')
+source(file.path(working_folder, '/Utils/common.R'))
+
+```
+
+```{r load_data}
+#load mortgage rate
+df_mtg = fread(file.path(data_folder, "MORTGAGE30US.csv"))
+df_mtg[, date:= make_date(year(DATE), month(DATE), 1)]
+df_mtg = df_mtg[, .(rate = mean(MORTGAGE30US, na.rm = TRUE)), by =.(date)] #simple average
+
+df_hpi = fread(file.path(data_folder,"CSUSHPISA.csv"))
+df_hpi[, date:= make_date(year(DATE), month(DATE), 1)]
+df_hpi[, hpi := CSUSHPISA]
+df_hpi[order(date), hpi_1m := shift(hpi,  1)]
+df_hpi[order(date), hpi_1y := shift(hpi, 12)]
+df_hpi[order(date), hpi_2y := shift(hpi, 24)]
+df_hpi[, hpa    := 100*(hpi/ hpi_1y - 1)]
+df_hpi[, hpa_1m := 100*(hpi/ hpi_1m - 1)]
+df_hpi[, hpa_2y := 100*(hpi/ hpi_2y - 1)]
+
+df_uer = fread(file.path(data_folder,"UNRATE.csv"))
+df_uer[, date:= make_date(year(DATE), month(DATE), 1)]
+df_uer[, uer := UNRATE]
+df_uer[, uer_log := log(uer)]
+df_uer[, uer_prev := shift(uer)]
+df_uer[order(date), uer_change := uer - shift(uer)]
+df_uer[order(date), uer_change_log := uer_log - shift(uer_log)]
+
+
+
+df_mev = df_mtg[df_hpi[,.(date, hpi, hpa, hpa_2y, hpa_1m)], on=.(date)]
+df_mev = df_mev[df_uer[,.(date, uer)], on=.(date)]
+df_mev = df_mev[!is.na(rate)]
+df_mev[order(date), rate_1m := shift(rate, 1)]
+df_mev[order(date), rate_3m48:=frollmean(rate, 3) - frollmean(rate, 48)]
+df_mev[order(date), rate_1m48:=rate               - frollmean(rate, 48)]
+df_mev[order(date), rate_3m60:=frollmean(rate, 3) - frollmean(rate, 60)]
+df_mev[order(date), rate_1m60:=rate               - frollmean(rate, 60)]
+df_mev[order(date), uer_1m60 :=uer                - frollmean(uer,  60)]
+df_mev[order(date), uer_1m36 :=uer                - frollmean(uer,  36)]
+df_mev[order(date), uer_3m36 := frollmean(uer,  3) - frollmean(uer,  36)]
+df_mev[order(date), uer_1y :=uer - shift(uer, 12)]
+df_mev[order(date), hpi_1m60 :=hpi                - frollmean(hpi,  60)]
+df_mev[order(date), hpi_1m36 :=hpi                - frollmean(hpi,  36)]
+df_mev[, hpi_log := log(hpi)]
+df_mev[, uer_log := log(uer)]
+
+setkey(df_mev,'date')
+
+
+ggplot(df_mev[date>'2000-01-01'], aes(date, rate)) + geom_line()
+ggplot(df_mev[date>'2000-01-01'], aes(date, rate_3m48)) + geom_line()
+ggplot(df_mev[date>'2000-01-01'], aes(date, rate_1m60)) + geom_line()
+ggplot(df_mev[date>'2000-01-01'], aes(date, hpi)) + geom_line()
+ggplot(df_mev[date>'2000-01-01'], aes(date, hpa)) + geom_line()
+
+my_vars = c('rate', 'hpi', 'hpa', 'uer', 'hpi_log')
+ggplot(melt(df_mev, id.vars = c('date'))[date>'1990-01-01'][variable %in% my_vars], aes(date, value)) + geom_line() + facet_wrap(~variable, scales = 'free')
+  
+```
+
+## VAR models
+
+
+```{r var_models, echo=FALSE}
+library(vars)
+
+df.lev = df_mev[date>'1990-01-01',.(rate, uer_log, hpi_log)]
+
+VARselect(df.lev, lag.max = 12, type = 'none', season = 4)
+
+# estimation
+var.model_lev = VAR(df.lev, p = 3, type = "const", season = 4)
+
+# Diagnostic Testing
+## ARCH test
+archtest <- arch.test(var.model_lev)
+plot(archtest)
+## Normality test
+normalitytest <- normality.test(var.model_lev)
+plot(normalitytest)
+## serial correlation test
+serialtest <- serial.test(var.model_lev)
+plot(serialtest)
+## FEVD
+var.model_lev.fevd <- fevd(var.model_lev, n.ahead = 12)
+plot(var.model_lev.fevd)
+
+var.2c.irf <- irf(var.model_lev, boot = FALSE)
+plot(var.2c.irf)
+
+# forecast of lev data
+var.pred = predict(var.model_lev, n.ahead = 36)
+plot(var.pred)
+fanchart(var.pred)
+
+tail(df_mev,3)
+
+##%%%  VAR ---------------------
+library(tsDyn)
+
+my_lag = 3
+
+linevare_diff = lineVar(data = df.lev, lag = my_lag, include = "none", model = "VAR", I = "diff")
+summary(linevare_diff)
+
+#VAR.boot( linevare_diff)
+
+df_boot = ldply(seq(1), function(boot_id) {
+  var1 = VAR.sim(B=linevare_diff$coefficients, n=360, include="none", lag = my_lag, starting = diff(as.matrix(tail(df.lev, my_lag + 1))), varcov = cov(linevare_diff$residuals))
+  #var1 = VAR.boot( linevare_diff, boot.scheme = c("resample"))
+  
+  var1 = rbind(tail(df.lev, 1), var1, use.names=FALSE)
+  var1 = apply(var1, 2, cumsum)
+  df_sim = data.table(var1)
+  names(df_sim) = names(df.lev)
+  df_sim[, i := seq(0, .N-1)]
+  df_sim[, date := max(df_mev$date) %m+% months(i)]
+  df_sim[, source := 'proj']
+  df_sim[, boot_id := boot_id]
+  return(df_sim)
+})
+setDT(df_boot)
+
+p1 = ggplot(df_boot,  aes(date, exp(uer_log), group = boot_id)) + geom_line(color = 'red') + geom_line(data = df_mev[date>'1990-01-01',], aes(date, uer, group = 1), color = 'black' )
+p2 = ggplot(df_boot,  aes(date, rate, group = boot_id)) + geom_line(color = 'red') + geom_line(data = df_mev[date>'1990-01-01',], aes(date, rate, group = 1), color = 'black' )
+p3 = ggplot(df_boot,  aes(date, exp(hpi_log), group = boot_id)) + geom_line(color = 'red') + geom_line(data = df_mev[date>'1990-01-01',], aes(date, exp(hpi_log), group = 1), color = 'black' )
+grid.arrange(p1,p2,p3)
+
+
+
+##%%%  VECM ---------------------
+my_lag = 3
+
+linevare_diff = lineVar(data = df.lev, lag = my_lag, include = "none", model = "VECM", I = "diff")
+summary(linevare_diff)
+
+df_boot = ldply(seq(1), function(boot_id) {
+  var1 = VECM.sim(B=linevare_diff$coefficients, n=360, include="none", lag = my_lag, beta = c(0.5, 0.5, 0.5), starting = diff(as.matrix(tail(df.lev, my_lag + 2))))
+  var1 = rbind(tail(df.lev, 1), var1, use.names=FALSE)
+  var1 = apply(var1, 2, cumsum)
+  df_sim = data.table(var1)
+  names(df_sim) = names(df.lev)
+  df_sim[, i := seq(0, .N-1)]
+  df_sim[, date := max(df_mev$date) %m+% months(i)]
+  df_sim[, source := 'proj']
+  df_sim[, boot_id := boot_id]
+  return(df_sim)
+})
+setDT(df_boot)
+
+p1 = ggplot(df_boot,  aes(date, exp(uer_log), group = boot_id)) + geom_line(color = 'red') + geom_line(data = df_mev[date>'1990-01-01',], aes(date, uer, group = 1), color = 'black' )
+p2 = ggplot(df_boot,  aes(date, rate, group = boot_id)) + geom_line(color = 'red') + geom_line(data = df_mev[date>'1990-01-01',], aes(date, rate, group = 1), color = 'black' )
+p3 = ggplot(df_boot,  aes(date, exp(hpi_log), group = boot_id)) + geom_line(color = 'red') + geom_line(data = df_mev[date>'1990-01-01',], aes(date, exp(hpi_log), group = 1), color = 'black' )
+
+grid.arrange(p1,p2,p3)
+
+
+
+```
+
+
+## AR models
+
+
+```{r ar_models, echo=FALSE}
+library(vars)
+library(forecast)
+
+df.lev = df_mev[date>'1990-01-01',.(rate, uer_log, hpi_log)]
+
+#acf(diff(df_uer$uer_log))
+#pacf(diff(df_uer$uer_log))
+#plot(forecast(Arima(df_uer$uer_log, order = c(1, 0, 1)),h=48))
+
+uer_model = Arima(df_uer$uer_log, order = c(1, 1, 0))
+df_sim = data.table(uer_log = simulate(uer_model, 360))
+df_sim[, i := seq(0, .N-1)]
+df_sim[, date := max(df_mev$date) %m+% months(i)]
+
+#ggplot(df_sim,  aes(date, uer_log )) + geom_line(color = 'red') + geom_line(data = df_mev[date>'1990-01-01',], aes(date, c(0, diff(uer_log)), group = 1), color = 'black' )
+ggplot(df_sim,  aes(date, exp(uer_log) )) + geom_line(color = 'red') + geom_line(data = df_uer[date>'1970-01-01',], aes(date, exp(uer_log), group = 1), color = 'black' )
+
+
+
+
+uer_model = arima(df_uer$uer_log, order = c(1, 1, 1))
+#summary(uer_model)
+tsdiag(uer_model)
+#AIC(uer_model)
+#uer_sim <- arima.sim(model = list(ar = uer_ar$coef$ar1, ar = uer_ar$coef$ar1), n = 200)
+uer_sim = arima.sim(list(ar = uer_model$coef[1], ma = uer_model$coef[2], order = c(1,1,1)), n = 360, sd = sqrt(uer_model$sigma2), start.innov = tail(df.lev$uer_log, 120), n.start = 120)
+#plot(uer_sim)
+#https://rstudio-pubs-static.s3.amazonaws.com/391087_7ca7f30e3a3c4b35b9887be5fa8a7789.html
+
+#uer_sim = c(tail(df.lev$uer_log, 1), as.numeric(uer_sim))
+ 
+df_sim = data.table(uer_log = uer_sim)
+df_sim[, i := seq(0, .N-1)]
+df_sim[, date := max(df_mev$date) %m+% months(i)]
+
+#ggplot(df_sim,  aes(date, uer_log )) + geom_line(color = 'red') + geom_line(data = df_mev[date>'1990-01-01',], aes(date, c(0, diff(uer_log)), group = 1), color = 'black' )
+ggplot(df_sim,  aes(date, uer_log )) + geom_line(color = 'red') + geom_line(data = df_mev[date>'1990-01-01',], aes(date, uer_log, group = 1), color = 'black' )
+```
+
+
+##Bootstrap
+
+```{r bootstrap, echo=FALSE}
+
+stationary_bootstrap_conditional <- function(y, dx, n, y0, p_switch = 0.1, sigma = 0.1){
+  xb = rep(0, n)
+  xs = length(dx)
+  
+  probs = exp(-0.5*(y - y0) * (y - y0) / (sigma * sigma) )
+  probs[is.na(probs)] = 0
+  probs = probs / sum(probs, na.rm = TRUE)
+  
+  index = sample.int(xs, 1, prob = probs)
+  
+  yi = y0
+  
+  for(i in 1:n) {
+    xb[i] = x[index]
+    
+    yi = yi + xb[i]
+    
+    if(runif(1) < p_switch | index >= xs) {
+      probs = exp(-0.5*(y - yi) * (y - yi) / (sigma * sigma) )
+      probs[is.na(probs)] = 0
+      probs = probs / sum(probs, na.rm = TRUE)
+      index = sample.int(xs, 1,  prob = probs)
+    }else
+    {
+      index = index + 1
+    }
+  }
+  return (xb)
+}
+
+df_temp = df_uer[!is.na(uer_change_log), .(uer_change_log, uer_prev_log = log(uer_prev))]
+
+x = df_temp$uer_change_log
+x = x - mean(x)
+
+#ggplot(data.frame(x), aes(x)) + stat_ecdf()
+#ggplot(df_uer, aes(log(uer_prev), uer_change_log )) + geom_point()
+
+df_boot = foreach(boot_id = seq(1024), .combine=rbind) %do% {
+  y0 = tail(df_uer$uer_log,1)
+  df_sim = data.table(uer_log = y0 + cumsum(c(0, stationary_bootstrap_conditional(df_temp$uer_prev_log, x, n = 360, y0, p_switch=1/60, sigma = 0.2))) )
+  #df_sim = data.table(uer_log = tail(df_uer$uer_log,1) + cumsum(c(0, stationary_bootstrap(x, n = 360, 1/6))) )
+
+  df_sim[, i := seq(0, .N-1)]
+  df_sim[, boot_id := boot_id]
+  df_sim[, date := tail(df_uer$date,1) %m+% months(i)]
+  return( df_sim )
+}
+
+ggplot(df_boot[boot_id<13],  aes(date, exp(uer_log), group = boot_id )) + geom_line(color = 'blue', alpha = 0.8) + 
+  geom_line(data = df_uer, aes(date, exp(uer_log), group = 1), color = 'black' ) + facet_wrap(~boot_id, scales = 'free')
+
+ggplot(df_boot[boot_id<100],  aes(date, exp(uer_log), group = boot_id )) + geom_line(color = 'blue', alpha = 0.1) + 
+  geom_line(data = df_uer, aes(date, exp(uer_log), group = 1), color = 'black' ) 
+
+df_boot_avg = df_boot[, .(uer = mean(exp(uer_log)), 
+                          uer95 = quantile(exp(uer_log),0.95), uer05 = quantile(exp(uer_log),0.05),  
+                          uer_max = max(exp(uer_log)),uer_min = min(exp(uer_log))), by =.(date)]
+ggplot(df_boot_avg,  aes(date, uer)) + geom_line(color = 'blue') +  geom_ribbon(aes(date, ymin = uer05, ymax = uer95), alpha = 0.3) +
+   geom_ribbon(aes(date, ymin = uer_min, ymax = uer_max), alpha = 0.2) + 
+  geom_line(data = df_uer, aes(date, exp(uer_log), group = 1), color = 'black' )
+
+#ggplot(df_sim,  aes(date, uer_log )) + geom_line(color = 'red') + geom_line(data = df_mev[date>'1990-01-01',], aes(date, c(0, diff(uer_log)), group = 1), color = 'black' )
+#ggplot(df_sim,  aes(date, exp(uer_log) )) + geom_line(color = 'red') + geom_line(data = df_uer, aes(date, exp(uer_log), group = 1), color = 'black' )
+
+
+
+#boot test
+df_boot = ldply(seq(12), function(i){
+  x = sin(seq(100)/10)
+  return( data.table(x = stationary_bootstrap(x, n = 360, 0), i = i, t = seq(360) ))
+})
+ggplot(df_boot, aes(t, x, group = i)) + geom_line() + facet_wrap(~i)
+```
+

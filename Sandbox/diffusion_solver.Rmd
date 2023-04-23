@@ -1,0 +1,158 @@
+---
+title: "Diffusion solver"
+output: html_document
+date: "2023-04-09"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(foreach)
+library(data.table)
+library(ggplot2)
+library(reshape2)
+library(imager)
+
+#Sys.getenv("ffmpeg") 
+#Sys.which("ffmpeg")
+#Sys.setenv(ffmpeg = "C:/Programs/ffmpeg-5.1.2-full_build/bin") 
+#Sys.getenv('PATH')
+
+Sys.setenv(PATH = paste(Sys.getenv('PATH'), "C:/Programs/ffmpeg-5.1.2-full_build/bin", sep = ";"))
+
+#https://www.karlsims.com/rdtool.html?s=0TCzUo9kb
+#https://groups.csail.mit.edu/mac/projects/amorphous/GrayScott/
+```
+
+## Fluid Solver
+
+```{r fluid_solver}
+
+conway_life<-function(m){
+  xm = nrow(m)
+  ym = ncol(m)
+  
+  
+  m_next = m
+  for(i in 1:xm){
+    for(j in 1:ym){
+      
+      s = 0
+      for(ki in -1:1){
+        for(kj in -1:1){
+          if(i + ki > 0 & i + ki < xm & j + kj > 0 & j + kj < ym ){
+            s = s + m[i + ki, j + kj]
+          }
+        }
+      }
+      
+      gain = exp(-0.5*(s-3) * (s-3)) - 0.2
+      
+      m_next[i, j] = max(0, min(1, m[i, j] + gain)) 
+      
+    }
+  }
+  return(m_next)  
+}
+
+diffuse<-function(m, vx, vy, diff_coef, dx = 1, dt = 0.1){
+  xm = nrow(m)
+  ym = ncol(m)
+  
+  m_next = m
+  for(i in 1:xm){
+    for(j in 1:ym){
+      r1 = m[max(1, i - 1), j]
+      r2 = m[i, max(1, j - 1)]
+      r3 = m[min(xm, i + 1), j]
+      r4 = m[i, min(ym, j + 1)]
+      r0 = m[i, j]
+      
+      rx_0 = vx[i, j]
+      rx_1 = ifelse(i>1,  vx[i - 1,  j], 0)
+      rx_2 = ifelse(i<xm, vx[i + 1,  j], 0)
+      
+      ry_0 = vy[i, j]
+      ry_1 = ifelse(j>1,  vy[i, j - 1], 0)
+      ry_2 = ifelse(j<ym, vy[i, j + 1], 0)
+      
+      if(i==1)
+        rx_0 = max(0, rx_0)
+      if(i==xm)
+        rx_0 = min(0, rx_0)
+      
+      if(j==1)
+        ry_0 = max(0, ry_0)
+      if(j==ym)
+        ry_0 = min(0, ry_0)
+
+      drift_x = abs(rx_0) * r0 + ifelse(rx_1>0, -rx_1 * r1, 0) + ifelse(rx_2<0, -rx_2 * r3, 0)
+      drift_y = abs(ry_0) * r0 + ifelse(ry_1>0, -ry_1 * r2, 0) + ifelse(ry_2<0, -ry_2 * r4, 0)
+      
+      m_next[i, j] = r0 + diff_coef * dt * (r1 + r2 + r3 + r4  - 4*r0) / (dx * dx) - dt * (drift_x + drift_y)/dx
+    }
+  }
+  return(m_next)
+}
+
+xsize = 256
+ysize = 256
+
+r_m = matrix(rep(0, xsize * ysize), xsize, ysize)
+g_m = matrix(rep(0, xsize * ysize), xsize, ysize)
+b_m = matrix(rep(0, xsize * ysize), xsize, ysize)
+#v_x = matrix(rep(1, xsize * ysize), xsize, ysize) #velocity field
+#v_y = matrix(rep(0, xsize * ysize), xsize, ysize) #velocity field
+#v_x = matrix(rep(0, xsize * ysize), xsize, ysize) #velocity field
+
+
+#r_m[4:6, 1] = 1
+#v_x[8:32, 8:32] = 1
+r_m[8:32, 8:32] = 1
+g_m[64:90, 64:90] = 1
+b_m[100:120, 100:120] = 1
+
+frame_image = as.cimg(c(as.vector(r_m), as.vector(g_m), as.vector(b_m)),x=xsize,y=ysize,cc=3) 
+plot(frame_image)
+
+diff_coef = 0 # Diff * dt / dx2
+
+for(k in seq(100)) {
+  #r_m = diffuse(r_m, v_x, v_y, diff_coef)
+  #g_m = diffuse(g_m, v_x, v_y, diff_coef)
+  #b_m = diffuse(b_m, v_x, v_y, diff_coef)
+  
+  r_m = conway_life(r_m)
+  g_m = conway_life(g_m)
+  b_m = conway_life(b_m)
+  
+  frame_image = as.cimg(c(as.vector(r_m), as.vector(g_m), as.vector(b_m)),x=xsize,y=ysize,cc=3) 
+  save.image(frame_image,file.path('G:/frames/', sprintf('frame_%d.png',k)))
+  
+  print(sprintf("%d %.2f, %.2f, %.2f", k, sum(r_m), sum(g_m), sum(b_m)))
+}
+
+sum(r_m)
+#ggplot(reshape2::melt(r_m), aes(Var1, value, group = Var2)) + geom_line() + geom_point()
+
+frame_image = as.cimg(c(as.vector(r_m), as.vector(g_m), as.vector(b_m)),x=xsize,y=ysize,cc=3) 
+plot(frame_image)
+
+make.video(dname = 'G:/frames/', fname = 'G:/frames/out_video.avi', 'frame_%d.png',  verbose = TRUE)
+
+## Not run
+#iml <- map_il(seq(0,20,l=60),~ isoblur(boats,.))
+#f <- tempfile(fileext=".avi")
+#save.video(iml,f)
+#load.video(f) %>% play
+#Making a video from a directory
+## dd <- tempdir()
+#for (i in 1:length(iml)) {
+#png(sprintf("%s/image-%i.png",dd,i));
+#plot(iml[[i]]); dev.off() }
+## make.video(dd,f)
+## load.video(f) %>% play
+```
+

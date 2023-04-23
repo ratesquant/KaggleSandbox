@@ -1,0 +1,81 @@
+---
+title: "UMAP Example"
+output: html_document
+date: "2023-04-07"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(umap)
+library(data.table)
+library(ggplot2)
+library(GGally)
+
+library(stringi)
+library(dslabs)
+library(imager)
+
+
+working_folder = 'D:/Github/KaggleSandbox'
+source(file.path(working_folder, 'Utils/common.R'))
+```
+
+##umap
+
+```{r umap_demo1}
+df = data.table(iris)
+iris.umap = umap(df[,1:4])
+
+ggpairs(df, mapping = ggplot2::aes(color = Species))
+# display object summary
+ggplot(cbind(df, data.table(iris.umap$layout) ), aes(V1, V2, color = Species)) + geom_point()
+
+```
+
+
+##umap MNIST
+
+```{r umap_demo1}
+mnist <- read_mnist()
+
+mnist$train$labels[6]
+plot(as.cimg(matrix(mnist$train$images[6,], 28, 28)) )
+
+df = data.table(mnist$train$images)
+mnist.umap = umap(df)
+
+# display object summary
+ggplot(cbind(label = mnist$train$labels, data.table(mnist.umap$layout) ), aes(V1, V2, color = factor(label) )) + geom_point()
+
+```
+
+## Load FNMA loan data
+load 1% of loans
+```{r load_data}
+convert_to_normal_prob <-function(x, train_index){
+  if(is.character(x) )x = as.numeric(as.factor(x))
+  qnorm(pmin(1-1e-12,pmax(1e-12, ecdf(x[train_index])(x))) )
+}
+
+df <- readRDS('V:/loan_level/fnma/fnma_1pct.rds')
+dfs = df[date == max(date)]
+dfs = dfs[complete.cases(dfs[,p_vars, with = FALSE])]
+dfs = dfs[1:1000,]
+
+
+
+all_vars = c('CURR_RATE', 'CURRENT_UPB', 'LOAN_AGE', 'OLTV', 'NUM_BO', 'DTI', 'CSCORE_B','FIRST_FLAG', 'PURPOSE', 'PROP', 'NO_UNITS', 'OCC_STAT', 'STATE', 'DLQ_STATUS')
+p_vars = stri_join('p_', all_vars)
+train_index = 1:nrow(dfs)
+dfs[, (p_vars):=lapply(.SD, function(x) convert_to_normal_prob(x, train_index)), .SDcols = all_vars]
+
+fnma.umap = umap(dfs[,p_vars, with = FALSE])
+
+# display object summary
+ggplot(cbind(dfs, data.table(fnma.umap$layout) ), aes(V1, V2, color = OLTV )) + geom_point()
+ggplot(cbind(dfs, data.table(fnma.umap$layout) ), aes(V1, V2, color = CURR_RATE )) + geom_point()
+
+```

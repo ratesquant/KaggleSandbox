@@ -5,6 +5,7 @@ library(Rtsne)
 library(plyr)
 library(data.table)
 library(car)
+library(MASS)
 
 #too SLOW
 tsne_iris = tsne(iris[,1:4], perplexity=10)
@@ -80,9 +81,9 @@ create_cluster_example<-function(n, type = 1, sigma = 0.1)
   return (copy(res))
 }
 
-df <- data.table(unique(iris))
-df[, id:=Species]
-df <- create_cluster_example(100, type = 7, sigma = 0.01) 
+#df <- data.table(unique(iris))
+#df[, id:=Species]
+df <- create_cluster_example(1000, type = 2, sigma = 0.01) 
 setDT(df)
 
 ggplot(df) + geom_point(aes(z, x, color = factor(id) ))
@@ -95,17 +96,27 @@ scatter3d(df$x, df$y, df$z, surface = FALSE, bg.col= "black")
 #% -------------- RtSNE
 set.seed(1234)
 #tsne_out <- Rtsne(df[,1:4],pca=FALSE, theta=0.0, perplexity = 10)
-tsne_out <- Rtsne(df[,1:4],pca=FALSE, theta=0.0, perplexity = 10, num_threads = 6)
+tsne_out <- Rtsne(df[,2:4],pca=FALSE, theta=0.0, perplexity = 10, num_threads = 6)
 ggplot(cbind(data.frame(tsne_out$Y),df)) + geom_point(aes(X1, X2, color = factor(id) ))
 
 #PCA
-pca_iris = princomp(df[,1:3])$scores[,1:2]
+pca_iris = princomp(df[,2:4])$scores[,1:2]
 ggplot(cbind(data.frame(pca_iris),df)) + geom_point(aes(Comp.1, Comp.2, color = factor(id) ))
 
 #% -------------- UMAP
 set.seed(1234)
 umap.res = umap(df[,1:4])
 ggplot(cbind(data.frame(umap.res$layout, df)), aes(X1, X2, group = id, color = factor(id))) + geom_point()
+
+#% -------------- SAMMON
+set.seed(1234)
+sam.res = sammon(dist(df[,1:4]))
+ggplot(cbind(data.frame(sam.res$points, df)), aes(X1, X2, group = id, color = factor(id))) + geom_point()
+
+#% -------------- Classical (Metric) Multidimensional Scaling
+cmd.res = cmdscale(dist(df[,1:4]), 2)
+ggplot(cbind(data.frame(cmd.res, df)), aes(X1, X2, group = id, color = factor(id))) + geom_point()
+
 
 #perturbed.embedding = predict(umap.res, df)
 
@@ -131,13 +142,51 @@ ggplot(cbind(data.frame(pred.gbm),df)) + geom_point(aes(pred.gbm, z, color = fac
 df_sr <- read.table('http://people.cs.uchicago.edu/~dinoj/manifold/swissroll.dat')
 setDT(df_sr)
 
-df_sr <- create_cluster_example(100, type = 7, sigma = 0.01) 
-setDT(df)
+df_sr <- create_cluster_example(1000, type = 7, sigma = 0.01) 
 
-
-scatter3d(df_sr$V1, df_sr$V2, df_sr$V3, surface = FALSE, bg.col= "black")
+scatter3d(df_sr$x, df_sr$y, df_sr$z, surface = FALSE, bg.col= "black")
 
 
 tsne_out <- Rtsne(df_sr[,1:3],pca=FALSE, theta=0.0, perplexity = 10, num_threads = 6)
 ggplot(cbind(data.frame(tsne_out$Y),df_sr)) + geom_point(aes(X1, X2 ))
+
+
+# ------------------- PCA TEST
+library(GGally)
+n = 200
+#x = rnorm(n)
+#y = rnorm(n)
+#df = data.table(x, y=0.5*x + 0.5*y)
+#df = rbind(data.table(x, y=0.5*x + 0.5*y), data.table(x = x+2, y=0.8*x + 0.2*y-2), data.table(x = 0.1*x-2, y=0.1*y+2))
+
+nodes = expand.grid(x=c(0, 1), y = c(0, 1), z = c(0, 1))
+df = ldply(seq(nrow(nodes)), function(i){
+  data.frame(x = 0.1*rnorm(n) + nodes$x[i], y = 0.1*rnorm(n) + nodes$y[i], z = 0.1*rnorm(n) + nodes$z[i], id = i)
+})
+setDT(df)
+#ggplot(df, aes(x, y)) + geom_point()
+#ggpairs(df[, -"id"])
+scatter3d(df$x, df$y, df$z, surface = FALSE, bg.col= "black")
+
+pca1.res = princomp(df[, -"id"])
+ggplot(data.frame(pca1.res$scores, id = factor(df$id) )) + geom_point(aes(Comp.1, Comp.2, color = id ))
+
+pca2.res = prcomp(df[, -"id"])
+ggplot(data.frame(pca2.res$x, id = factor(df$id) )) + geom_point(aes(PC1, PC2,  color = id ))
+
+#head((as.matrix(df) - matrix(rep(pca1.res$center, n), nrow = n, ncol = 2, byrow = TRUE)) %*% pca2.res$rotation - pca2.res$x)
+# -------------------CMD 
+cmd.res = cmdscale(dist(df[, -"id"]), k = 2)
+ggplot(data.frame(cmd.res, id = factor(df$id))) + geom_point(aes(X1, X2,color = id ))
+
+sam.res = sammon(dist(df[, -"id"]), tol = 1e-6)
+ggplot(data.frame(sam.res$points, id = factor(df$id))) + geom_point(aes(X1, X2, color = id  ))
+
+set.seed(1234)
+umap.res = umap(df[,1:3])
+ggplot(cbind(data.frame(umap.res$layout, df)), aes(X1, X2, group = id, color = factor(id))) + geom_point()
+
+set.seed(1234)
+tsne.res <- Rtsne(df[,1:3], num_threads = 4)
+ggplot(cbind(data.frame(tsne.res$Y),df)) + geom_point(aes(X1, X2, color = factor(id) ))
 

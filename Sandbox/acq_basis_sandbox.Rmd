@@ -36,9 +36,9 @@ y = 0.2 + 0.4 * x * x + 0.3 *x * sin(15 * x) + 0.05 * cos(50 * x)
 
 df = data.table(x, y)
 
-nodes = as.matrix(c(0.25, 0.75))
+nodes = as.matrix(c(0.25, 0.5, 0.75))
 
-model.acq = acq.create(df[,.(x)], df$y, nodes, kernel_fun = acq_kernel)
+model.acq = acq.create(df[,.(x)], df$y, nodes, kernel_fun = rbf_acq_kernel)
 
 y_pred = acq.predict(model.acq, df[,.(x)])
 ggplot(cbind(df, y_pred), aes(x, y)) + geom_point() + geom_line(aes(x, y_pred), color = 'red')
@@ -70,7 +70,7 @@ res[df, x := i.x, on=.(id) ]
 ggplot(res, aes(x, y_pred, group = run_id)) + geom_line(color = 'blue', alpha = 0.2) 
 
 #average
-ggplot(res_agg, aes(x, y)) + geom_point() + geom_line(aes(x, y_pred), color = 'red', size = 1) + 
+ggplot(res_agg, aes(x, y)) + geom_point() + geom_line(aes(x, y_pred), color = 'red', linewidth = 1) + 
   geom_ribbon(aes(x, ymin = y_pred - 2*sigma, ymax = y_pred + 2*sigma), alpha = 0.2, fill = 'blue')
 
 #convergence

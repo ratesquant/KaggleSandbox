@@ -11,7 +11,7 @@ x_mapping <-function(X, nodes){
   return (XS)
 }
 
-acq.create <- function(X, Y, nodes, kernel_fun = acq_kernel){
+acq.create <- function(X, Y, nodes, kernel_fun = rbf_acq_kernel){
   M = cbind(1, x_mapping(X, nodes) ) 
   w = ginv(t(M) %*% M) %*% t(M) %*% Y 
   

@@ -1,0 +1,36 @@
+---
+title: "Zwift Analysis"
+output: html_document
+date: "2023-08-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(dev = "png", dev.args = list(type = "cairo-png"))
+
+library(jsonlite)
+library(stringi)
+library(lubridate)
+library(data.table)
+library(ggplot2)
+
+working_folder = 'D:/Github/KaggleSandbox'
+
+source(file.path(working_folder, 'Utils/common.R'))
+```
+
+## R Markdown
+
+```{r cars}
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

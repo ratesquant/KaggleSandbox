@@ -2,6 +2,8 @@
 title: "Zwift Analysis"
 output: html_document
 date: "2023-08-11"
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -13,24 +15,94 @@ library(stringi)
 library(lubridate)
 library(data.table)
 library(ggplot2)
+library(zoo)
+library(plyr)
+library(plotly)
+library(gam)
+
 
 working_folder = 'D:/Github/KaggleSandbox'
 
 source(file.path(working_folder, 'Utils/common.R'))
 ```
 
-## R Markdown
+## Read file
+https://www.fitfileviewer.com/
+https://johnedevans.wordpress.com/2018/05/31/the-physics-of-zwift-cycling/
 
-```{r cars}
+```{r load_data}
+
+zwift_files = list.files(file.path(working_folder, 'Zwift/data/'), pattern = '*.csv', full.names = TRUE)
+
+df = foreach(name = zwift_files, .combine=rbind ) %do% {
+  df_temp = fread(name)
+  df_temp[, file := basename(name)]
+  return(df_temp)
+}
+
+df[order(timestamp), t:=seq(.N)-1, by = .(file)]
+
+ggplot(df, aes(t/60, distance)) + geom_line() + facet_wrap(~file)
+ggplot(df, aes(t/60, heart_rate)) + geom_line() + facet_wrap(~file)
+ggplot(df, aes(t/60, heart_rate, group = file, color = file)) + geom_line()
+
+ggplot(df, aes(t/60, power, group = file, color = file)) + geom_line()
+ggplot(df, aes(t/60, speed)) + geom_line()
+ggplot(df, aes(t/60, altitude)) + geom_line()
+
+ggplot(df, aes(cadence, power)) + geom_point(alpha = 0.4) +  facet_wrap(~file)
+ggplot(df[t>60], aes(power, group = file, color = file)) + stat_ecdf()
+ggplot(df[t>60], aes(heart_rate)) + stat_ecdf()
+
 
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
+## Power vs Heart rate
+720 or 960 seems to be the optimal
+```{r power_heart_rate, echo=FALSE}
+#POWER VS HR
+#df[, power_avg   := rollmeanr(power, k = 60, na.pad = TRUE)]
+df[order(t), power_avg_12m   := ewma(power, exp(-log(2)/720)), by = .(file)] #12min
+df[order(t), power_avg_16m   := ewma(power, exp(-log(2)/960)), by = .(file)] #16min
+#ggplot(df) + geom_line(aes(t/60, power_avg)) + geom_line(aes(t/60, heart_rate), color = 'red', alpha = 0.2)
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+#ggplot(df) + geom_line(aes(t/60, power_avg)) +  geom_line(aes(t/60, heart_rate))
+ggplot(df[t>60], aes(t/60, power_avg_12m/heart_rate)) + geom_line() + geom_smooth(span = 0.5, color = 'red', se = FALSE, method = 'loess')+ facet_wrap(~file)
+ggplot(df[t>60], aes(t/60, power_avg_16m/heart_rate)) + geom_line() + geom_smooth(span = 0.5, color = 'red', se = FALSE, method = 'loess')+ facet_wrap(~file)
+ggplot(df[t>60], aes(power_avg_12m, heart_rate)) + geom_point(alpha = 0.5) + geom_smooth(span = 0.7, color = 'red', se = FALSE, method = 'loess')+ facet_wrap(~file)
+
+ggplot(df[t>60], aes(sort(power), sort(heart_rate))) + geom_point(alpha = 0.5)+ facet_wrap(~file)
+ggplot(df[t>60], aes(sort(power_avg_12m), sort(heart_rate))) + geom_point(alpha = 0.5) + facet_wrap(~file)
+
+
+res = ldply(seq(60,  1200, 30), function(my_lag){
+    exp_a = exp(-log(2)/my_lag)
+  #df[, power_avg   := rollmeanr(power, k = my_lag, na.pad = TRUE)]
+  df[order(t), power_avg   := ewma(power, exp_a)]
+  gam.model = gam(heart_rate ~ s(power_avg), df[t>60], family=gaussian)
+  df[, heart_rate_pred := predict(gam.model, .SD) ]
+  data.frame(r2 = summary(lm(heart_rate ~ heart_rate_pred, df[t>60]))$r.squared, lag = my_lag, exp_a)
+})
+setDT(res)
+res[r2 == max(r2)]
+ggplotly(ggplot(res, aes(lag, r2)) + geom_point())
+
+ggplot(df, aes(heart_rate, power_avg)) + geom_point()
+```
+
+## Speed estimate
+
+```{r speed, echo=FALSE}
+
+df[order(t), speed_estimate := distance - shift(distance),  by = .(file) ]
+
+ggplot(df) + geom_line(aes(t, speed, color = 'act') ) +  geom_line(aes(t, speed_estimate, color = 'est') ) + facet_wrap(~file)
+
+df[, rms(speed_estimate, speed, TRUE)]
+
+acf(df$speed_estimate[-1], df$speed[-1], plot = FALSE)
+
 ```
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

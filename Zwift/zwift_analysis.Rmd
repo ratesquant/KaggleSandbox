@@ -47,7 +47,7 @@ ggplot(df, aes(t/60, heart_rate)) + geom_line() + facet_wrap(~file)
 ggplot(df, aes(t/60, heart_rate, group = file, color = file)) + geom_line()
 
 ggplot(df, aes(t/60, power, group = file, color = file)) + geom_line()
-ggplot(df, aes(t/60, speed)) + geom_line()
+ggplot(df, aes(t/60, speed)) + geom_line()+  facet_wrap(~file)
 ggplot(df, aes(t/60, altitude)) + geom_line()
 
 ggplot(df, aes(cadence, power)) + geom_point(alpha = 0.4) +  facet_wrap(~file)
@@ -69,6 +69,7 @@ df[order(t), power_avg_16m   := ewma(power, exp(-log(2)/960)), by = .(file)] #16
 
 #ggplot(df) + geom_line(aes(t/60, power_avg)) +  geom_line(aes(t/60, heart_rate))
 ggplot(df[t>60], aes(t/60, power_avg_12m/heart_rate)) + geom_line() + geom_smooth(span = 0.5, color = 'red', se = FALSE, method = 'loess')+ facet_wrap(~file)
+ggplot(df[t>60], aes(t/60, heart_rate/power_avg_12m)) + geom_line() + geom_smooth(span = 0.5, color = 'red', se = FALSE, method = 'loess')+ facet_wrap(~file)
 ggplot(df[t>60], aes(t/60, power_avg_16m/heart_rate)) + geom_line() + geom_smooth(span = 0.5, color = 'red', se = FALSE, method = 'loess')+ facet_wrap(~file)
 ggplot(df[t>60], aes(power_avg_12m, heart_rate)) + geom_point(alpha = 0.5) + geom_smooth(span = 0.7, color = 'red', se = FALSE, method = 'loess')+ facet_wrap(~file)
 
@@ -89,6 +90,52 @@ res[r2 == max(r2)]
 ggplotly(ggplot(res, aes(lag, r2)) + geom_point())
 
 ggplot(df, aes(heart_rate, power_avg)) + geom_point()
+```
+
+## Predict HR from POWER
+
+
+```{r power_heart_rate_2, echo=FALSE}
+
+df[order(t), power_avg_15s   := ewma(power, exp(-log(2)/15)),  by = .(file)] #12min
+df[order(t), power_avg_1m    := ewma(power, exp(-log(2)/60)),  by = .(file)] #12min
+df[order(t), power_avg_5m    := ewma(power, exp(-log(2)/300)), by = .(file)] #12min
+df[order(t), power_avg_16m   := ewma(power, exp(-log(2)/960)), by = .(file)] #12min
+
+ggplot(df[t>60]) + geom_line(aes(t, heart_rate)) +  geom_line(aes(t, 44.960441 + power_avg_1m*0.151397 + power_avg_5m  *0.107756 + power_avg_16m * 0.125570), color = 'red') + facet_wrap(~file)
+
+summary(lm(heart_rate ~ power_avg_1m + power_avg_5m + power_avg_16m + power_avg_15s, df[t>60]))
+
+```
+
+##Speed from POWER
+
+
+```{r speed_from_power, echo=FALSE}
+#user settings
+mass = 83.461 #kg
+
+#constants
+ffg = 9.8 #free fall acceleration (g) m/s2
+
+#assumptions about drag and roll
+c_roll = 0.005
+c_drag = 0.228130598
+
+df[order(t), avg_speed := 0.5*(speed + shift(speed)), by =.(file)]
+df[order(t), kinetic_energy := 0.5 * mass * (speed^2 - shift(speed)^2), by =.(file)]
+df[order(t), roll_energy := mass * ffg * avg_speed * c_roll, by =.(file)]
+df[order(t), drag_energy := c_drag * ( avg_speed)^3, by =.(file)]
+df[order(t), climb_energy :=  mass * ffg * (altitude - shift(altitude)),  by =.(file)]
+df[order(t), power_est := pmax(0, kinetic_energy + roll_energy + drag_energy + climb_energy)]
+df[is.na(power_est), power_est := 0]
+df[order(t), power_est_avg   := ewma(power_est, exp(-log(2)/3)),  by = .(file)] 
+
+
+ggplot(df) + geom_line(aes(t, power)) +  geom_point(aes(t, power_est_avg), color = 'red', alpha = 0.3) + facet_wrap(~file)
+
+ggplot(df) + geom_point(aes(speed, drag_energy)) + facet_wrap(~file)
+ggplot(df) + geom_point(aes(t, climb_energy)) + facet_wrap(~file)
 ```
 
 ## Speed estimate

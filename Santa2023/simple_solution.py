@@ -10,7 +10,9 @@ import random
 import os
 from ast import literal_eval
 from sympy.combinatorics import Permutation
+from itertools import combinations_with_replacement, product
 from time import time
+from math import log
 
 #%% Load Data
 data_folder = 'D:/Github/KaggleSandbox/Santa2023/data'
@@ -29,7 +31,7 @@ for index, row in puzzle_info.iterrows():
     all_allowed_moves[index] = allowed_moves
 
 #%% Benchmark permutation application
-index = 1
+index = 301
 my_type = puzzles.loc[index].puzzle_type
 final_state=puzzles.loc[index].solution_state.split(';')
 initial_state=puzzles.loc[index].initial_state.split(';') 
@@ -44,7 +46,9 @@ move_vector = random.choices(list(allowed_moves.keys()), k = 100)
 state = ''.join(initial_state)
 %timeit allowed_moves['f0'](state)
 
-pindex = [i^allowed_moves['f0'] for i in range(allowed_moves['f0'].size)]
+#pindex = [i^allowed_moves['f0'] for i in range(allowed_moves['f0'].size)]
+pindex = allowed_moves['f0'](range(allowed_moves['f0'].size))
+
 %timeit ''.join([state[i] for i in pindex])
 %timeit ''.join(allowed_moves['f0'](state))
 %timeit ''.join(allowed_moves['f0'](initial_state))
@@ -114,68 +118,96 @@ def random_solve(initial_state, final_state, allowed_moves, max_moves, it_count)
                         return best_solution                        
     return best_solution
                 
-def solve_puzzle(initial_state, final_state, allowed_moves, moves, depth, max_depth):
+def solve_puzzle(initial_state, final_state, allowed_moves, moves, max_depth):
     best_solution = None
     for move_name, move in allowed_moves.items():         
         my_state = move(initial_state)        
         current_moves = moves + [move_name]
-        #print('%d: %d %s %s %s, prev state: %d' % (depth, len(current_moves), '.'.join(current_moves), ''.join(initial_state),  ''.join(my_state), len(previous_states) ))      
-        if len(moves) >= max_depth: 
-            return (current_moves, False)
+        #print('%d: %d %s %s %s, prev state: %d' % (depth, len(current_moves), '.'.join(current_moves), ''.join(initial_state),  ''.join(my_state), len(previous_states) ))              
         if my_state == final_state:
             #print ('Solution found: %s' % '.'.join(moves))
-            return (current_moves, True)
+            return (current_moves)
+        if len(moves) >= max_depth: 
+            return (None)
         else:
-            res = solve_puzzle(my_state, final_state, allowed_moves, current_moves, depth + 1, max_depth)                                        
-            if best_solution is None:
-                best_solution = res                
-            if res[1] and len(best_solution[0]) > len(res[0]):
-                best_solution = res                    
+            res = solve_puzzle(my_state, final_state, allowed_moves, current_moves, max_depth)                                        
+            if res is not None and (best_solution is None or len(best_solution) > len(res)):
+                best_solution = res                      
     return (best_solution)        
+
+def solve_puzzle_all(initial_state, final_state, allowed_moves, max_moves):
+    final_state_str = ''.join(final_state)
+    for moves in product(list(allowed_moves.keys()), repeat=max_moves):
+        state = initial_state[:]
+        previous_states = set([''.join(state)])
+        for i, move in enumerate(moves):
+            state = allowed_moves[move](state)
+            state_str = ''.join(state)
+            if state_str == final_state_str:
+                #print ('Solution found: %s %s' % ('.'.join(moves[:(i+1)]), move ))
+                return (list(moves[:(i+1)]) )
+            if state_str in previous_states:
+                break
+    return (None)
+            
         
-def solve_puzzle_ex(initial_state, final_state, allowed_moves, moves, depth, max_depth, previous_states):
+def solve_puzzle_ex(initial_state, final_state, allowed_moves, moves, max_depth, previous_states):
     best_solution = None
     for move_name, move in allowed_moves.items():         
         my_state = move(initial_state)        
         current_moves = moves + [move_name]
-        #print('%d: %d %s %s %s, prev state: %d' % (depth, len(current_moves), '.'.join(current_moves), ''.join(initial_state),  ''.join(my_state), len(previous_states) ))
+        #print('%d: %d %s %s %s, prev state: %s' % (depth, len(current_moves), '.'.join(current_moves), ''.join(initial_state),  ''.join(my_state), previous_states ))
         my_state_str = ''.join(my_state)
-        if my_state_str in previous_states:
-            return (current_moves, False)            
-        if len(moves) >= max_depth: 
-            return (current_moves, False)
+        #if my_state_str in previous_states:
+            #print ('Repeated state: %s %s' %  ('.'.join(current_moves), my_state_str))
+        #    return (None, False)                   
         if my_state == final_state:
             #print ('Solution found: %s' % '.'.join(moves))
-            return (current_moves, True)
+            return (current_moves)
+        if len(current_moves) > max_depth: 
+            return (None)
         else:
             pstates = previous_states.copy()
             pstates.add(my_state_str)
-            res = solve_puzzle_ex(my_state, final_state, allowed_moves, current_moves, depth + 1, max_depth, pstates)                                        
-            if best_solution is None:
+            res = solve_puzzle_ex(my_state, final_state, allowed_moves, current_moves, max_depth, pstates)                                        
+            if res is not None and (best_solution is None or len(best_solution) > len(res)):
                 best_solution = res                
-            if res[1] and len(best_solution[0]) > len(res[0]):
-                best_solution = res                    
     return (best_solution)
-#solve_puzzle_ex(initial_state, new_state, allowed_moves, [], 0, 2, set())  
+%timeit solve_puzzle_ex(initial_state, final_state, allowed_moves, [], 8,set([''.join(initial_state)])) #291
+%timeit solve_puzzle(initial_state, final_state, allowed_moves, [], 8) #239
+%timeit solve_puzzle_all(initial_state, final_state, allowed_moves, 8) #177
 #%% Checks
-final_state=puzzles.loc[0].solution_state.split(';')
-initial_state=puzzles.loc[0].initial_state.split(';')
+pizzle_id = 316
+final_state=puzzles.loc[pizzle_id].solution_state.split(';')
+initial_state=puzzles.loc[pizzle_id].initial_state.split(';')
+puzzle_type = puzzles.loc[pizzle_id].puzzle_type
 
-puzzle_type = 'cube_2/2/2'
 allowed_moves = all_allowed_moves[puzzle_type]
-moves = solution_submission.loc[1].moves.split('.')
+moves = solution_submission.loc[pizzle_id].moves.split('.')
+#moves = "r1.-d0.-r1.f1.-f0.d1.f0.-d1.d0.-f0".split('.')
 
-solution = solve_puzzle(initial_state, final_state, allowed_moves, [], 0, 2)
+solution = solve_puzzle_ex(initial_state, final_state, allowed_moves, [], 0, 10,set([''.join(initial_state)]))
+solution = solve_puzzle(initial_state, final_state, allowed_moves, [], 0, 8)
 
-state = apply_moves(initial_state,['r1','-f1'], allowed_moves)
+state = initial_state[:]
+print('%s' % (''.join(state) ))
+for move_name in solution[0]:
+    state = allowed_moves[move_name](state)
+    print('%s (%s)' % (''.join(state), move_name))
 
-''.join(initial_state)
-''.join(state)
+state = apply_moves(initial_state,moves, allowed_moves)
+
+print(''.join(state))
+print(''.join(final_state))
+
+import itertools
+list(itertools.permutations([1, 2, 3]))
 
 #%% Check all solutions 
+is_valid = True
 for index, row in solution_submission.iterrows():
     start_time = time()
-    moves = row['moves'].split('.')        
+    moves = solution_submission.loc[index].moves.split('.')        
     my_id = puzzles.index[index]
     my_type = puzzles.loc[index].puzzle_type
     final_state=puzzles.loc[index].solution_state.split(';')
@@ -183,8 +215,10 @@ for index, row in solution_submission.iterrows():
     allowed_moves = all_allowed_moves[my_type]    
     state = apply_moves(initial_state,moves, allowed_moves)    
     unique_states = check_unique_states(initial_state, moves, allowed_moves)
+    is_valid = is_valid and state == final_state and unique_states == 1
     print('%s, %s, moves: %d, allowed: %d, %s, unique : %s (%.1f sec)' % (my_id, my_type, len(moves), len(allowed_moves), state == final_state, unique_states == 1, time()-start_time) )
-
+print('valid: %s' % is_valid)
+      
 solution_submission.to_csv(os.path.join(data_folder, 'solution_submission_v1.csv'))
 #%% Check solution for loops (152) 
 for index, row in solution_submission.iterrows():    
@@ -210,6 +244,7 @@ for index, row in solution_submission.iterrows():
         break
 
 solution_submission.to_csv(os.path.join(data_folder, 'solution_submission_v1.csv'))
+
 
 #%% Random Search
 max_it = 10000000
@@ -249,13 +284,15 @@ for index, row in solution_submission.iterrows():
     initial_state=puzzles.loc[index].initial_state.split(';')        
     allowed_moves = all_allowed_moves[my_type]    
     
-    #if my_type in my_types:
-    if my_type not in my_deep_types:        
-        continue
+    #if my_type != 'cube_2/2/2':
+    #if my_type not in my_deep_types:        
+    #    continue
     
     moves = solution_submission.loc[index].moves.split('.')    
+    max_depth = int(log(1e7)/log(len(allowed_moves)))
     
-    new_moves, moves_found = solve_puzzle_ex(initial_state, final_state, allowed_moves, [], 0, 22, set())
+    #new_moves, moves_found = solve_puzzle_ex(initial_state, final_state, allowed_moves, [], 0, max_depth, set())
+    new_moves, moves_found = solve_puzzle(initial_state, final_state, allowed_moves, [], 0, max_depth)
             
     if moves_found and new_moves is not None and len(new_moves) < len(moves):        
         state = apply_moves(initial_state,new_moves, allowed_moves)        
@@ -264,14 +301,14 @@ for index, row in solution_submission.iterrows():
             solution_submission.loc[index].moves = '.'.join(new_moves)
             print('%d %s, moves: %s, improved: %s (%.1f sec)' % (index, my_type,  len(moves), new_moves is not None and len(new_moves)<len(moves), time()-start_time ))
 
-    print('%d %s moves: %s time (%.1f)' % (index, my_type, len(moves), time()-start_time ))   
+    print('%d %s moves: %s max_depth %d, time (%.1f sec)' % (index, my_type, len(moves), max_depth, time()-start_time ))   
 
-solution_submission.to_csv(os.path.join(data_folder, 'solution_submission_all.csv'))    
+solution_submission.to_csv(os.path.join(data_folder, 'solution_submission_tree.csv'))    
 
 
 #%% Check Score
 sum([len(move_list.split('.')) for move_list in sample_submission.moves]) # 1220590
-sum([len(move_list.split('.')) for move_list in solution_submission.moves]) #1201015
+sum([len(move_list.split('.')) for move_list in solution_submission.moves]) #1190046
 
 
 #%% Random Search

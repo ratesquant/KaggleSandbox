@@ -16,7 +16,7 @@ logit <- function(x){
   return ( log(x/(1-x)))
 }
 
-rms <-function(y1, y2) sqrt( mean( (y1 - y2)^2 ))
+rms <-function(y1, y2, na.rm = TRUE) sqrt( mean( (y1 - y2)^2, na.rm = na.rm))
 
 #https://en.wikipedia.org/wiki/Design_effect#Effective_sample_size
 effective_size <- function(w){
@@ -62,6 +62,14 @@ periodogram <-function(y){
   xPerZp <- (1/N)*abs(fft(y)^2)
   fzp    <- seq(0,1.0-1/N,by=1/N)
   return (data.frame(freq = fzp[2:ceiling((N-1)/2+1)], y = xPerZp[2:ceiling((N-1)/2+1)]))
+}
+
+ewma <- function(x, a) {
+  s1 <- x[1]
+  sk <- s1
+  s <- vapply(x[-1], function(x) sk <<- (1 - a) * x + a * sk, 0)
+  s <- c(s1, s)
+  return(s)
 }
 
 

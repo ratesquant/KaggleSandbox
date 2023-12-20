@@ -1,0 +1,351 @@
+---
+title: "TSP"
+output: html_document
+date: "2023-12-08"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(dev = "png", dev.args = list(type = "cairo-png"))
+
+library(jsonlite)
+library(stringi)
+library(lubridate)
+library(data.table)
+library(ggplot2)
+library(zoo)
+library(plyr)
+library(plotly)
+library(gam)
+library(knitr)
+library(TSP)
+library(ggrepel)
+
+working_folder = 'D:/Github/KaggleSandbox'
+
+source(file.path(working_folder, 'Utils/common.R'))
+```
+
+## Load Mona
+```{r load_mona}
+
+df = fread(file.path(working_folder, '/TSP/data/mona-lisa100K.tsp'), skip = 6)
+names(df) <-c('id', 'x', 'y')
+```
+
+## Tour
+
+```{r tour, echo=FALSE}
+#https://www.math.uwaterloo.ca/tsp/data/ml/monalisa.html
+#Tour:  5,757,191     Bound:  5,757,084     Gap:  107 (0.0019%)
+
+ggplot(df, aes(x, y)) + geom_point(size = 0.1)
+```
+
+## Square Grid
+
+```{r square_grid, echo=FALSE}
+n = 10
+df = data.table(expand.grid(x = seq(n), y = seq(n)))
+df = cbind(id = seq(nrow(df))-1, df)
+
+#fwrite(df, 'D:/Github/KaggleSandbox/TSP/data/grid_10x10.csv')
+df = fread('D:/Github/KaggleSandbox/TSP/data/grid_10x10.csv')
+
+my_tour = read.table('D:/Github/KaggleSandbox/TSP/data/grid_10x10.tour.txt', header = FALSE)
+
+df[, tour := 1+my_tour$V1[-length(my_tour$V1)]]
+
+ggplot(df[order(order(tour) )], aes(x, y, label = id)) + geom_path() + geom_point() + geom_text_repel(color = 'blue')
+
+tour_length_ex(df$x[df$tour], df$y[df$tour])
+```
+
+## Mona Check
+
+```{r square_grid, echo=FALSE}
+tour_length_ex <-function(x, y){
+  sum(sqrt(diff(c(x, x[1]))^2 + diff(c(y, y[1]))^2))
+}
+
+#fwrite(df, 'D:/Github/KaggleSandbox/TSP/data/grid_10x10.csv')
+df = fread('D:/Github/KaggleSandbox/TSP/data/mona-lisa100K.csv')
+
+my_tour = read.table('D:/Github/KaggleSandbox/TSP/data/mona-lisa100K.tour.txt', header = FALSE)
+
+df[, tour := 1+my_tour$V1[-length(my_tour$V1)]]
+tour_length_ex(df$x[df$tour], df$y[df$tour]) #5990937
+
+df[,cross := find_cross(x, y, order(tour)) ]
+
+#5'757'191 - best result
+
+plot = ggplot(df[order(order(tour) )][1:50000], aes(x, y)) +  geom_path(color = 'blue', alpha = 0.8, linewidth = 0.1) + geom_point(size = 0.01) + 
+  theme_void() + theme(panel.background = element_rect(fill = 'white'))
+ggsave(filename = 'D:/Github/KaggleSandbox/TSP/data/mona-lisa100K.tour.png', plot = plot, device = 'png', width = 14, height = 8.5, dpi = 360)
+
+plot = ggplot(df, aes(x, y)) + geom_point(size = 0.05) + theme_void() + theme(panel.background = element_rect(fill = 'white'))
+ggsave(filename = 'D:/Github/KaggleSandbox/TSP/data/mona-lisa100K.png', plot = plot, device = 'png', width = 14, height = 8.5, dpi = 360)
+
+
+```
+
+
+## Random tour
+
+```{r Random_tour, echo=FALSE}
+
+refine_2opt <- function(x, y, tour_order){
+  #tour_order = sample.int(length(x))
+  
+  my_len = tour_length_ex(x[order(tour_order)], y[order(tour_order)])
+  
+  my_n = length(x)
+  
+  for(k in 1:10000){
+    swap_index = sample.int(my_n, 2)
+    
+    tour_order_ex = tour_order
+    tour_order_ex[swap_index[1]:swap_index[2]] = rev(tour_order[swap_index[1]:swap_index[2]])
+   
+    len_ex = tour_length_ex(x[order(tour_order_ex)], y[order(tour_order_ex)])
+    
+    
+    #if (check_2opt_swap(x[order(tour_order)[c(i1, i2, i3, i4)]], y[order(tour_order)[c(i1, i2, i3, i4)]] )){
+    if (len_ex <= my_len){
+      
+      if(len_ex < my_len){
+        print(len_ex)
+      }
+      
+      tour_order =tour_order_ex
+      my_len = len_ex
+    }
+  }
+  
+  return(tour_order)
+}
+
+refine_swap <- function(x, y, tour_order){
+  #tour_order = sample.int(length(x))
+  
+  my_len = tour_length_ex(x[order(tour_order)], y[order(tour_order)])
+  
+  my_n = length(x)
+  
+  for(k in 1:100000){
+    swap_index = sample.int(my_n, 2)
+    
+    tour_ex = tour_order
+    a = tour_ex[swap_index[1]]
+    tour_ex[swap_index[1]] = tour_ex[swap_index[2]]
+    tour_ex[swap_index[2]] = a
+    
+    len_ex = tour_length_ex(x[order(tour_ex)], y[order(tour_ex)])
+    
+    if (len_ex <= my_len){
+      tour_order = tour_ex
+      my_len = len_ex
+      
+       if(len_ex < my_len){
+        print(my_len)
+      }
+    }
+  }
+  
+  return(tour_order)
+}
+
+
+```
+
+## Example
+
+```{r example, echo=FALSE}
+
+tour_length_ex <-function(x, y){
+  sum(sqrt(diff(c(x, x[1]))^2 + diff(c(y, y[1]))^2))
+}
+
+n = 5
+
+df = cbind(id = seq(n*n), data.table(expand.grid(x = seq(n), y = seq(n))) ) #grdi
+df = data.table(id = seq(n*n), x = rnorm(n*n), y = rnorm(n*n) )
+ggplot(df, aes(x, y)) + geom_point()
+
+etsp <- ETSP(df[, .(x, y)])
+tour <- solve_TSP(etsp)
+
+df[,tour_order := order(as.numeric(tour)) ] #104.1421
+#df[,tour_order := seq(.N)] #104.1421
+
+tour_length_ex(df[order(tour_order), x], df[order(tour_order), y])
+
+ggplot(df[order(tour_order)], aes(x, y, label = id)) + geom_path() +  geom_point() + geom_text_repel(color = 'blue') + ggtitle(sprintf('%f', tour_length(tour) ) )
+
+df[,tour_order := refine_2opt(x, y,  tour_order) ] #104.1421
+#df[,tour_order := refine_swap(x, y,  tour_order) ] #104.1421
+
+tlen = tour_length_ex(df[order(tour_order), x], df[order(tour_order), y])
+
+ggplot(df[order(tour_order)], aes(x, y, label = id)) + geom_path() +  geom_point() + geom_text_repel(color = 'blue') + ggtitle(sprintf('%f', tlen ) )
+
+```
+
+## Algorithm 1
+
+```{r algorithm, echo=FALSE}
+
+#function expects x and y both size of 4
+is_segment_cross<-function(x, y){
+  t1 = (x[1] - x[3]) * (y[3] - y[4]) - (y[1] - y[3]) * (x[3] - x[4])
+  t2 = (x[1] - x[2]) * (y[3] - y[4]) - (y[1] - y[2]) * (x[3] - x[4])
+  
+  if(t2 == 0)
+    return (FALSE)
+  return ( t1/t2 > 0 &  t1/t2 < 1)
+  #return ( ((t1>0 & t2>0) | (t1<0 & t2<0)) & (t1 < t2) )
+}
+
+df_seg = data.table(x = c(4, 3, 2, 2), y = c(1, 2, 3, 4), seg = c(1, 1, 2, 2))
+ggplot(df_seg, aes(x, y, group = seg)) + geom_line() + geom_point() + ggtitle(is_segment_cross(df_seg$x, df_seg$y))
+
+tour_length_ex <-function(x, y){
+  sum(sqrt(diff(c(x, x[1]))^2 + diff(c(y, y[1]))^2))
+}
+
+n = 10
+
+df = cbind(id = seq(n*n), data.table(expand.grid(x = seq(n), y = seq(n))) )
+ggplot(df, aes(x, y)) + geom_point()
+
+#solve using R
+etsp <- ETSP(df[, .(x, y)])
+tour <- solve_TSP(etsp, 'arbitrary_insertion')
+
+df[,tour_order := order(as.numeric(tour)) ] #25.414
+ggplot(df[order(tour_order)], aes(x, y, label = id)) + geom_path() +  geom_point() + ggtitle(sprintf('%f', tour_length(tour) ) ) + geom_text_repel(color = 'blue')
+
+find_cross<-function(x, y, tour_order){
+  n = length(x)
+  
+  crosses = rep(0, n)
+  
+  xp = x[order(tour_order)]
+  yp = y[order(tour_order)]
+  
+  for(i in 1:(n-1) ) {
+    for(j in 1:(n-1) ) {
+      if(abs(i - j) >1 ) {
+        if(is_segment_cross(c(xp[i], xp[i+1], xp[j], xp[j+1]), c(yp[i], yp[i+1], yp[j], yp[j+1])))
+        {
+          #print(sprintf('%d %d', i, j))
+          crosses[order(tour_order)][i] = crosses[order(tour_order)][i] + 1
+        }
+      }
+    }
+  }
+  return(crosses)
+}
+
+remove_crossings <-function(x, y, tour_order){
+  n = length(x)
+  
+  my_tour = seq(n)[tour_order]
+  
+  xp = x[my_tour]
+  yp = y[my_tour]
+  
+  tour_len = tour_length_ex(xp, yp)
+  
+  for(i in 1:(n-1) ) {
+    for(j in 1:(n-1) ) {
+      if(abs(i - j) >1 ) {
+        if(is_segment_cross(c(xp[i], xp[i+1], xp[j], xp[j+1]), c(yp[i], yp[i+1], yp[j], yp[j+1])))
+        {
+          my_tour_ex = my_tour
+          i1 = my_tour_ex[i+1]
+          j1 = my_tour_ex[j+1]
+          my_tour_ex[i+1] = j1
+          my_tour_ex[j+1] = i1
+          
+          tour_len_ex = tour_length_ex(x[my_tour_ex], y[my_tour_ex])
+          
+          print(sprintf('%d %d %f %f', i, j, tour_len_ex, tour_len ))
+          
+          if(tour_len_ex < tour_len){
+            tour_len = tour_len_ex
+            tour_order = tour_order_ex
+          }
+        }
+      }
+    }
+  }
+  return(order(my_tour))
+}
+
+solve_tsp1 <-function(x, y){
+  n = length(x)
+  
+  if(n <= 3)
+    return (seq(n))
+  
+  #return(  sample.int(n, n) )
+  
+  tour = sample.int(n, 3)
+  remaining_nodes = seq(n) %!in_set% tour
+  
+  for(i in 1:(n-3)){
+    if(length(remaining_nodes) == 1){
+      node = remaining_nodes[1] 
+    }
+    else {
+      node = sample(remaining_nodes, 1)
+    }
+    
+    #find best insertion position
+    best_len = 1e8
+    best_k = 0
+    for(k in 0:length(tour)){
+      tour_k <- append(tour,node,after=k)
+      
+      tour_k_len = tour_length_ex(x[tour_k], y[tour_k])
+      
+      if(tour_k_len < best_len){
+        best_len = tour_k_len
+        best_k = k
+      }
+    }
+    tour <- append(tour,node,after=best_k)
+    remaining_nodes = remaining_nodes[remaining_nodes != node]
+    #print(sprintf('%d %f node = %d,  tour: %d, %d, [%s]',i, best_len, node, length(tour), length(remaining_nodes), stri_join(remaining_nodes, collapse = ',') ))
+    print(sprintf('%d %f node = %d',i, best_len, node ))
+  }
+  return (tour)
+}
+
+#Solve 
+#df[,tour_order := order(.N- seq(.N)-1) ]
+#df[,tour_order := order(seq(.N)) ]
+#my_tour = sample.int(nrow(df), nrow(df))
+#df[,tour_order := order(my_tour) ]
+#my_tour = solve_tsp1(df$x, df$y)
+my_tour = sample.int(nrow(df), nrow(df))
+#diff(sort(my_tour))
+tour_length_ex(df$x[my_tour], df$y[my_tour])
+
+df[,tour_order := order(my_tour) ]
+df[,tour_order := remove_crossings(x, y, tour_order) ]
+
+#df[,tour_order := order(solve_tsp1(x, y)) ]
+tlen = tour_length_ex(df[order(tour_order), x], df[order(tour_order), y])
+
+ggplot(df[order(tour_order)], aes(x, y, label = id )) + geom_path() +  geom_point() + ggtitle(sprintf('%f',tlen ) ) + geom_text_repel(color = 'blue')
+
+```
+
+
+
+

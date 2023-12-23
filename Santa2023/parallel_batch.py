@@ -59,27 +59,40 @@ def apply_moves(initial_state, moves, allowed_moves):
 def random_solve(initial_state, final_state, allowed_moves, max_moves, it_count):
     best_solution = None
     possible_moves = list(allowed_moves.keys())
+    final_state_str = ''.join(final_state)    
+    for i in range(it_count):        
+        move_vector = random.choices(possible_moves, k = max_moves)
+        my_state = initial_state[:]     
+        for k, move in enumerate(move_vector):         
+            my_state = allowed_moves[move](my_state) 
+            my_state_str = ''.join(my_state)            
+            if my_state_str == final_state_str:
+                if best_solution is None or len(best_solution)>k+1:                    
+                    best_solution = move_vector[:(k+1)]
+                    max_moves = len(best_solution) - 1              
+    return best_solution
+
+def random_solve_ex(initial_state, final_state, allowed_moves, max_moves, it_count):
+    best_solution = None
+    possible_moves = list(allowed_moves.keys())
     final_state_str = ''.join(final_state)
-    #initial_state_str = ''.join(initial_state)
+    initial_state_str = ''.join(initial_state)
     for i in range(it_count):
-        #all_states = set([initial_state_str])
+        all_states = set([initial_state_str])
         move_vector = random.choices(possible_moves, k = max_moves)
         my_state = initial_state[:]     
         for k, move in enumerate(move_vector):         
             my_state = allowed_moves[move](my_state) 
             my_state_str = ''.join(my_state)
-            #if my_state_str in all_states:
-            #    break
-            #all_states.add(my_state_str)
+            if my_state_str in all_states:
+                break
+            all_states.add(my_state_str)
             if my_state_str == final_state_str:
-                if best_solution is None:
-                    best_solution = move_vector[:(k+1)]                    
-                if len(best_solution)>k+1:
+                if best_solution is None or len(best_solution)>k+1:                    
                     best_solution = move_vector[:(k+1)]
-                    max_moves = len(best_solution) - 1
-                    if max_moves == 0:
-                        return best_solution                        
+                    max_moves = len(best_solution) - 1              
     return best_solution
+
                 
 def solve_puzzle(initial_state, final_state, allowed_moves, moves, depth, max_depth):
     best_solution = None
@@ -137,13 +150,15 @@ if __name__ == '__main__':
     args = parser.parse_args()
     print(args)
     
+    solved_types = set(['wreath_6/6', 'wreath_7/7'])
+    
     #%% Load Data
     data_folder = 'D:/Github/KaggleSandbox/Santa2023/data'
 
+    solution_file = 'solution_submission_random_batch.2.csv'
     puzzle_info = pd.read_csv(os.path.join(data_folder, 'puzzle_info.csv'), index_col='puzzle_type')
-    puzzles = pd.read_csv(os.path.join(data_folder, 'puzzles.csv'), index_col='id')
-    sample_submission = pd.read_csv(os.path.join(data_folder, 'sample_submission.csv'))
-    solution_submission = pd.read_csv(os.path.join(data_folder, 'solution_submission_random_batch.csv'), index_col='id')
+    puzzles = pd.read_csv(os.path.join(data_folder, 'puzzles.csv'), index_col='id')    
+    solution_submission = pd.read_csv(os.path.join(data_folder, solution_file), index_col='id')
 
     all_allowed_moves = {}
     for index, row in puzzle_info.iterrows():        
@@ -155,6 +170,7 @@ if __name__ == '__main__':
 
     print('Random Check: %s' % random.choices(list(range(100)), k = 10))
 
+    my_excluded_types = set(['cube_19/19/19', 'cube_33/33/33'])
     max_it = args.max_it# 1000000
     input_params = []
     for index, row in solution_submission.iterrows():    
@@ -164,9 +180,12 @@ if __name__ == '__main__':
         allowed_moves = all_allowed_moves[my_type]        
         moves = solution_submission.loc[index].moves.split('.')      
         
+        if my_type in my_excluded_types:
+            continue
+        
         allowed_moves = {k:v(range(v.size)) for k, v in allowed_moves.items()} #convert permutations to index to that pickle works
         
-        input_params.append({'index': index, 'my_type':my_type,'initial_state':initial_state,'final_state':final_state, 'allowed_moves':allowed_moves, 'prev_moves':moves, 'max_moves':len(moves), 'max_it': max_it // len(moves)})
+        input_params.append({'index': index, 'my_type':my_type,'initial_state':initial_state,'final_state':final_state, 'allowed_moves':allowed_moves, 'prev_moves':moves, 'max_moves':len(moves)-1, 'max_it': max_it // len(moves)})
 
     print('Starting batch calc with %d jobs, maxit: %d' % (len(input_params), max_it))
     
@@ -222,6 +241,6 @@ if __name__ == '__main__':
         print('%s, %s, moves: %d, allowed: %d, %s, unique : %s (%.1f sec)' % (my_id, my_type, len(moves), len(allowed_moves), state == final_state, unique_states == 1, time()-start_time) )
 
     
-    outputfile = os.path.join(data_folder, 'solution_submission_random_batch.csv')
+    outputfile = os.path.join(data_folder, solution_file)
     print('Saved results to the %s' % outputfile)
     solution_submission.to_csv(outputfile)   

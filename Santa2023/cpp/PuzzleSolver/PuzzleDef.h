@@ -28,6 +28,7 @@ public:
 	int move_count() const;	
 	std::string move_name(int move_index) const;
 	std::string name() const;
+	std::vector<std::string> to_move_names(std::vector<int> moves) const;
 
 	void apply_moves(const std::vector<std::string>& moves, const std::vector<int>& initial_state, std::vector <int>& final_state) const;
 

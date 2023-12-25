@@ -134,12 +134,51 @@ void CheckCurrentSolutions(const std::vector<Puzzle>& puzzles)
     }
 }
 
+vector<int> TreeSolver(const Puzzle& puzzle, std::vector<int> initial_state, unsigned int max_depth, vector<int>& moves)
+{
+    const PuzzleDef& puzzle_def = puzzle.puzzle_type();
+    std::vector<int> solution_state = puzzle.solution_state();    
+
+    vector<int> best_moves;
+
+    if (max_depth > 0)
+    {
+        for (int i = 0; i < puzzle_def.move_count(); i++)
+        {
+            std::vector<int> state = initial_state;
+
+            puzzle_def.apply_move(i, initial_state, state);
+
+            moves.push_back(i);
+
+            if (puzzle.IsEqual(state, solution_state))
+            {
+                return moves;
+            }
+            else
+            {
+                vector<int> res = TreeSolver(puzzle, state, max_depth - 1, moves);
+
+                if (res.size() > 0 && (best_moves.size() == 0 || best_moves.size() > res.size()) )
+                {
+                    best_moves = res;
+                }
+
+                moves.pop_back();
+            }
+        }
+    }
+    return best_moves;
+}
+
 void RunSolverBatch(const std::vector<Puzzle>& puzzles, unsigned int max_it)
 {
     set<string> exclude_types = { "cube_19/19/19", "cube_33/33/33" };
 
     vector<vector<std::string>> best_moves(puzzles.size());
 
+    cout << "RunSolverBatch: " << max_it << endl;
+    
     int imp_count = 0;
     int solved = 0;
 
@@ -149,8 +188,7 @@ void RunSolverBatch(const std::vector<Puzzle>& puzzles, unsigned int max_it)
         move_count[i] = puzzles[i].solution().size();
     }
 
-
-    #pragma omp parallel for num_threads(14)
+    #pragma omp parallel for num_threads(10)
     for (int i = 0; i < puzzles.size(); i++)
     {
         const PuzzleDef& puzzle_def = puzzles[i].puzzle_type();
@@ -163,23 +201,29 @@ void RunSolverBatch(const std::vector<Puzzle>& puzzles, unsigned int max_it)
             std::vector<int> initial_state = puzzles[i].initial_state();
             std::vector<int> final_state;
            
-            int n_moves = move_count[i];
+            unsigned int n_moves = std::max(1, move_count[i]);
+            unsigned int n_it = 1 + max_it / (1 + n_moves/100);
 
-            vector<std::string> result = random_search(puzzles[i], n_moves - 1, 1 + max_it / n_moves);
+            if (n_moves < 10) 
+            {
+                n_it = std::min(n_it, (unsigned int)1e6);
+            }
+
+            vector<std::string> result = random_search(puzzles[i], n_moves - 1, n_it);
 
             #pragma omp critical
             {
                 solved++;
 
-                cout << "Solved puzzle:" << i << " (" << puzzle_def.name() << ") " << " moves: " << move_count[i] << ", found: "<< result.size() << ", solved:"<< solved ;
+                cout << "Solved puzzle:" << i << " (" << puzzle_def.name() << ") " << " moves: " << n_moves << ", found: "<< result.size() << ", solved:"<< solved << ", it: "<< log10(n_it);
 
                 if (result.size() < move_count[i] && result.size() > 0)
                 {
+                    imp_count += result.size() - best_moves[i].size();
+
                     best_moves[i] = result;
 
-                    cout << ", better solution found:" << "(" << result.size() << ") " << " moves: " << join_string(result);
-
-                    imp_count += result.size() - best_moves[i].size();
+                    cout << ", better solution found:" << "(" << result.size() << ") " << " moves: " << join_string(result);                    
                 }
                 cout << endl;
             }            
@@ -200,6 +244,113 @@ void RunSolverBatch(const std::vector<Puzzle>& puzzles, unsigned int max_it)
     ofs.close();
 }
 
+void RunSolverBatchTree(const std::vector<Puzzle>& puzzles, unsigned int max_it)
+{    
+    vector<vector<std::string>> best_moves(puzzles.size());
+
+    int imp_count = 0;
+    int solved = 0;
+
+    vector<int> move_count(puzzles.size());
+    for (int i = 0; i < puzzles.size(); i++)
+    {
+        move_count[i] = puzzles[i].solution().size();
+    }
+
+
+#pragma omp parallel for num_threads(2)
+    for (int i = 0; i < puzzles.size(); i++)
+    {
+        const PuzzleDef& puzzle_def = puzzles[i].puzzle_type();
+
+        best_moves[i] = puzzles[i].solution();
+
+        std::vector<int> solution_state = puzzles[i].solution_state();
+        std::vector<int> initial_state = puzzles[i].initial_state();
+        std::vector<int> final_state;
+
+        int n_moves = move_count[i];
+        int m_allowed_moves = puzzle_def.move_count();        
+        int max_depth = std::max(1, std::min(n_moves - 1, 1 + int(log(max_it) / log(m_allowed_moves))));
+        
+        vector<int> moves;
+        vector<int> result_index = TreeSolver(puzzles[i], puzzles[i].initial_state(), max_depth, moves);
+        vector<string> result = puzzles[i].puzzle_type().to_move_names(result_index);
+
+#pragma omp critical
+        {
+            solved++;
+
+            cout << "Solved puzzle:" << i << " (" << puzzle_def.name() << ") " << " moves: " << move_count[i]<<", allowed moves:"<< m_allowed_moves<<", max depth:"<< max_depth << ", found: " << result.size() << ", solved:" << solved;
+
+            if (result.size() < move_count[i] && result.size() > 0)
+            {
+                imp_count += result.size() - best_moves[i].size();
+
+                best_moves[i] = result;
+
+                cout << ", better solution found:" << "(" << result.size() << ") " << " moves: " << join_string(result);
+            }
+            cout << endl;
+        }        
+    }
+
+    cout << "Total improvement: " << imp_count << endl;
+
+    //save results
+    string filename = "D:/Github/KaggleSandbox/Santa2023/data/solution_submission_cpp.tree.csv";
+    std::ofstream ofs(filename.c_str(), std::ofstream::out);
+
+    ofs << "id,moves" << endl;
+    for (size_t i = 0; i < puzzles.size(); i++)
+    {
+        ofs << i << "," << join_string(best_moves[i]) << std::endl;
+    }
+    ofs.close();
+}
+
+void RunSolver(const Puzzle puzzle, unsigned int max_it, unsigned int max_try)
+{    
+    int imp_count = 0;
+    int solved = 0;
+
+    const PuzzleDef& puzzle_def = puzzle.puzzle_type();
+
+    vector<string> best_moves = puzzle.solution();
+
+    std::vector<int> solution_state = puzzle.solution_state();
+    std::vector<int> initial_state = puzzle.initial_state();
+    std::vector<int> final_state;
+
+    //save results
+    string filename = "D:/Github/KaggleSandbox/Santa2023/data/cpp.log";
+    std::ofstream ofs(filename.c_str(), std::ofstream::out);
+
+    for(unsigned int i = 0; i< max_try; i++)
+    {          
+        int n_moves = best_moves.size();            
+
+        vector<std::string> result = random_search(puzzle, n_moves - 1, max_it);
+            
+        cout << "It:" << i << " (" << puzzle_def.name() << ") " << " moves: " << n_moves << ", found: " << result.size();
+        ofs  << "It:" << i << " (" << puzzle_def.name() << ") " << " moves: " << n_moves << ", found: " << result.size();
+
+        if (result.size() < n_moves && result.size() > 0)
+        {
+            imp_count += result.size() - best_moves.size();
+
+            best_moves = result;
+
+            cout << ", better solution found:" << "(" << result.size() << ") " << " moves: " << join_string(result);
+            ofs << ", better solution found:" << "(" << result.size() << ") " << " moves: " << join_string(result);
+        }
+        cout << endl;
+        ofs << endl;
+    }    
+    
+    ofs.close();
+}
+
 int main()
 {
     clock_t clock_start = clock();
@@ -208,15 +359,32 @@ int main()
 
     std::vector<Puzzle> puzzles = Puzzle::Load("D:/Github/KaggleSandbox/Santa2023/data/puzzles.json");
 
+    //23, cube_2/2/2, moves: 9, allowed: 12, ['d0', 'f0', 'r0', '-r1', '-d0', '-r0', '-f1', '-r1', 'r0'] (0.0 sec)
+    if (false)
+    {
+        clock_start = clock();
+
+        int puzzle_index = 23;
+        vector<int> moves;
+        vector<int> best_moves = TreeSolver(puzzles[puzzle_index], puzzles[puzzle_index].initial_state(), 9, moves); //1.34 min for depth = 8
+        vector<string> best_moves_str = puzzles[puzzle_index].puzzle_type().to_move_names(best_moves);
+
+        //max_depth = min(len(moves) - 1, int(log(1e8) / log(len(allowed_moves))))
+
+        cout << puzzle_index << ", " << join_string(best_moves_str) << endl;
+    }
+    //RunSolverBatchTree(puzzles, (int)1e9);
+
     //CheckCurrentSolutions(puzzles);
 
+    //RunSolver(puzzles[391], (int)1e6, 100);
     RunSolverBatch(puzzles, (int)1e9);
 
     //BenchmarkSolver();
 
     //void RunSolver();
     
-    std::cout << "Elapsed: " << ((double)(clock() - clock_start) / CLOCKS_PER_SEC)/60.0  <<" min" << std::endl;
+    std::cout << "Elapsed: " << (((double)clock() - (double)clock_start) / CLOCKS_PER_SEC)/60.0  <<" min" << std::endl;
 
 
     //std::string state = puzzle.initial_state();

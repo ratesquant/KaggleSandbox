@@ -35,6 +35,8 @@ for index, row in puzzle_info.iterrows():
     allowed_moves.update(allowed_moves_inv)
     all_allowed_moves[index] = allowed_moves
 
+print(sum([len(move_list.split('.')) for move_list in solution_submission.moves]))
+
 #%% save as json 
 import json
 
@@ -44,6 +46,8 @@ for index, row in puzzle_info.iterrows():
 
 with open(os.path.join(data_folder, 'puzzle_info.json'), 'w') as f:
     json.dump(puzzle_info_dict, f)
+    
+sum([len(move_list.split('.')) for move_list in solution_submission.moves]) #1173839
     
 puzzle_list = []
 for index, row in puzzles.iterrows():
@@ -55,6 +59,40 @@ for index, row in puzzles.iterrows():
 
 with open(os.path.join(data_folder, 'puzzles.json'), 'w') as f:
     json.dump(puzzle_list, f)
+    
+#%% merge files
+solution_1 = pd.read_csv(os.path.join(data_folder, 'solution_submission_v1.csv'), index_col='id')
+solution_2 = pd.read_csv(os.path.join(data_folder, 'solution_submission_cpp.csv'), index_col='id')
+#solution_2 = pd.read_csv(os.path.join(data_folder, 'solution_submission_random_batch.2.csv'), index_col='id')
+
+print(sum([len(move_list.split('.')) for move_list in solution_1.moves])) # 1220590
+print(sum([len(move_list.split('.')) for move_list in solution_2.moves])) # 1173118
+
+for index, row in solution_1.iterrows():
+    start_time = time()
+    moves1 = solution_1.loc[index].moves.split('.')        
+    moves2 = solution_2.loc[index].moves.split('.')        
+    
+    my_id = puzzles.index[index]
+    my_type = puzzles.loc[index].puzzle_type
+    final_state=puzzles.loc[index].solution_state.split(';')
+    initial_state=puzzles.loc[index].initial_state.split(';')        
+    num_wildcards = puzzles.loc[index].num_wildcards    
+    allowed_moves = all_allowed_moves[my_type]
+    
+    state1 = apply_moves(initial_state, moves1, allowed_moves)    
+    state2 = apply_moves(initial_state, moves2, allowed_moves)   
+    
+    is_valid1 = is_equal(state1, final_state, num_wildcards)
+    is_valid2 = is_equal(state2, final_state, num_wildcards)
+    
+    if len(moves2) < len(moves1) and is_valid2:
+        solution_1.loc[index].moves = '.'.join(moves2)           
+        print('Replaced for %d' % (index))
+    print('%s, %s, better: %s, moves1: %d (%s), moves2: %d (%s) (%.1f sec)' % (my_id, my_type, len(moves2)< len(moves1), len(moves1), is_valid1, len(moves2), is_valid2, time()-start_time) )
+
+solution_1.to_csv(os.path.join(data_folder, 'solution_submission_v1.csv'))
+
      
 #%% Benchmark permutation application
 index = 20
@@ -85,11 +123,7 @@ print(''.join(state))
 for move in ['f0', 'f0', 'f0', 'f0']:
     state = allowed_moves[move](state)
     print(''.join(state))
-#%% generate random moves which lead to unique states 
-
-
-#%% functions
-   
+#%% functions   
 def is_equal(state1, state2, wildcards):
     if len(state1)!=len(state2):
         return False
@@ -244,7 +278,7 @@ def solve_puzzle_ex(initial_state, final_state, allowed_moves, moves, max_depth,
 #%timeit solve_puzzle(initial_state, final_state, allowed_moves, [], 8) #239
 #%timeit solve_puzzle_all(initial_state, final_state, allowed_moves, 8) #177
 #%% Checks
-pizzle_id = 1
+pizzle_id = 289
 final_state=puzzles.loc[pizzle_id].solution_state.split(';')
 initial_state=puzzles.loc[pizzle_id].initial_state.split(';')
 puzzle_type = puzzles.loc[pizzle_id].puzzle_type
@@ -257,7 +291,7 @@ allowed_moves[moves[1]](initial_state)
 
 #solution = solve_puzzle_ex(initial_state, final_state, allowed_moves, [], 10,set([''.join(initial_state)]))
 #solution = solve_puzzle(initial_state, final_state, allowed_moves, [], 9)
-solution = solve_puzzle_all(initial_state, final_state, allowed_moves, 5)
+solution = solve_puzzle_all(initial_state, final_state, allowed_moves, 9)
 
 solution = random_solve(initial_state, final_state, allowed_moves, 10, int(1e8))
 
@@ -315,6 +349,20 @@ for index, row in solution_cpp.iterrows():
         invalid_ids.append(index)    
     print('%s, %s, moves: %d, allowed: %d, %s, unique : %s (%.1f sec)' % (my_id, my_type, len(moves), len(allowed_moves), is_equal(state, final_state, num_wildcards), unique_states == 1, time()-start_time) )
 print('invalid: %s' % invalid_ids)
+
+#%% View solutions 
+for index, row in solution_submission.iterrows():
+    start_time = time()
+    moves = solution_submission.loc[index].moves.split('.')        
+    my_id = puzzles.index[index]
+    my_type = puzzles.loc[index].puzzle_type
+    final_state=puzzles.loc[index].solution_state.split(';')
+    initial_state=puzzles.loc[index].initial_state.split(';')        
+    num_wildcards = puzzles.loc[index].num_wildcards    
+    allowed_moves = all_allowed_moves[my_type]        
+    print('%s, %s, moves: %d, allowed: %d, %s (%.1f sec)' % (my_id, my_type, len(moves), len(allowed_moves), moves, time()-start_time) )
+    if index>100:
+        break
 
 #%% Check all solutions 
 is_valid = True

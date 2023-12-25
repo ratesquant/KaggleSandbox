@@ -125,6 +125,17 @@ std::string  PuzzleDef::name() const
 	return m_name;
 }
 
+std::vector<std::string> PuzzleDef::to_move_names(std::vector<int> moves) const
+{
+	std::vector<std::string> move_names(moves.size());
+
+	for (size_t i = 0; i < moves.size(); i++)
+	{
+		move_names[i] = m_move_names[moves[i]];
+	}
+	return move_names;
+}
+
 void PuzzleDef::apply_move(int move_index, const std::vector<int>& initial_state, std::vector<int>& final_state) const
 {
 	const std::vector<int>& permutation = m_allowed_moves_vector[move_index];

@@ -27,6 +27,7 @@ class Puzzle
 		const std::vector<std::string>& solution() const;
 
 		bool IsEqual(const std::vector<int>& state1, const std::vector<int>& state2) const;
+		int Diff(    const std::vector<int>& state1, const std::vector<int>& state2) const;
 
 		static std::vector<std::string> StateFromString(const std::string& state_string, bool one_char_state = true);
 

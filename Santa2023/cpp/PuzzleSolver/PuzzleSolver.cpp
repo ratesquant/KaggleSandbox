@@ -5,7 +5,9 @@
 #include <random>
 #include <set>
 #include <sstream>
+#include <iomanip>
 #include <time.h>  
+#include <ctime>
 #include <fstream>
 #include <omp.h>
 #include <nlohmann/json.hpp>  ////https://github.com/nlohmann/json
@@ -30,14 +32,16 @@ vector<std::string> random_search(const Puzzle& puzzle, unsigned int max_moves, 
 
     std::vector<int> best_moves;
     std::vector<int> moves(max_moves);    
+    
     /*
     std::cout << "Random Search: ";
-    for (unsigned int i = 0; i < max_moves; i++)
+    for (unsigned int i = 0; i < 10; i++)
     {
         std::cout << random_move(rng) << ", ";
     }
     std::cout << std::endl;
     */
+    
 
     for (unsigned int i = 0; i < max_it; i++)     
     {
@@ -73,6 +77,107 @@ vector<std::string> random_search(const Puzzle& puzzle, unsigned int max_moves, 
 
     return move_names;
 }
+
+vector<std::string> greedy_random_search(const Puzzle& puzzle, unsigned int max_moves, unsigned int max_it)
+{
+    std::random_device dev;
+    std::mt19937 rng(dev());
+
+    const PuzzleDef& puzzle_def = puzzle.puzzle_type();
+
+    const int move_count = puzzle_def.move_count();
+
+    std::uniform_real_distribution<> random_move(0.0, 1.0); // distribution in range [0, 1)
+
+    std::vector<int> solution_state = puzzle.solution_state();
+    std::vector<int> initial_state = puzzle.initial_state();
+    std::vector<int> state, next_state;
+
+    std::vector<int> best_moves;
+    std::vector<int> moves(max_moves);
+    std::vector<int> state_diffs(move_count);
+    std::vector<double> move_weights(move_count);
+    /*
+    std::cout << "Greedy Random Search: ";
+    for (unsigned int i = 0; i < max_moves; i++)
+    {
+        std::cout << random_move(rng) << ", ";
+    }
+    std::cout << std::endl;
+    */
+
+    for (unsigned int i = 0; i < max_it; i++)
+    {
+        state = initial_state;
+        next_state = initial_state;
+        for (unsigned int j = 0; j < max_moves; j++)
+        {
+            //compute differences for each move
+            //move_count
+            int max_diff = 0;
+            int min_diff = solution_state.size();
+            for (unsigned int k = 0; k < move_count; k++)
+            {
+                puzzle_def.apply_move(k, state, next_state);
+                state_diffs[k] = puzzle.Diff(state, next_state);
+                if (state_diffs[k] > max_diff)
+                {
+                    max_diff = state_diffs[k];
+                }
+
+                if (state_diffs[k] < min_diff)
+                {
+                    min_diff = state_diffs[k];
+                }
+            }
+
+            double total_weigh = 0;
+            for (unsigned int k = 0; k < move_count; k++)
+            {   
+                move_weights[k] = 1.0/(1.0 + double(state_diffs[k] - min_diff));
+                total_weigh += move_weights[k];
+            }
+
+            double random_number = total_weigh * random_move(rng);
+            int move_index = move_count - 1;
+
+            for (unsigned int k = 0; k < move_count; k++)
+            {
+                if (random_number < move_weights[k])
+                {
+                    move_index = k;
+                    break;
+                }
+                random_number -= move_weights[k];
+            }
+
+            moves[j] = move_index;
+
+            puzzle_def.apply_move(move_index, state, next_state);
+
+            if (puzzle.IsEqual(next_state, solution_state) && (j + 1 < best_moves.size() || best_moves.size() == 0))
+            {
+                best_moves.resize(j + 1);
+
+                for (unsigned int k = 0; k <= j; k++)
+                {
+                    best_moves[k] = moves[k];
+                }
+                break;
+            }
+            state = next_state;
+        }
+    }
+
+    std::vector<std::string> move_names(best_moves.size());
+    for (unsigned int k = 0; k < best_moves.size(); k++)
+    {
+        move_names[k] = puzzle_def.move_name(best_moves[k]);
+    }
+
+    return move_names;
+}
+
 
 std::string join_string(std::vector<std::string> items, string delim = ".")
 {
@@ -171,10 +276,11 @@ vector<int> TreeSolver(const Puzzle& puzzle, std::vector<int> initial_state, uns
     return best_moves;
 }
 
-void RunSolverBatch(const std::vector<Puzzle>& puzzles, unsigned int max_it)
+void RunSolverBatch(const std::vector<Puzzle>& puzzles, unsigned int max_it, bool use_greedy_solver)
 {
-    set<string> exclude_types = { "cube_19/19/19", "cube_33/33/33" };
-
+    //set<string> exclude_types = { "cube_19/19/19", "cube_33/33/33" };
+    //set<string> exclude_types = {"wreath_21/21", "wreath_33/33", "wreath_100/100", "globe_3/4", "globe_6/8","globe_6/10",  "globe_3/33", "globe_33/3", "globe_8/25"};
+    set<string> exclude_types = { "wreath_12/12", "wreath_21/21", "wreath_33/33", "wreath_100/100"};
     vector<vector<std::string>> best_moves(puzzles.size());
 
     cout << "RunSolverBatch: " << max_it << endl;
@@ -188,32 +294,52 @@ void RunSolverBatch(const std::vector<Puzzle>& puzzles, unsigned int max_it)
         move_count[i] = puzzles[i].solution().size();
     }
 
-    #pragma omp parallel for num_threads(10)
+    #pragma omp parallel for num_threads(5)
     for (int i = 0; i < puzzles.size(); i++)
     {
         const PuzzleDef& puzzle_def = puzzles[i].puzzle_type();
 
         best_moves[i] = puzzles[i].solution();
 
-        if (exclude_types.find(puzzle_def.name()) == exclude_types.end()) 
+        if (exclude_types.find(puzzle_def.name()) != exclude_types.end()) 
         {   
             std::vector<int> solution_state = puzzles[i].solution_state();
             std::vector<int> initial_state = puzzles[i].initial_state();
             std::vector<int> final_state;
            
             unsigned int n_moves = std::max(1, move_count[i]);
-            unsigned int n_it = 1 + max_it / (1 + n_moves/100);
+            unsigned int n_it = 1 + max_it / (1 + n_moves/50);
 
             if (n_moves < 10) 
             {
-                n_it = std::min(n_it, (unsigned int)1e6);
+                n_it = std::min(n_it, (unsigned int)1e2);
             }
 
-            vector<std::string> result = random_search(puzzles[i], n_moves - 1, n_it);
+            vector<std::string> result;
+            //vector<std::string> result = random_search(puzzles[i], n_moves - 1, n_it);
+            //vector<std::string> result = greedy_random_search(puzzles[i], n_moves - 1, n_it);          
+
+            if(use_greedy_solver)
+                result = greedy_random_search(puzzles[i], n_moves - 1, n_it);
+            else
+                result = random_search(puzzles[i], n_moves - 1, n_it);
+
 
             #pragma omp critical
             {
                 solved++;
+                
+                time_t timestamp = time(nullptr);                  
+                char str_buffer[128];
+
+                struct tm buf;
+                localtime_s(&buf, &timestamp);
+
+                std::cout << std::put_time(&buf, "%Y-%m-%d %H-%M-%S")<<": ";
+
+                //std::strftime(str_buffer, sizeof(str_buffer), "%A %c", buf);
+                //ctime_s(str_buffer, sizeof str_buffer, &timestamp);
+                //std::cout << str_buffer;
 
                 cout << "Solved puzzle:" << i << " (" << puzzle_def.name() << ") " << " moves: " << n_moves << ", found: "<< result.size() << ", solved:"<< solved << ", it: "<< log10(n_it);
 
@@ -233,7 +359,7 @@ void RunSolverBatch(const std::vector<Puzzle>& puzzles, unsigned int max_it)
     cout << "Total improvement: " << imp_count << endl;
 
     //save results
-    string filename = "D:/Github/KaggleSandbox/Santa2023/data/solution_submission_cpp.csv";    
+    string filename = "D:/Github/KaggleSandbox/Santa2023/data/solution_submission_cpp_release2.csv";    
     std::ofstream ofs(filename.c_str(), std::ofstream::out);
 
     ofs << "id,moves" << endl;
@@ -378,7 +504,8 @@ int main()
     //CheckCurrentSolutions(puzzles);
 
     //RunSolver(puzzles[391], (int)1e6, 100);
-    RunSolverBatch(puzzles, (int)1e9);
+    RunSolverBatch(puzzles, (int)1e6, true);
+    //RunSolverBatch(puzzles, (int)1e7, false);//40 min
 
     //BenchmarkSolver();
 

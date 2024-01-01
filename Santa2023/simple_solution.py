@@ -12,7 +12,7 @@ from ast import literal_eval
 from sympy.combinatorics import Permutation
 from itertools import combinations_with_replacement, product
 from time import time
-from math import log
+from math import log, exp
 #import numba
 
 #%% TODO:
@@ -134,6 +134,15 @@ def is_equal(state1, state2, wildcards):
             if diff_count > wildcards:
                 return False
     return True
+
+def state_diff(state1, state2):
+    if len(state1)!=len(state2):
+        return max(len(state1), len(state1)) + 1
+    diff_count = 0
+    for s1, s2 in zip(state1, state2):
+        if s1!=s2:
+            diff_count = diff_count + 1            
+    return diff_count
             
             
     
@@ -174,6 +183,33 @@ def apply_moves(initial_state, moves, allowed_moves):
     for move in moves:
         state = allowed_moves[move](state)
     return state
+
+def greedy_solve(initial_state, final_state, allowed_moves, max_moves, it_count):
+    best_solution = None
+    possible_moves = list(allowed_moves.keys())    
+    state_dist = [0] * len(possible_moves)
+    
+    for it in range(it_count):
+        my_state = initial_state[:]      
+        move_vector = []
+        for i in range(max_moves):        
+            #move_vector = random.choices(possible_moves, k = max_moves)        
+            for j, move_name in enumerate(possible_moves):         
+                next_state = allowed_moves[move_name](my_state) 
+                state_dist[j] = state_diff(next_state, final_state)            
+            min_diff = min(state_dist)           
+            max_diff = min(state_dist) 
+            move_weights = [1.0/(1.0 + (x - min_diff)) for x in state_dist]      #77% (random 20%)
+            #move_weights = [exp(-(x - min_diff)) for x in state_dist]          #31%
+            my_move = random.choices(possible_moves, weights = move_weights, k = 1)[0]
+            my_state = allowed_moves[my_move](my_state)
+            move_vector.append(my_move)
+            #print("%d %d" % (i,state_diff(my_state, final_state)  ) )               
+            if my_state == final_state:
+                if best_solution is None or len(best_solution)>len(move_vector):                    
+                    best_solution = move_vector
+                    max_moves = len(best_solution) - 1                       
+    return best_solution
 
 def random_solve(initial_state, final_state, allowed_moves, max_moves, it_count):
     best_solution = None
@@ -277,29 +313,69 @@ def solve_puzzle_ex(initial_state, final_state, allowed_moves, moves, max_depth,
 #%timeit solve_puzzle_ex(initial_state, final_state, allowed_moves, [], 8,set([''.join(initial_state)])) #291
 #%timeit solve_puzzle(initial_state, final_state, allowed_moves, [], 8) #239
 #%timeit solve_puzzle_all(initial_state, final_state, allowed_moves, 8) #177
-#%% Checks
-pizzle_id = 289
+
+#%% Find Combinations
+#ABA^−1B^−1
+pizzle_id = 3
 final_state=puzzles.loc[pizzle_id].solution_state.split(';')
 initial_state=puzzles.loc[pizzle_id].initial_state.split(';')
 puzzle_type = puzzles.loc[pizzle_id].puzzle_type
+num_wildcards = puzzles.loc[pizzle_id].num_wildcards
+
+allowed_moves = all_allowed_moves[puzzle_type]
+#moves = solution_submission.loc[pizzle_id].moves.split('.')
+state_0 = list(range(len(initial_state)))
+
+#8:  -r0.-f1.f1.-r0 
+#8: f0.-f0.-f0.-f0 
+min_delta = len(initial_state)
+cycle_move = [] 
+max_it = 1000000
+for i in range(max_it):
+    move_vector = random.choices(list(allowed_moves.keys()), k = 4)
+    my_state = final_state[:]     
+    for k, move in enumerate(move_vector):         
+        my_state = allowed_moves[move](my_state) 
+        delta = state_diff(my_state, final_state)
+    if (delta >0 and delta < min_delta):
+        min_delta = delta 
+        cycle_move = move_vector        
+        print('%d: %s ' % (min_delta, '.'.join(cycle_move) ))
+
+
+#%% Checks
+pizzle_id = 289
+
+final_state=puzzles.loc[pizzle_id].solution_state.split(';')
+initial_state=puzzles.loc[pizzle_id].initial_state.split(';')
+puzzle_type = puzzles.loc[pizzle_id].puzzle_type
+num_wildcards = puzzles.loc[pizzle_id].num_wildcards
 
 allowed_moves = all_allowed_moves[puzzle_type]
 moves = solution_submission.loc[pizzle_id].moves.split('.')
 #moves = "-r0.-f1.-d1.d1.-r1.d0.-r0.r1.-d1.d1.d0.-d1.-d0.-r1.-d0.-d0.r1.-d1.f0.r0.r0.-f1.-d0.f0.-d0.-d1.f1.r1.r0.-r1.-r0.f1.r0.-d1.d0.f0.-f1.-d1.f1.-r1.-r0.-r1.-d1".split('.')
 
-allowed_moves[moves[1]](initial_state)
+#allowed_moves[moves[1]](initial_state)
 
-#solution = solve_puzzle_ex(initial_state, final_state, allowed_moves, [], 10,set([''.join(initial_state)]))
-#solution = solve_puzzle(initial_state, final_state, allowed_moves, [], 9)
-solution = solve_puzzle_all(initial_state, final_state, allowed_moves, 9)
+solution = solve_puzzle_ex(initial_state, final_state, allowed_moves, [], 8,set([''.join(initial_state)]))
+solution = solve_puzzle(initial_state, final_state, allowed_moves, [], 7)
+solution = solve_puzzle_all(initial_state, final_state, allowed_moves, 7)
 
-solution = random_solve(initial_state, final_state, allowed_moves, 10, int(1e8))
+random_solve(initial_state, final_state, allowed_moves, 20, int(1e7))
+greedy_solve(initial_state, final_state, allowed_moves, 20, int(1e5))
+
+solution = random_solve(initial_state, final_state, allowed_moves, len(moves), int(1e4))
+solution = greedy_solve(initial_state, final_state, allowed_moves, len(moves), int(1e4))
+
+sum([1 for i in range(100) if random_solve(initial_state, final_state, allowed_moves, len(moves), int(1e4)) is not None])
+sum([1 for i in range(100) if greedy_solve(initial_state, final_state, allowed_moves, len(moves), int(1e4)) is not None])
 
 state = initial_state[:]
-print('%s' % (''.join(state) ))
-for move_name in moves:
+print('%d: %s' % (0, ''.join(state) ))
+for i, move_name in enumerate(moves):
     state = allowed_moves[move_name](state)
-    print('%s (%s)' % (''.join(state), move_name))
+    print('%d: %s (%2s) %d' % (i+1,''.join(state), move_name, state_diff(state, final_state) ))
+
 
 state = apply_moves(initial_state,moves, allowed_moves)
 
@@ -360,7 +436,7 @@ for index, row in solution_submission.iterrows():
     initial_state=puzzles.loc[index].initial_state.split(';')        
     num_wildcards = puzzles.loc[index].num_wildcards    
     allowed_moves = all_allowed_moves[my_type]        
-    print('%s, %s, moves: %d, allowed: %d, %s (%.1f sec)' % (my_id, my_type, len(moves), len(allowed_moves), moves, time()-start_time) )
+    print('%s, %s, moves: %d, allowed: %d, wildcards: %d, state: %d, (%.1f sec)' % (my_id, my_type, len(moves), len(allowed_moves), num_wildcards, len(initial_state), time()-start_time) )
     if index>100:
         break
 
@@ -418,9 +494,10 @@ solution_submission.to_csv(os.path.join(data_folder, 'solution_submission_v1.csv
 my_deep_types = set(['wreath_12/12', 'wreath_21/21', 'wreath_33/33', 'wreath_100/100'])
 my_deep_types = set(['cube_2/2/2'])
 
-#max_it = 1000000000
-max_it = 100000000
+#max_it = 1000
+max_it = int(1e9)
 for index, row in solution_submission.iterrows():    
+    index = 329
     start_time = time()
     #if index > 29:
     #    break
@@ -430,15 +507,15 @@ for index, row in solution_submission.iterrows():
     initial_state=puzzles.loc[index].initial_state.split(';')        
     allowed_moves = all_allowed_moves[my_type]    
     
-    if my_type not in my_deep_types:        
-        continue   
+    #if my_type not in my_deep_types:        
+    #    continue   
     
     moves = solution_submission.loc[index].moves.split('.')
        
     #%timeit random_solve   (initial_state, final_state,  all_allowed_moves[my_type], 100, 100000)    
     #%timeit random_solve_ex(initial_state, final_state,  all_allowed_moves[my_type], 100, 100000)    
-
-    new_moves = random_solve(initial_state, final_state,  allowed_moves, len(moves)-1, max_it // len(moves))    
+    new_moves = random_solve(initial_state, final_state,  allowed_moves, 50, max_it )    
+    #new_moves = random_solve(initial_state, final_state,  allowed_moves, len(moves)-1, 1 + max_it // len(moves))    
     if new_moves is not None:   
         new_moves = check_moves(initial_state, new_moves, allowed_moves)
         if len(new_moves) < len(moves):        

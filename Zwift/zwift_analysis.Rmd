@@ -21,7 +21,7 @@ library(plotly)
 library(gam)
 library(knitr)
 library(FITfileR)
-
+library(forcats)
 
 working_folder = 'D:/Github/KaggleSandbox'
 
@@ -39,6 +39,27 @@ foreach(name = zwift_fit_files, .combine=rbind ) %do% {
 }
 ```
 
+## strava files
+```{r convert_to_csv}
+library(R.utils)
+zwift_fit_files = list.files(file.path(working_folder, 'Zwift/strava/'), pattern = '*.fit.gz', full.names = TRUE)
+
+foreach(name = zwift_fit_files, .combine=rbind ) %do% {
+  gunzip(name, remove=TRUE)
+}
+
+zwift_fit_files = list.files(file.path(working_folder, 'Zwift/strava/'), pattern = '*.fit', full.names = TRUE)
+
+foreach(name = zwift_fit_files, .combine=rbind ) %do% {
+  fit_file = readFitFile(name)
+  if(data.table(file_id(fit_file))$manufacturer == 'zwift'){
+    df_temp <- data.table(records(fit_file))
+    fwrite(df_temp, stri_join(name, ".csv"))
+  }
+}
+
+```
+
 
 ## Read file
 
@@ -47,7 +68,7 @@ https://johnedevans.wordpress.com/2018/05/31/the-physics-of-zwift-cycling/
 
 ```{r load_data}
 
-zwift_files = list.files(file.path(working_folder, 'Zwift/data/'), pattern = '*.csv', full.names = TRUE)
+zwift_files = list.files(file.path(working_folder, 'Zwift/data/'), pattern = glob2rx('202*fit.csv'), full.names = TRUE)
 
 df = foreach(name = zwift_files, .combine=rbind ) %do% {
   df_temp = fread(name, drop = c('position_lat', 'position_long'))
@@ -71,34 +92,186 @@ df_agg = df[,.(time=.N/60, kcal = 4.023349 * sum(power)/4200,
 
 kable(df_agg)
 
+df_agg = df_agg[hr_avg > 100]
+
 ggplot(df) + geom_violin(aes(date, power, group = date)) + geom_point(data = df_agg, aes(date, power_avg ))
 ggplot(df_agg, aes(date, power_avg/hr_avg )) + geom_point() + geom_line()
 ggplot(df_agg, aes(date, hr_avg )) + geom_point() + geom_line()
 ggplot(df_agg, aes(date, power_150 )) + geom_point() + geom_line()
 ggplot(df_agg, aes(date, power_140 )) + geom_point() + geom_line()
+ggplot(df_agg, aes(hr_avg, power_140 )) + geom_point()
 
 df_s = df[t>10*60 & heart_rate > 100,.(power_s = sort(power), hr_s = sort(heart_rate)), by = .(date)]
 ggplot(df_s, aes(power_s, hr_s, group= date, color = factor(date) )) + geom_line()
 
 ```
 
+## Read Strava FILES
+
+```{r load_data_strava}
+
+zwift_files = list.files(file.path(working_folder, 'Zwift/strava/'), pattern = glob2rx('*fit.csv'), full.names = TRUE)
+
+df = foreach(name = zwift_files, .combine=rbind ) %do% {
+  df_temp = fread(name, drop = c('position_lat', 'position_long', 'temperature', 'compressed_speed_distance'))
+  df_temp[, file := basename(name)]
+  return(df_temp)
+}
+
+df[order(timestamp), t:=seq(.N)-1, by = .(file)]
+df[, date :=as.Date(timestamp)]
+
+#235 - rides
+df_agg = df[power>20,.(date = date[1], time=.N/60, kcal = 4.023349 * sum(power)/4200, 
+      power_avg = mean(power),
+      power_max = max(power), 
+      power_15s  = quantile(power, probs = pmax(0, 1-15/.N)),
+      power_30s  = quantile(power, probs = pmax(0, 1-30/.N)),
+      power_1m  = quantile(power, probs = pmax(0, 1-60/.N)),
+      power_10m = quantile(power, probs = pmax(0, 1-10*60/.N)),
+      power_20m = quantile(power, probs = pmax(0, 1-20*60/.N)),
+      
+      hr_15s  = quantile(heart_rate, probs = pmax(0, 1-15/.N)),
+      hr_30s  = quantile(heart_rate, probs = pmax(0, 1-30/.N)),
+      hr_1m  = quantile(heart_rate, probs = pmax(0, 1-60/.N)),
+      hr_10m = quantile(heart_rate, probs = pmax(0, 1-10*60/.N)),
+      hr_20m = quantile(heart_rate, probs = pmax(0, 1-20*60/.N)),
+      
+      power_140 = quantile(power, probs = ecdf(heart_rate)(140)),
+      power_150 = quantile(power, probs = ecdf(heart_rate)(150)),
+      power_160 = quantile(power, probs = ecdf(heart_rate)(160)),
+      power_170 = quantile(power, probs = ecdf(heart_rate)(170)),
+      hr_avg = mean(heart_rate), 
+      dist_m = max(distance)/1609.34, 
+      ascend_ft = 3.281 * sum(pmax(0, altitude - shift(altitude)), na.rm = TRUE)), by = .(file)]
+
+df_agg[, date_month :=date - day(date) + 1]
+
+df_agg[date == '2024-04-12']
+kable(df_agg[order(date)])
+
+ggplot(df[date == '2024-04-12'], aes(t/60, power)) + geom_line() + facet_wrap(~file)
+ggplot(df[date == '2024-04-12'], aes(t/60, heart_rate)) + geom_line() + facet_wrap(~file)
+
+df_agg = df_agg[hr_avg > 100]
+
+ggplot(df_agg[hr_avg>100], aes(date, power_avg/hr_avg )) + geom_point() + geom_smooth(span = 1.5)
+ggplot(df_agg) + geom_segment(aes(x=date, y=power_1m, xend=date, yend=power_max), color = 'red') + geom_segment(aes(x=date, y=power_10m, xend=date, yend=power_1m))
+ggplot(df_agg, aes(date, dist_m )) + geom_point() + geom_smooth()
+ggplot(df_agg, aes(date, hr_avg )) + geom_point()
+
+ggplot(df_agg[time>20 & hr_1m > 70]) + geom_boxplot(aes(factor(date_month), hr_1m ))    + geom_boxplot(aes(factor(date_month), hr_20m ), color = 'red')
+ggplot(df_agg[time>20 & hr_1m > 70]) + geom_boxplot(aes(factor(date_month), power_1m )) + geom_boxplot(aes(factor(date_month), power_10m ), color = 'red')
+ggplot(df_agg[time>20], aes(date, power_10m/hr_10m )) + geom_point()
+
+ggplot(df_agg[time>20], aes(date, power_20m )) + geom_point()
+ggplot(df_agg[time>20], aes(date, power_10m )) + geom_point()
+ggplot(df_agg[time>20], aes(date, power_30s )) + geom_point()
+ggplot(df_agg[time>20], aes(date, power_15s )) + geom_point()
+
+ggplot(df_agg, aes(date, power_160 )) + geom_point()
+ggplot(df_agg, aes(date, power_150 )) + geom_point()
+ggplot(df_agg, aes(date, power_140 )) + geom_point() + geom_line()
+ggplot(df_agg, aes(hr_avg, power_140 )) + geom_point()
+
+df_s = df[t>10*60 & heart_rate > 100,.(power_s = sort(power), hr_s = sort(heart_rate)), by = .(date)]
+ggplot(df_s, aes(power_s, hr_s, group= date, color = factor(date) )) + geom_line()
+
+```
+
+
 ##Plot Data
 ```{r plot_data}
 
-ggplot(df, aes(t/60, distance)) + geom_line() + facet_wrap(~date)
+ggplot(df[date == '2024-04-10' & t > 60], aes(t/60, heart_rate)) + geom_line() + facet_wrap(~date)
+ggplot(df[date > '2024-04-09' & t > 60], aes(power, group = date, color = factor(date) )) + stat_ecdf()
+ggplot(df[date %in% as.Date(c('2024-04-13', '2023-06-07')) & t > 60], aes(power, group = date, color = factor(date) )) + stat_ecdf()
+
+
+
+ggplot(df, aes(t/60, distance/1609.34)) + geom_line() + facet_wrap(~date)
 ggplot(df, aes(t/60, heart_rate)) + geom_line() + facet_wrap(~date)
+ggplot(df, aes(t/60, power)) + geom_line() + facet_wrap(~date)
 
 ggplot(df, aes(t/60, factor(date), fill = power)) + geom_tile() + scale_fill_custom('mixed', discrete = FALSE)
 ggplot(df, aes(t/60, factor(date), fill = heart_rate)) + geom_tile() + scale_fill_custom('mixed', discrete = FALSE) + theme_light()
 
-
 ggplot(df, aes(t/60, power)) + geom_line()+ facet_wrap(~date)
 ggplot(df, aes(t/60, speed)) + geom_line()+  facet_wrap(~date)
+ggplot(df, aes(t/60, cadence)) + geom_line()+  facet_wrap(~date)
+ggplot(df, aes(t/60, power/cadence)) + geom_line()+ facet_wrap(~date)
 ggplot(df, aes(distance, altitude)) + geom_line() + facet_wrap(~date)
 
 ggplot(df, aes(cadence)) + geom_density() +  facet_wrap(~date)
 ggplot(df, aes(cadence, power)) + geom_point(alpha = 0.4) +  facet_wrap(~date)
 ggplot(df[t>60], aes(power, group = date, color = factor(date) )) + stat_ecdf()
+
+```
+
+## Power vs Heart rate LASSO
+
+```{r power_heart_rate_lasso, echo=FALSE}
+
+dfs = df[t > 300 &  heart_rate > 60]
+
+library(glmnet)
+library(plyr)
+
+get_all_coefs<-function(glmnet_obj){
+  res = ldply(glmnet_obj$lambda, function(lambda){
+    temp = data.matrix(coef(glmnet_obj,s=lambda))
+    data.frame(var_name = rownames(temp), coef = as.numeric(temp), lambda)
+  })
+  return(res)
+}
+
+for(i in seq(360)) {
+  vname = sprintf('power_rm_%03d', i)
+  #dfs[order(date), c(vname) := rollmeanr(power, k = i, fill = NA), by =.(file)]
+  dfs[order(date), c(vname) := ewma(power, exp(-log(2)/ i)), by =.(file)]  
+}
+
+#dfs[order(date), power_ew_150 := ewma(power,exp(-log(2)/ 150)), by =.(file)]
+#ggplot(dfs) + geom_line(aes(t, power_ew_150), color = 'blue') + geom_line(aes(t, power_rm_150), color = 'red') + geom_line(aes(t, power), color = 'black', alpha = 0.3) + facet_wrap(~date)
+
+model_rm_vars = names(dfs)[ grep('power_rm_', names(dfs)) ]
+
+
+x=data.matrix(dfs[, c('heart_rate', model_rm_vars), with = FALSE])
+index = complete.cases(x)
+y = x[index, 1]
+x = x[index,-1]
+
+cvob3=cv.glmnet(x, y, family="gaussian", nfolds = 10, relax = FALSE)
+plot(cvob3)
+
+coef_path = data.table(get_all_coefs(cvob3))
+coef_path[order(var_name), weight := seq(0, .N-1),  by =.(lambda)]
+coef_path[order(var_name,  decreasing = TRUE), adj_coef := cumsum(coef / weight),  by =.(lambda)]
+coef_path[, dof:=sum(coef!=0), by =.(lambda)]
+coef_path[var_name != '(Intercept)', .( sum(coef),  sum(adj_coef)), by =.(lambda)] #sum of the coefs  -0.013400167
+coef_path[var_name != '(Intercept)' & lambda == cvob3$lambda.1se & coef != 0]
+coef_path[var_name != '(Intercept)' & dof == 4 & coef != 0]
+
+imp_vars = sort(as.character(unique( coef_path[lambda >= 1*cvob3$lambda.1se & abs(coef) >0, var_name] )))
+
+ggplot(coef_path[var_name != '(Intercept)'], aes(var_name, log(lambda), fill = atan(1e4*coef) )) + geom_tile() +  
+  theme(axis.text.x  = element_text(angle=90, size = 7)) + 
+  geom_hline(yintercept = log(c(cvob3$lambda.1se, cvob3$lambda.min)), linetype = 'dashed') + 
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0)
+
+hr.model = lm('heart_rate ~ power_rm_360 + power_rm_090 + power_rm_120 + power_rm_120 + power_rm_005', dfs)
+
+summary(hr.model) #0.2696
+
+dfs[, heart_rate_pred := predict(hr.model,.SD)]
+ggplot(dfs) + geom_line(aes(t/60, heart_rate_pred), color = 'red') + geom_line(aes(t/60, heart_rate)) + facet_wrap(~file)
+ggplot(dfs[file == '2024-04-13-18-36-22.fit.csv']) + geom_line(aes(t/60, heart_rate_pred), color = 'red') + geom_line(aes(t/60, heart_rate)) + facet_wrap(~file)
+#ggplot(df) + geom_line(aes(t/60, power_avg_15s))+  geom_line(aes(t/60, 2*heart_rate),  color = 'red') + facet_wrap(~file)
+
+plot_profile(df$heart_rate_pred, df$heart_rate, df$t, 30)
+plot_profile(df$heart_rate_pred, df$heart_rate, df$date, 30)
+
 
 ```
 
@@ -108,22 +281,97 @@ ggplot(df[t>60], aes(power, group = date, color = factor(date) )) + stat_ecdf()
 library(earth)
 #POWER VS HR
 #df[, power_avg   := rollmeanr(power, k = 60, na.pad = TRUE)]
+df[, t_cap900 := pmin(t, 900)]
+df[order(t), power_avg_05s   := ewma(power, exp(-log(2)/ 5)),  by = .(file)] #12min
 df[order(t), power_avg_15s   := ewma(power, exp(-log(2)/15)),  by = .(file)] #12min
 df[order(t), power_avg_01m   := ewma(power, exp(-log(2)/60)),  by = .(file)] #12min
+df[order(t), power_avg_02m   := ewma(power, exp(-log(2)/120)),  by = .(file)] #12min
+df[order(t), power_avg_03m   := ewma(power, exp(-log(2)/180)),  by = .(file)] #12min
 df[order(t), power_avg_12m   := ewma(power, exp(-log(2)/720)), by = .(file)] #12min
 df[order(t), power_avg_16m   := ewma(power, exp(-log(2)/960)), by = .(file)] #16min
 #ggplot(df) + geom_line(aes(t/60, power_avg)) + geom_line(aes(t/60, heart_rate), color = 'red', alpha = 0.2)
 
 #ggplot(df[t>300]) + geom_point(aes(power_avg_16m, heart_rate))
 #gam.model = gam(heart_rate ~ s(power_avg_16m) + s(power_avg_12m) + s(power_avg_01m) + s(power_avg_15s), df[t>300], family=gaussian)
-gam.model = gam(heart_rate ~  s(power_avg_12m) +  s(power_avg_01m), df[t>300], family=gaussian)
-#gam.model = earth(heart_rate ~ power_avg_12m , df[t>300], nfold = 10,glm=list(family=gaussian))
+#gam.model = gam(heart_rate ~  s(power_avg_12m) +  s(power_avg_01m), df[t>300], family=gaussian)
+gam.model = earth(heart_rate ~ power_avg_16m + power_avg_12m + power_avg_01m + power_avg_15s , df[t>300], nfold = 10, degree = 2, glm=list(family=gaussian))
+evimp(gam.model)
 plotmo(gam.model)
 summary(gam.model)
 
-df[, heart_rate_pred := predict(gam.model, .SD)]
-ggplot(df) + geom_line(aes(t/60, heart_rate_pred), color = 'red') + geom_line(aes(t/60, heart_rate)) + facet_wrap(~file)
-#ggplot(df) + geom_line(aes(t/60, power_avg_15s))+  geom_line(aes(t/60, 2*heart_rate),  color = 'red') + facet_wrap(~file)
+##----
+library(lightgbm)
+library(gridExtra)
+
+lgb_vars_all = c('power_avg_15s', 'power_avg_01m','power_avg_02m', 'power_avg_03m', 'power_avg_12m', 'power_avg_16m', 't_cap300', 't', 'power_avg_05s')
+lgb_vars = c('power_avg_03m', 't_cap900', 'power_avg_15s', 'power_avg_01m')
+
+all_files = unique( df$file )
+in_sample_days = sample(all_files, 200)
+
+dfs = df[file %in%  in_sample_days & heart_rate > 90] #unique( df$file )
+dfo = df[file %!in% in_sample_days & heart_rate > 90] #unique( df$file )
+
+dfs = dfs[sample.int(nrow(dfs), nrow(dfs))]
+dfo = dfo[sample.int(nrow(dfo), nrow(dfo))]
+
+dtrain <- lgb.Dataset(data.matrix(dfs[, lgb_vars , with = FALSE]), label = dfs[['heart_rate']])
+dtest  <- lgb.Dataset.create.valid(dtrain, data.matrix(dfo[, lgb_vars , with = FALSE]), label = dfo[['heart_rate']])
+
+var.monotone = rep(0, length(lgb_vars))
+mon_inc_vars = c('t_cap900')
+mon_dec_vars = c('')
+var.monotone[lgb_vars %in% mon_inc_vars]  =  1
+var.monotone[lgb_vars %in% mon_dec_vars]  = -1
+    
+my_params <- list(objective = "regression", metric = "rmse", learning_rate = 0.01, boost_from_average = TRUE, num_threads = 4,  force_row_wise = TRUE,
+                  monotone_constraints = var.monotone, early_stopping_round = 500)
+
+hr.model = lgb.train(params = my_params, data = dtrain,
+                      valids = list(test = dtest, train = dtrain),  nrounds = 3000, eval_freq = 500)
+
+test_error = as.numeric(hr.model$record_evals$test$rmse$eval) # 9.883377
+train_error = as.numeric(hr.model$record_evals$train$rmse$eval)
+ggplot(data.frame( i = seq(length(test_error)), test_error, train_error )) + geom_line( aes(i, test_error), color = 'red') + geom_line( aes(i, train_error), color = 'black')
+
+lgb_importance = lgb.importance(hr.model, percentage = TRUE)
+ggplot(lgb_importance, aes(fct_reorder(Feature,Gain), Gain)) + geom_bar(stat = 'identity') + coord_flip()
+ggplot(lgb_importance, aes(Frequency, Gain, label =Feature )) + geom_point() + geom_text()
+
+df[, heart_rate_pred := predict(hr.model, data.matrix(.SD)), .SDcol = lgb_vars]
+ggplot(df[file %in% sample(all_files, 9)]) + geom_line(aes(t/60, heart_rate_pred), color = 'red') + geom_line(aes(t/60, heart_rate)) + facet_wrap(~file)
+
+ggplot(df) + geom_line(aes(t/60, heart_rate), color = 'red') + geom_line(aes(t/60, power_avg_02m)) + facet_wrap(~file)
+ggplot(df) + geom_line(aes(t/60, heart_rate), color = 'red') + geom_line(aes(t/60, power_avg_15s)) + facet_wrap(~file)
+
+index = df$t < 900
+plot_profile(df$heart_rate_pred[index], df$heart_rate[index], df$t[index], 100)
+plot_profile(df$heart_rate_pred, df$heart_rate, df$t, 100)
+plot_profile(df$heart_rate_pred, df$heart_rate, df$date, 30)
+plot_profile(df$heart_rate_pred, df$heart_rate, df$file, 30)
+plot_profile(df$heart_rate_pred, df$heart_rate, df$power_avg_05s, 100)
+plot_profile(df$heart_rate_pred, df$heart_rate, df$power_avg_15s, 100)
+plot_profile(df$heart_rate_pred, df$heart_rate, df$power_avg_01m, 100)
+
+
+
+plots = llply(lgb_vars_all, function(var_name) { #lgb_vars
+    p = plot_profile(df$heart_rate_pred,  df$heart_rate, df[[var_name]], bucket_count = 10, error_band = 'norm') + ggtitle(var_name) +  theme(title =element_text(size=8))
+    return( ggplotGrob(p) )
+  })
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
+
+#partial plots --------- 
+pdp_index = sample.int(nrow(df), 1000)
+data_mat = data.matrix(df[pdp_index,lgb_vars, with = FALSE])
+
+plots = llply(lgb_importance$Feature, function(my_var){
+  df_plot = partialPlot(hr.model, data_mat, xname = my_var, n.pt = 100)
+  ggplot(df_plot, aes(x, y )) + geom_line() + 
+    geom_rug(data = df[pdp_index, my_var, with = FALSE], aes(x=.data[[my_var]]), sides = 'b', alpha = 0.2, size = 0.5, inherit.aes = FALSE) + 
+    ggtitle(my_var) + xlab(my_var) + ylab('cpr')
+})
+marrangeGrob(plots, nrow = 3, ncol = 3, top = NULL)
  
 
 #ggplot(df) + geom_line(aes(t/60, power_avg)) +  geom_line(aes(t/60, heart_rate))

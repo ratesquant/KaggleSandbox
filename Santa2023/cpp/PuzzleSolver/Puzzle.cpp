@@ -29,22 +29,6 @@ bool Puzzle::IsEqual(const std::vector<int>& state1, const std::vector<int>& sta
 	return true;
 }
 
-int Puzzle::Diff(const std::vector<int>& state1, const std::vector<int>& state2) const
-{
-	if (state1.size() != state2.size())
-		return std::max(state1.size(), state2.size());
-
-	int diff_count = -m_wildcards_num;
-	for (size_t i = 0; i < state1.size(); i++)
-	{
-		if (state1[i] != state2[i])
-		{
-			diff_count++;
-		}
-	}
-	return std::max(0, diff_count);
-}
-
 std::vector<std::string> Puzzle::StateFromString(const std::string& state_string, bool one_char_state)
 {
 	std::vector<std::string> state;

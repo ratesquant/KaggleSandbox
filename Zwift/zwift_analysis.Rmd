@@ -31,7 +31,7 @@ source(file.path(working_folder, 'Utils/common.R'))
 ## Convert to CSV
 https://github.com/grimbough/FITfileR
 ```{r convert_to_csv}
-zwift_fit_files = list.files(file.path(working_folder, 'Zwift/data/'), pattern = '*.fit', full.names = TRUE)
+zwift_fit_files = list.files(file.path(working_folder, 'Zwift/data_new/'), pattern = '*.fit', full.names = TRUE)
 
 foreach(name = zwift_fit_files, .combine=rbind ) %do% {
   df_temp <- data.frame(records(readFitFile(name)))
@@ -68,7 +68,7 @@ https://johnedevans.wordpress.com/2018/05/31/the-physics-of-zwift-cycling/
 
 ```{r load_data}
 
-zwift_files = list.files(file.path(working_folder, 'Zwift/data/'), pattern = glob2rx('202*fit.csv'), full.names = TRUE)
+zwift_files = list.files(file.path(working_folder, 'Zwift/data_new/'), pattern = glob2rx('202*fit.csv'), full.names = TRUE)
 
 df = foreach(name = zwift_files, .combine=rbind ) %do% {
   df_temp = fread(name, drop = c('position_lat', 'position_long'))

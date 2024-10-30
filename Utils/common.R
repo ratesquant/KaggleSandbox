@@ -779,8 +779,8 @@ cc <- function(x,...){
   if(is_linux()){
     write.clipboard(x,...)
   }else{
-    #write.table(x, "clipboard-16384", sep="\t", row.names=FALSE,...)
-    write.table(x, "clipboard-1024", sep="\t", row.names=FALSE,...)
+    write.table(x, "clipboard-16384", sep="\t", row.names=FALSE,...)
+    #write.table(x, "clipboard-1024", sep="\t", row.names=FALSE,...)
   }
 }
 

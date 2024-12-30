@@ -146,7 +146,6 @@ df_agg = df_agg[N>300, ]
 kable(df_agg)
 
 ggplot(df_agg, aes(date, time, label = sprintf('%d', floor(time) ) ))           + geom_point() + geom_smooth(method = 'loess') + geom_text_repel(size = 3)
-
 ggplot(df_agg, aes(date, power_max_1, label = sprintf('%.1f', power_max_1), size = time, weight = time ))           + geom_point(alpha = 0.6) + geom_smooth(method = 'loess') + geom_text_repel(size = 3) + theme(legend.position = "None")
 ggplot(df_agg, aes(date, power_ftp, label = sprintf('%.1f', power_ftp), size = time, weight = time ))           + geom_point(alpha = 0.6) + geom_smooth(method = 'loess') + geom_text_repel(size = 3) + theme(legend.position = "None")
 ggplot(df_agg, aes(date, power_avg, label = sprintf('%.1f', power_avg), size = time, weight = time ))           + geom_point(alpha = 0.6) + geom_smooth(method = 'loess') + geom_text_repel(size = 3) + theme(legend.position = "None")
@@ -155,6 +154,8 @@ ggplot(df_agg, aes(date, power_hr_ratio, label = sprintf('%.2f', power_hr_ratio)
 ggplot(df_agg, aes(date, hr_avg, label = sprintf('%.1f', hr_avg), size = time, weight = time )) + geom_point(alpha = 0.6) + geom_smooth(method = 'loess') + geom_text_repel(size = 3) + theme(legend.position = "None")
 ggplot(df_agg, aes(date, cadence, label = sprintf('%.1f', cadence), size = time, weight = time )) + geom_point(alpha = 0.6) + geom_smooth(method = 'loess') + geom_text_repel(size = 3) + theme(legend.position = "None")
 ggplot(df_agg, aes(date, fatigue, label = sprintf('%.1f', fatigue), size = time, weight = time )) + geom_point(alpha = 0.6) + geom_smooth(method = 'loess') + geom_text_repel(size = 3) + theme(legend.position = "None")
+
+ggplot(df_agg, aes(fatigue, power_avg, label = sprintf('%.1f', fatigue), size = time, weight = time )) + geom_point(alpha = 0.6)
 
 df_agg = df_agg[hr_avg > 90]
 
@@ -241,6 +242,7 @@ ggplot(dfs) + geom_density(aes(power_100s_ewma/heart_rate), adjust = 0.3) + face
 
 ggplot(dfs) + geom_line(aes(t/60, power_10m_avg)) + facet_wrap(~file)
 ggplot(dfs, aes(cadence, power)) + geom_point(alpha = 0.1, size = 1) + geom_rug(alpha = 0.01) + facet_wrap(~file)
+ggplot(dfs, aes(speed, power)) + geom_point(alpha = 0.1, size = 1) + geom_rug(alpha = 0.01) + facet_wrap(~file)
 
 ggplot(dfs) + geom_density(aes(power), adjust = 0.3) + facet_wrap(~file)+ geom_vline(xintercept = c(200, 300, 400), linetype = 'dashed', color = 'grey')
 ggplot(dfs) + geom_density(aes(heart_rate), adjust = 0.3) + facet_wrap(~file) + geom_vline(xintercept = c(120, 140, 160), linetype = 'dashed', color = 'grey')
@@ -498,11 +500,11 @@ bike_ride_const_power <- function(t, state, parameters, grade_d, grade_v, power)
   })
 }
 
-bike_ride <- function(t, state, parameters, grade_d, grade_v, power_x, power_v) {
+bike_ride <- function(t, state, parameters, grade_d, grade_v, power_t, power_v) {
   with(as.list(c(state, parameters)), {
     grade = approx(grade_d, grade_v, X, yleft = 0, yright = 0, rule=2)$y
     alpha = asin(grade)
-    power = approx(power_x, power_v, X, yleft = 0, yright = 0, rule=2)$y
+    power = approx(power_t, power_v, t, yleft = 0, yright = 0, rule=2)$y
     dX <-  V
     dV <-  (power / (m *pmax(0.01, V)) - 0.5 * rho_air * pmax(0, V*V) * c_drag / m - g_freefall * sin(alpha) - g_freefall * cos(alpha) * c_roll )
     list(c(dX, dV))
@@ -514,7 +516,7 @@ df_phys = df[date == '2024-09-06',]
 df_phys = df[date == '2024-12-06',]
 df_phys = df[date == '2024-12-19',]
 df_phys = df[date == '2024-12-22',]
-
+df_phys = df[date == '2024-12-26',]
 
 #remove jumps
 df_phys[order(t), altitude_delta := altitude - shift(altitude), by =.(date) ]
@@ -526,11 +528,23 @@ ggplotly(ggplot(df_phys, aes(distance, altitude )) + geom_line() +  geom_line( a
 
 parameters <- c(m = 88.33416, c_roll = 0.0020, c_drag = 0.3152741)
 state      <- c(X = df_phys$distance[1], V = df_phys$speed[1])
-times      <- seq(0, 60*30, by = 1)
+times      <- seq(0, 60*55, by = 1)
 
-out <- ode(y = state, times = times, func = function(t, state, parameters) bike_ride(t, state, parameters, df_phys$distance, df_phys$grade, df_phys$distance, df_phys$power), parms = parameters)
+eq_power <- function(V, grade) {
+  alpha = asin(grade)
+  0.5 * rho_air * V*V * V * parameters[['c_drag']]  + g_freefall * sin(alpha) * parameters[['m']] * V + g_freefall * cos(alpha) * parameters[['c_roll']] * parameters[['m']] * V
+}
+uniroot(function(x) eq_power(x, 0) - 200, interval = c(0, 20))$root
+df_grid = data.table(expand.grid(Power = c(150, 200, 250, 300), grade = 0.01*c(0, seq(9) )))
+df_grid[, eq_speed := mph*uniroot(function(x) eq_power(x, grade) - Power, interval = c(0, 20))$root, by =.(seq(nrow(df_grid)))]
+dcast(df_grid, Power ~ grade)
+
+
+out <- ode(y = state, times = times, func = function(t, state, parameters) bike_ride(t, state, parameters, df_phys$distance, df_phys$grade, df_phys$t, df_phys$power), parms = parameters)
 res = data.table(out)
 res[V<0, V:=0 ]
+res[, grade    := approx(df_phys$distance, df_phys$grade, X, yleft = 0, yright = 0, rule=2)$y]
+res[, altitude := approx(df_phys$distance, df_phys$altitude, X, yleft = 0, yright = 0, rule=2)$y]
 
 res[, zwift_v := approx(df_phys$distance, df_phys$speed, X, yleft = 0, yright = 0, rule=2)$y ]
 res[time <60*60, mean((V - zwift_v)^2, na.rm = TRUE)] # 0.04389351
@@ -558,6 +572,52 @@ ggplot(df_phys, aes(t/60, speed )) + geom_line() + geom_line(data = res, aes(tim
 ggplot(df_phys, aes(t, distance )) + geom_line() + geom_line(data = res, aes(time, X),    color = 'red')
 
 ggplot(df_phys, aes(power, speed ))     + geom_point()
+ggplot(df_phys, aes(power, grade ))     + geom_point()
+
+res[, power_drag := 0.5 * rho_air * V * V * V * parameters['c_drag'] ]
+res[, power_grav := g_freefall * grade * V * parameters['m']]
+res[, power_roll := g_freefall * cos(asin(grade)) * parameters['c_roll']   * V * parameters['m']]
+
+res[, energy_kinetic   := 0.5*parameters['m'] * V^2 ]
+res[, energy_potential  := g_freefall * parameters['m'] * altitude ]
+
+res[order(time), work_drag := cumsum(power_drag)]
+res[order(time), work_grav := cumsum(power_grav)]
+res[order(time), work_roll := cumsum(power_roll)]
+res[order(time), work := cumsum(power)]
+
+res[X == max(X)]
+
+ggplot(res) + geom_line( aes(mph*V, power_drag)) + geom_hline(yintercept = c(200, 300), linetype = 'dashed')
+ggplot(res) + geom_line( aes(mph*V, power_roll))
+
+approx(res$power_drag, res$V * mph, c(200, 250, 300), yleft = 0, yright = 0, rule=2)$y
+approx(res$power_drag + res$power_roll, res$V * mph, c(200, 250, 300), yleft = 0, yright = 0, rule=2)$y
+  
+ggplot(res) + 
+  geom_line( aes(X, power_drag, color = 'drag power')) +  
+  geom_line( aes(X, power_grav, color = 'gravity power')) + 
+  geom_line( aes(X, power_roll, color = 'roll power')) + 
+  geom_line( aes(X, power_drag + power_grav + power_roll, color = 'power'))
+
+ggplot(res) + 
+  geom_line( aes(time, work_drag, color = 'drag work')) +  
+  geom_line( aes(time, work_grav, color = 'gravity work')) + 
+  geom_line( aes(time, work_roll, color = 'roll work')) +  # 7% of total
+#  geom_line( aes(time, work, color = 'total work')) + 
+  geom_line( aes(time, work_drag + work_grav + work_roll, color = 'work'))
+
+ggplot(res) + 
+  geom_line( aes(X, energy_kinetic, color = 'energy kinetic')) +  
+  geom_line( aes(X, energy_potential, color = 'energy potential')) + 
+  geom_line( aes(X, energy_kinetic + energy_potential, color = 'energy'))
+
+ggplot(res) + 
+  geom_line( aes(time, power_drag, color = 'drag power')) +  
+  geom_line( aes(time, power_grav, color = 'gravity power')) + 
+  geom_line( aes(time, power_roll, color = 'roll power')) + 
+  geom_line( aes(time, power_drag + power_grav + power_roll, color = 'power'))
+
 
 #Optimize parameters ----------------
 bike_speed_obj <- function(my_opt_params){
@@ -634,10 +694,19 @@ mean(approx(df_res$my_const_power, df_res$my_time, 300 + 30*rnorm(100))$y)
 
 
 #Grade Variable Power ------------ 
-
-df_sim = data.table(distance = seq(0, 4000))
-df_sim[, altitude := 10*exp(- (distance - 500) * (distance -500) / 5000)]
-df_sim[, altitude := pmax(0, pmin(pmax(0, (distance-1000)/50),  (3000-distance)/50))]
+hump = function(x, x1, x2, x3, x4, grade){
+  y = x
+  y[x<=x1] = 0
+  y[x>x4] = 0
+  y[x>x1 & x<=x2] = (x[x>x1 & x<=x2] - x1) * grade
+  y[x>x2 & x<=x3] = (x2 - x1) * grade
+  y[x>x3 & x<=x4] = (x2 - x1) * grade - (x[x>x3 & x<=x4] - x3) * grade
+  return (y)
+}
+  
+df_sim = data.table(distance = seq(0, 6e3))
+#df_sim[, altitude := 10*exp(- (distance - 500) * (distance -500) / 5000)]
+df_sim[, altitude := hump(distance, 1e3, 2e3, 3e3, 4e3, 0.05)]
 
 df_sim[order(distance), grade     := (shift(altitude,-1) - shift(altitude))/(shift(distance,-1) - shift(distance))]
 ggplot(df_sim, aes(distance, grade ))     + geom_line()
@@ -645,7 +714,7 @@ ggplot(df_sim, aes(distance, altitude ))     + geom_line()
 
 parameters <- c(m = 87.61159, c_roll = 0.0025, c_drag = 0.3086613)
 state      <- c(X = 0, V = 0)
-times      <- seq(0, 500, by = 1)
+times      <- seq(0, 800, by = 1)
 
 bike_ride_grade <- function(t, state, parameters, grade_d, grade_v, power) {
   with(as.list(c(state, parameters)), {
@@ -672,7 +741,7 @@ approx(res$X, res$time, 1000, yleft = 0, yright = 0, rule=2)$y
 ggplot() + geom_line(data = res, aes(time, V*mph),    color = 'red')
 ggplot() + geom_line(data = res, aes(X, V*mph),    color = 'red')
 ggplot() + geom_line(data = res, aes(X, grade),    color = 'red')
-ggplot(df_sim, aes(distance, altitude ))     + geom_line() + geom_line(data = res, aes(X, V), color = 'red')
+ggplot(df_sim, aes(distance, altitude ))     + geom_line() + geom_line(data = res, aes(X, V * mph), color = 'red')
 
 ggplot(res) + geom_line( aes(mph*V, 0.5 * rho_air * V * V * V * c_drag, color = 'drag power')) 
 
@@ -749,5 +818,130 @@ df_power_res[df_power_res[up_mult == 1 & down_mult == 1], base_time := i.time, o
 ggplot(df_power_res, aes(power, time, group = mult, color = mult)) + geom_point() + geom_line()
 
 ggplot(df_power_res[power == 200], aes(up_mult, time-base_time, group = down_mult, color = factor(down_mult) )) + geom_point() + geom_line()
+
+```
+
+## Bike Power optimization 
+m = 88.33416, c_roll = 0.0020, c_drag = 0.3152741
+```{r bike_power_optimization, echo=FALSE, eval = FALSE}
+library(deSolve)
+
+mph = 3.6 / 1.60934 # m/sec to mph
+
+#Grade Variable Power ------------ 
+hump = function(x, x1, x2, x3, x4, grade){
+  y = x
+  y[x<=x1] = 0
+  y[x>x4] = 0
+  y[x>x1 & x<=x2] = (x[x>x1 & x<=x2] - x1) * grade
+  y[x>x2 & x<=x3] = (x2 - x1) * grade
+  y[x>x3 & x<=x4] = (x2 - x1) * grade - (x[x>x3 & x<=x4] - x3) * grade
+  return (y)
+}
+  
+df_sim = data.table(distance = seq(0, 6e3))
+#df_sim[, altitude := 10*exp(- (distance - 500) * (distance -500) / 5000)]
+df_sim[, altitude := hump(distance, 1e3, 2e3, 3e3, 4e3, 0.05)]
+
+df_sim[order(distance), grade     := (shift(altitude,-1) - shift(altitude))/(shift(distance,-1) - shift(distance))]
+ggplot(df_sim, aes(distance, grade ))     + geom_line()
+ggplot(df_sim, aes(distance, altitude ))     + geom_line() 
+
+parameters <- c(m = 87.61159, c_roll = 0.0025, c_drag = 0.3086613, g_freefall = 9.8, rho_air = 1.225)
+state      <- c(X = 0, V = 0)
+times      <- seq(0, 1000, by = 1)
+
+bike_ride_grade <- function(t, state, parameters, grade_d, grade_v, power) {
+  with(as.list(c(state, parameters)), {
+    grade = approx(grade_d, grade_v, X, yleft = 0, yright = 0, rule=2)$y
+    alpha = asin(grade)
+    dX <-  V
+    dV <-   ( (power /m) / pmax(0.01, abs(V) ) - 0.5 * rho_air * V * V * c_drag / m -  g_freefall * sin(alpha) - g_freefall * cos(alpha) * c_roll )
+    list(c(dX, dV))
+  })
+}
+
+out <- ode(y = state, times = times, func = function(t, state, parameters) bike_ride_grade(t, state, parameters, df_sim$distance, df_sim$grade, 200), parms = parameters)
+res = data.table(out)
+res[V<0, V:=0 ]
+res[, grade    := approx(df_sim$distance, df_sim$grade, X, yleft = 0, yright = 0, rule=2)$y]
+res[, altitude := approx(df_sim$distance, df_sim$altitude, X, yleft = 0, yright = 0, rule=2)$y]
+
+ggplot(res, aes(X, V))     + geom_line()
+ggplot(res[res$X<=max(df_sim$distance)], aes(X, power))     + geom_line() + geom_line(aes(X, altitude), color = 'blue') + geom_vline(xintercept = c(1e3, 2e3, 3e3, 4e3), linetype = 'dashed')
+approx(res$X, res$time, max(df_sim$distance), rule=2)$y #710.0533 sec, at 200W, 142kJ
+#728.7772 sec, at 190W
+#710.0533 sec, at 200W
+#692.9225 sec, at 210W
+#677.1774 sec, at 220W
+
+#power as function of speed
+objective_function <- function(power_v, power_lut) {
+
+  bike_ride <-function(power_mult) {
+      bike_ride_parametric_power <- function(t, state, parameters, grade_d, grade_v, power_v, power_lut) {
+      with(as.list(c(state, parameters)), {
+        grade = approx(grade_d, grade_v, X, rule=2)$y
+        alpha = asin(grade)
+        power = 200*power_mult * approx(power_v, power_lut, V, rule=2)$y
+        dX <-  V
+        dV <-   ( (power/m) / pmax(0.01, abs(V) ) - 0.5 * rho_air * V * V * c_drag / m -  g_freefall * sin(alpha) - g_freefall * cos(alpha) * c_roll )
+        list(c(dX, dV))
+      })
+    }
+    out <- ode(y = state, times = times, func = function(t, state, parameters) bike_ride_parametric_power(t, state, parameters, df_sim$distance, df_sim$grade, power_v, power_lut), parms = parameters)
+    res = data.table(out)
+    res[, power := 200*power_mult * approx(power_v, power_lut, V, rule=2)$y]
+    total_energy = res[res$X<=max(df_sim$distance), sum(power)]
+    c(mean(res$power, na.rm = TRUE), approx(res$X, res$time, max(df_sim$distance), rule=2)$y, power_mult, total_energy)
+  }
+  
+  power_mult = uniroot(function(x) bike_ride(x)[4] - 142e3, interval = c(0.1, 10) )$root
+  
+  return (bike_ride(power_mult))
+}
+#res = res[X<=max(df_sim$distance)]
+power_v   = c(0, 5, 8, 10,  15)
+power_lut = c(2.0, 2.0, 1.9740906, 0.1000000, 0.1000000) #2.193733e+00
+#power_lut = rep(200, length(power_v))
+objective_function(power_v, power_lut) #598 sec
+
+#approx(c(0, 10), c(250, 100), power_v, rule=2)$y
+
+objective_function(c(0, 20), c(200, 200)) #flat 200W 710 sec
+objective_function(c(0, 20), c(220, 220)) #flat 220W 710 sec
+objective_function(c(0, 10), c(250, 100)) #667.346504 with 200W average
+
+plot(power_v * mph, 3.633647e+00 * power_lut * 200)
+
+optim(power_lut, function(x) objective_function(power_v, x)[2], method  = "Nelder-Mead", control = list(trace = TRUE, maxit = 30)) #2.000866
+optim(power_lut, function(x) objective_function(power_v, x)[2], method  = "L-BFGS-B", lower = rep(100, length(power_v)), upper =  rep(600, length(power_v)), control = list(trace = 2, maxit = 40)) #2.000866
+
+library(dfoptim)
+hjkb(power_lut, function(x) objective_function(power_v, x)[2], lower = 0.1, upper = 2.0)
+
+library(rBayesianOptimization)
+objective_function_ex <- function(p1, p2, p3, p4) {
+  list(Score = -objective_function(power_v, c(p1, p2, p3, p4))[2], Pred = 0)
+}
+OPT_Res <- BayesianOptimization(objective_function_ex,
+                                bounds = list(p1 = c(0.1, 2.0), p2 = c(0.1, 2.0), p3 = c(0.1, 2.0), p4 = c(0.1, 2.0)),
+                                init_points = 10, n_iter = 10, verbose = TRUE)
+#Round = 14	p1 = 0.1000	p2 = 2.0000	p3 = 0.1000	p4 = 0.1000	Value = -602.1760 
+#2d grid 
+df_grid = data.table(expand.grid(p1 = seq(0.5, 1.5, by = 0.5), p2 = seq(0.5, 1.5, by = 0.5)))
+
+df_res = ldply(seq(nrow(df_grid)), function(i){
+  c(i, objective_function(c(0, 10), c(df_grid$p1[i], df_grid$p2[i])))
+})
+setDT(df_res)
+ggplot(cbind(df_res, df_grid)[order(V3)], aes(p1, p2, fill = V3, label = sprintf('%.1f', V3))) + geom_tile() + geom_text()
+
+#2d random guess
+df_res = ldply(seq(10), function(i){
+  my_power_mult = runif(length(power_v), 0.2, 2.0)
+  c(i, objective_function(power_v, my_power_mult), my_power_mult)
+})
+setDT(df_res)
 
 ```

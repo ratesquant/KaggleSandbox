@@ -1,0 +1,159 @@
+---
+title: "Zwift Optimization"
+output: html_document
+date: "2024-12-30"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(dev = "png", dev.args = list(type = "cairo-png"), warning = FALSE, message = FALSE)
+
+library(jsonlite)
+library(stringi)
+library(lubridate)
+library(data.table)
+library(ggplot2)
+library(zoo)
+library(plyr)
+library(plotly)
+library(gam)
+library(knitr)
+library(FITfileR)
+library(forcats)
+library(plotly)
+library(gridExtra)
+library(ggrepel)
+library(deSolve)
+
+
+working_folder = 'D:/Github/KaggleSandbox'
+
+source(file.path(working_folder, 'Utils/common.R'))
+```
+
+## Bike Power optimization 
+m = 88.33416, c_roll = 0.0020, c_drag = 0.3152741
+```{r bike_power_optimization, echo=FALSE, eval = FALSE}
+
+
+mph = 3.6 / 1.60934 # m/sec to mph
+
+#Grade Variable Power ------------ 
+hump = function(x, x1, x2, x3, x4, grade){
+  y = x
+  y[x<=x1] = 0
+  y[x>x4] = 0
+  y[x>x1 & x<=x2] = (x[x>x1 & x<=x2] - x1) * grade
+  y[x>x2 & x<=x3] = (x2 - x1) * grade
+  y[x>x3 & x<=x4] = (x2 - x1) * grade - (x[x>x3 & x<=x4] - x3) * grade
+  return (y)
+}
+  
+df_sim = data.table(distance = seq(0, 6e3))
+#df_sim[, altitude := 10*exp(- (distance - 500) * (distance -500) / 5000)]
+df_sim[, altitude := hump(distance, 1e3, 2e3, 3e3, 4e3, 0.05)]
+
+df_sim[order(distance), grade     := (shift(altitude,-1) - shift(altitude))/(shift(distance,-1) - shift(distance))]
+ggplot(df_sim, aes(distance, grade ))     + geom_line()
+ggplot(df_sim, aes(distance, altitude ))     + geom_line() 
+
+parameters <- c(m = 87.61159, c_roll = 0.0025, c_drag = 0.3086613, g_freefall = 9.8, rho_air = 1.225)
+state      <- c(X = 0, V = 0)
+times      <- seq(0, 1000, by = 1)
+
+bike_ride_grade <- function(t, state, parameters, grade_d, grade_v, power) {
+  with(as.list(c(state, parameters)), {
+    grade = approx(grade_d, grade_v, X, yleft = 0, yright = 0, rule=2)$y
+    alpha = asin(grade)
+    dX <-  V
+    dV <-   ( (power /m) / pmax(0.01, abs(V) ) - 0.5 * rho_air * V * V * c_drag / m -  g_freefall * sin(alpha) - g_freefall * cos(alpha) * c_roll )
+    list(c(dX, dV))
+  })
+}
+
+out <- ode(y = state, times = times, func = function(t, state, parameters) bike_ride_grade(t, state, parameters, df_sim$distance, df_sim$grade, 200), parms = parameters)
+res = data.table(out)
+res[V<0, V:=0 ]
+res[, grade    := approx(df_sim$distance, df_sim$grade, X, yleft = 0, yright = 0, rule=2)$y]
+res[, altitude := approx(df_sim$distance, df_sim$altitude, X, yleft = 0, yright = 0, rule=2)$y]
+
+ggplot(res, aes(X, V))     + geom_line()
+ggplot(res[res$X<=max(df_sim$distance)], aes(X, power))     + geom_line() + geom_line(aes(X, altitude), color = 'blue') + geom_vline(xintercept = c(1e3, 2e3, 3e3, 4e3), linetype = 'dashed')
+approx(res$X, res$time, max(df_sim$distance), rule=2)$y #710.0533 sec, at 200W, 142kJ
+#728.7772 sec, at 190W
+#710.0533 sec, at 200W
+#692.9225 sec, at 210W
+#677.1774 sec, at 220W
+
+#power as function of speed
+objective_function <- function(power_v, power_lut) {
+
+  bike_ride <-function(power_mult) {
+      bike_ride_parametric_power <- function(t, state, parameters, grade_d, grade_v, power_v, power_lut) {
+      with(as.list(c(state, parameters)), {
+        grade = approx(grade_d, grade_v, X, rule=2)$y
+        alpha = asin(grade)
+        power = 200*power_mult * approx(power_v, power_lut, V, rule=2)$y
+        dX <-  V
+        dV <-   ( (power/m) / pmax(0.01, abs(V) ) - 0.5 * rho_air * V * V * c_drag / m -  g_freefall * sin(alpha) - g_freefall * cos(alpha) * c_roll )
+        list(c(dX, dV))
+      })
+    }
+    out <- ode(y = state, times = times, func = function(t, state, parameters) bike_ride_parametric_power(t, state, parameters, df_sim$distance, df_sim$grade, power_v, power_lut), parms = parameters)
+    res = data.table(out)
+    res[, power := 200*power_mult * approx(power_v, power_lut, V, rule=2)$y]
+    total_energy = res[res$X<=max(df_sim$distance), sum(power)]
+    c(mean(res$power, na.rm = TRUE), approx(res$X, res$time, max(df_sim$distance), rule=2)$y, power_mult, total_energy)
+  }
+  
+  power_mult = uniroot(function(x) bike_ride(x)[4] - 142e3, interval = c(0.1, 10) )$root
+  
+  return (bike_ride(power_mult))
+}
+#res = res[X<=max(df_sim$distance)]
+power_v   = c(0, 5, 8, 10,  15)
+power_lut = c(2.0, 2.0, 1.9740906, 0.1000000, 0.1000000) #2.193733e+00
+#power_lut = rep(200, length(power_v))
+objective_function(power_v, power_lut) #598 sec
+
+#approx(c(0, 10), c(250, 100), power_v, rule=2)$y
+
+objective_function(c(0, 20), c(200, 200)) #flat 200W 710 sec
+objective_function(c(0, 20), c(220, 220)) #flat 220W 710 sec
+objective_function(c(0, 10), c(250, 100)) #667.346504 with 200W average
+
+plot(power_v * mph, 3.633647e+00 * power_lut * 200)
+
+optim(power_lut, function(x) objective_function(power_v, x)[2], method  = "Nelder-Mead", control = list(trace = TRUE, maxit = 30)) #2.000866
+optim(power_lut, function(x) objective_function(power_v, x)[2], method  = "L-BFGS-B", lower = rep(100, length(power_v)), upper =  rep(600, length(power_v)), control = list(trace = 2, maxit = 40)) #2.000866
+
+library(dfoptim)
+hjkb(power_lut, function(x) objective_function(power_v, x)[2], lower = 0.1, upper = 2.0)
+
+library(rBayesianOptimization)
+objective_function_ex <- function(p1, p2, p3, p4) {
+  list(Score = -objective_function(power_v, c(p1, p2, p3, p4))[2], Pred = 0)
+}
+OPT_Res <- BayesianOptimization(objective_function_ex,
+                                bounds = list(p1 = c(0.1, 2.0), p2 = c(0.1, 2.0), p3 = c(0.1, 2.0), p4 = c(0.1, 2.0)),
+                                init_points = 10, n_iter = 10, verbose = TRUE)
+#Round = 14	p1 = 0.1000	p2 = 2.0000	p3 = 0.1000	p4 = 0.1000	Value = -602.1760 
+#2d grid 
+df_grid = data.table(expand.grid(p1 = seq(0.5, 1.5, by = 0.5), p2 = seq(0.5, 1.5, by = 0.5)))
+
+df_res = ldply(seq(nrow(df_grid)), function(i){
+  c(i, objective_function(c(0, 10), c(df_grid$p1[i], df_grid$p2[i])))
+})
+setDT(df_res)
+ggplot(cbind(df_res, df_grid)[order(V3)], aes(p1, p2, fill = V3, label = sprintf('%.1f', V3))) + geom_tile() + geom_text()
+
+#2d random guess
+df_res = ldply(seq(10), function(i){
+  my_power_mult = runif(length(power_v), 0.2, 2.0)
+  c(i, objective_function(power_v, my_power_mult), my_power_mult)
+})
+setDT(df_res)
+
+```
+

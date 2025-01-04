@@ -107,6 +107,8 @@ df[order(timestamp),hr_3m_avg  := frollmean(heart_rate, 3*60, na.rm=TRUE), by = 
 df[order(timestamp),hr_5m_avg  := frollmean(heart_rate, 5*60, na.rm=TRUE), by = .(file)]
 df[order(timestamp),hr_10m_avg := frollmean(heart_rate, 10*60, na.rm=TRUE), by = .(file)]
 df[order(timestamp),hr_20m_avg := frollmean(heart_rate, 20*60, na.rm=TRUE), by = .(file)]
+df[order(timestamp),hr_1m_change := as.double(heart_rate -shift(heart_rate, 60)), by = .(file)]
+df[order(timestamp),hr_2m_change := as.double(heart_rate -shift(heart_rate, 60 * 2)), by = .(file)]
 
 #df[order(timestamp),hr_eq := 1.064e+02 + 2.224e-01 * power_70s_ewma , by = .(date)]
 #df[,hr_eq := 154.2635 -  0.4732869 * pmax(0,       211.8767 - power_70s_ewma) + 0.07484887 * pmax(0, power_70s_ewma -       211.8767) , by = .(date)]
@@ -119,7 +121,6 @@ df[,hr_eq := 145.5845
   -  0.01809875 * pmax(0,         475.234 -       cum_power) 
   + 0.004428587 * pmax(0,       cum_power -         475.234)   , by = .(file)]
 
-   
 #kable(df[,.(.N), .(file)])
  
 df_agg = df[,.(.N, time=.N/60, kcal = 4.023349 * sum(power, na.rm= TRUE)/4200, date = max(date),
@@ -136,6 +137,8 @@ df_agg = df[,.(.N, time=.N/60, kcal = 4.023349 * sum(power, na.rm= TRUE)/4200, d
       hr_avg = mean(heart_rate, na.rm= TRUE),
       power_hr_ratio =  mean(power, na.rm= TRUE)/mean(heart_rate, na.rm= TRUE),
       power_hr_ratio_10m =  mean(power_10m_avg, na.rm= TRUE)/mean(hr_10m_avg,na.rm= TRUE),
+      hr_1m_drop =  -min(hr_1m_change, na.rm= TRUE),
+      hr_2m_drop =  -min(hr_2m_change, na.rm= TRUE),
       hr_max = max(heart_rate), 
       cadence = mean(cadence),
       dist_m = max(distance)/1609.34, 
@@ -144,6 +147,9 @@ df_agg = df[,.(.N, time=.N/60, kcal = 4.023349 * sum(power, na.rm= TRUE)/4200, d
 df_agg = df_agg[N>300, ]
 
 kable(df_agg)
+
+ggplot(df_agg, aes(date, hr_1m_drop, label = sprintf('%d', floor(hr_1m_drop) ) ))           + geom_point() + geom_smooth(method = 'loess') + geom_text_repel(size = 3)
+ggplot(df_agg, aes(date, hr_2m_drop, label = sprintf('%d', floor(hr_2m_drop) ) ))           + geom_point() + geom_smooth(method = 'loess') + geom_text_repel(size = 3)
 
 ggplot(df_agg, aes(date, time, label = sprintf('%d', floor(time) ) ))           + geom_point() + geom_smooth(method = 'loess') + geom_text_repel(size = 3)
 ggplot(df_agg, aes(date, power_max_1, label = sprintf('%.1f', power_max_1), size = time, weight = time ))           + geom_point(alpha = 0.6) + geom_smooth(method = 'loess') + geom_text_repel(size = 3) + theme(legend.position = "None")
@@ -517,6 +523,7 @@ df_phys = df[date == '2024-12-06',]
 df_phys = df[date == '2024-12-19',]
 df_phys = df[date == '2024-12-22',]
 df_phys = df[date == '2024-12-26',]
+df_phys = df[date == '2024-12-30',]
 
 #remove jumps
 df_phys[order(t), altitude_delta := altitude - shift(altitude), by =.(date) ]
@@ -528,7 +535,7 @@ ggplotly(ggplot(df_phys, aes(distance, altitude )) + geom_line() +  geom_line( a
 
 parameters <- c(m = 88.33416, c_roll = 0.0020, c_drag = 0.3152741)
 state      <- c(X = df_phys$distance[1], V = df_phys$speed[1])
-times      <- seq(0, 60*55, by = 1)
+times      <- seq(0, 60*30, by = 1)
 
 eq_power <- function(V, grade) {
   alpha = asin(grade)

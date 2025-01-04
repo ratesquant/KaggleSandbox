@@ -27,6 +27,7 @@ library(ggrepel)
 library(deSolve)
 library(dfoptim)
 library(DEoptim)
+library(optimx)
 
 
 working_folder = 'D:/Github/KaggleSandbox'
@@ -160,11 +161,10 @@ df_res[order(V3)]
 
 ```
 
-## Bike Power optimization, power as function of X
+## Bike Power optimization, power as function of X.
 m = 88.33416, c_roll = 0.0020, c_drag = 0.3152741
 best solution so far is 588 sec with 31 nodes
 ```{r bike_power_optimization, echo=FALSE, eval = FALSE}
-
 mph = 3.6 / 1.60934 # m/sec to mph
 
 #Grade Variable Power ------------ 
@@ -178,9 +178,11 @@ hump = function(x, x1, x2, x3, x4, grade){
   return (y)
 }
   
-df_sim = data.table(distance = seq(0, 6e3))
+df_sim = data.table(distance = seq(0, 10e3))
 #df_sim[, altitude := 10*exp(- (distance - 500) * (distance -500) / 5000)]
-df_sim[, altitude := hump(distance, 1e3, 2e3, 3e3, 4e3, 0.05)]
+#df_sim[, altitude := hump(distance, 1e3, 2e3, 3e3, 4e3, 0.05)]
+
+df_sim[, altitude := hump(distance, 1e3, 2e3, 3e3, 4e3, 0.05) + 1.1*hump(distance, 3e3, 4e3, 5e3, 6e3, 0.05)]
 
 df_sim[order(distance), grade     := (shift(altitude,-1) - shift(altitude))/(shift(distance,-1) - shift(distance)) ] # not correct definition of grade - this is sin(alpha), true grade is tan(alpha)
 ggplot(df_sim, aes(distance, grade ))     + geom_line()
@@ -243,7 +245,7 @@ objective_function <- function(power_x, power_v) {
   return (bike_ride(power_mult))
 }
 #res = res[X<=max(df_sim$distance)]
-power_x = seq(0, max(df_sim$distance), length.out = 121) #121
+power_x = seq(0, max(df_sim$distance), length.out = 7) #121
 power_v = rep(1, length(power_x))
 
 plot(power_x, power_v)
@@ -276,13 +278,243 @@ ggplot(res, aes(X, altitude)) + geom_line()
 #optim(power_lut, function(x) objective_function(power_v, x)[2], method  = "L-BFGS-B", lower = rep(100, length(power_v)), upper =  rep(600, length(power_v)), control = list(trace = 2, maxit = 40)) #2.000866
 
 opt_res = hjkb(power_v, function(x) objective_function(power_x, x)[2], lower = 0.1, upper = 2.0, control  = list(info = TRUE))
-opt_res = nmkb(power_v, function(x) objective_function(power_x, x)[2], lower = 0.1, upper = 2.0, control  = list(trace = TRUE))
+opt_res = nmkb(power_v, function(x) objective_function(power_x, x)[2], lower = 0.1, upper = 2.0, control  = list(trace = TRUE)) #power_v = opt_res$par
 #opt_res = DEoptim(function(x) objective_function(power_x, x)[2], lower = rep(0.1, length(power_v)), upper = rep(4.0, length(power_v)), control=list(itermax=100, parallelType=1))
 opt_res = DEoptim(function(x) objective_function(power_x, x)[2], lower = rep(0.1, length(power_v)), upper = rep(2.0, length(power_v)), control=list(itermax=1000, parallelType=1, parVar = c('power_x', 'objective_function', 'parameters', 'state', 'times', 'grade_fn', 'df_sim'), packages = c('deSolve', 'data.table') ))
 
 #fwrite( data.table(power_x, power_v = opt_res$par), file.path(working_folder, 'Zwift/opt_power.csv'))
 fwrite( data.table(power_x, power_v = opt_res$optim$bestmem), file.path(working_folder, 'Zwift/opt_power_121.csv'))
 
+top_down_optimizer <-function(power_x, power_v){
+  for(i in seq(8)) {
+    opt_res = nmkb(power_v, function(x) objective_function(power_x, x)[2], lower = 0.1, upper = 2.0, control  = list(trace = TRUE, maxfeval = 100)) #power_v = opt_res$par
+    
+    power_x_new = seq(0, max(df_sim$distance), length.out = 2*(length(power_x) - 1) + 1 ) #121
+    power_v = approx(power_x, power_v,  power_x_new, rule=2, method = 'constant')$y
+    power_x = power_x_new
+    
+    print(opt_res)
+    print(power_x)
+  }
+  return (opt_res)
+} 
+
+opt_res = top_down_optimizer(power_x, power_v)
+####
+custom_optimizer <-function(obj_func, power_v, lower, upper, maxit ){
+  
+  dx = 0.1
+  
+  best_solution = power_v
+  best_obj = obj_func(best_solution)
+  
+  for(j in seq(maxit)) {
+    for(i in seq(length(power_x))) {
+      
+      x_try = best_solution
+      x_try[i] =  pmin(x_try[i] + dx, upper)
+      obj_up = obj_func(x_try)
+      
+      if(obj_up < best_obj){
+        best_solution = x_try
+        best_obj = obj_up
+      }else if (x_try[i] > lower) {
+        x_try = best_solution
+        x_try[i] =  pmax(x_try[i] - dx, lower)
+        obj_dn = obj_func(x_try)
+        
+        if(obj_dn < best_obj){
+          best_solution = x_try
+          best_obj = obj_dn
+        }
+      }
+      print(sprintf('%d %d %f', j, i, best_obj ))
+    }
+  }
+  return (best_solution)
+}
+
+opt_res = custom_optimizer(function(x) objective_function(power_x, x)[2], power_v, lower = 0.1, upper = 4.0, maxit = 40)
+fwrite( data.table(power_x, power_v = opt_res), file.path(working_folder, 'Zwift/opt_power_custom_121.csv'))
+power_mult = objective_function(power_x, power_v)[3]
+
+df_sim[, power     :=  200 * power_mult * approx(power_x, power_v, distance, rule=2, method = 'constant')$y] # not correct definition of grade - this is sin(alpha), true grade is tan(alpha)
+df_sim[, speed := approx(res$X, res$V, distance, rule=2)$y]
+p1 = ggplot(df_sim, aes(distance, power)) + geom_line() + geom_vline(xintercept = c(1e3, 2e3, 3e3, 4e3), linetype = 'dashed')+ xlab('distance in m')
+p2 = ggplot(df_sim, aes(distance, speed * mph)) + geom_line() + geom_vline(xintercept = c(1e3, 2e3, 3e3, 4e3), linetype = 'dashed')+ xlab('distance in m') + ylab('speed, mph')
+p3 = ggplot(df_sim, aes(distance, altitude)) + geom_line() + geom_vline(xintercept = c(1e3, 2e3, 3e3, 4e3), linetype = 'dashed') + xlab('distance in m') + ylab('altitude, m')
+grid.arrange(p1, p2, p3)
+
+res[, grade    := approx(df_sim$distance, df_sim$grade, X, yleft = 0, yright = 0, rule=2)$y]
+res[, altitude := approx(df_sim$distance, df_sim$altitude, X, rule=2)$y]
+res = res[X<=max(df_sim$distance)]
+
+res[, power_drag := 0.5 * parameters['rho_air'] * V * V * V * parameters['c_drag'] ]
+res[, power_grav := parameters['g_freefall'] * grade * V * parameters['m']]
+res[, power_roll := parameters['g_freefall'] * cos(asin(grade)) * parameters['c_roll']   * V * parameters['m']]
+
+res[, energy_kinetic   := 0.5*parameters['m'] * V^2 ]
+res[, energy_potential  := parameters['g_freefall'] * parameters['m'] * altitude ]
+
+res[order(time), work_drag := cumsum(power_drag)]
+res[order(time), work_grav := cumsum(power_grav)]
+res[order(time), work_roll := cumsum(power_roll)]
+res[order(time), work := cumsum(power)]
+
+ggplot(res) + 
+  geom_line( aes(X, power_drag, color = 'drag power')) +  
+  geom_line( aes(X, power_grav, color = 'gravity power')) + 
+  geom_line( aes(X, power_roll, color = 'roll power')) +
+  geom_line( aes(X, power, color = 'power')) + 
+  geom_line( aes(X, power_drag + power_grav + power_roll, color = 'drag + gravity + roll')) + 
+  geom_vline(xintercept = c(1e3, 2e3, 3e3, 4e3), linetype = 'dashed')+ xlab('distance in m') + ylab('power, W')
+
+
+
+```
+
+
+## Bike Power optimization, power as function of X,  complex profile
+m = 88.33416, c_roll = 0.0020, c_drag = 0.3152741
+
+#1.5 max multiplier
+1190.496 sec, at 200W, 238.099 kJ
+1011.181 sec with 11 parameters 
+
+```{r bike_power_optimization, echo=FALSE, eval = FALSE}
+mph = 3.6 / 1.60934 # m/sec to mph
+
+#Grade Variable Power ------------ 
+hump = function(x, x1, x2, x3, x4, grade){
+  y = x
+  y[x<=x1] = 0
+  y[x>x4] = 0
+  y[x>x1 & x<=x2] = (x[x>x1 & x<=x2] - x1) * grade
+  y[x>x2 & x<=x3] = (x2 - x1) * grade
+  y[x>x3 & x<=x4] = (x2 - x1) * grade - (x[x>x3 & x<=x4] - x3) * grade
+  return (y)
+}
+  
+df_sim = data.table(distance = seq(0, 10e3))
+#df_sim[, altitude := 10*exp(- (distance - 500) * (distance -500) / 5000)]
+#df_sim[, altitude := hump(distance, 1e3, 2e3, 3e3, 4e3, 0.05)]
+
+df_sim[, altitude := hump(distance, 1e3, 2e3, 3e3, 4e3, 0.05) + 1.5*hump(distance, 3e3, 4e3, 5e3, 6e3, 0.05) + 1.0*hump(distance, 7e3, 8e3, 8e3, 9e3, 0.03)]
+
+df_sim[order(distance), grade     := (shift(altitude,-1) - shift(altitude))/(shift(distance,-1) - shift(distance)) ] # not correct definition of grade - this is sin(alpha), true grade is tan(alpha)
+ggplot(df_sim, aes(distance, grade ))     + geom_line()
+ggplot(df_sim, aes(distance, altitude ))     + geom_line() 
+
+grade_fn <- approxfun(df_sim$distance, df_sim$grade, yleft = 0, yright = 0, rule=2)
+#power_fn <- approxfun(signal$times, signal$import, rule = 2)
+
+parameters <- c(m = 87.61159, c_roll = 0.0025, c_drag = 0.3086613, g_freefall = 9.81, rho_air = 1.225)
+state      <- c(X = 0, V = 0)
+times      <- seq(0, 1300, by = 1)
+
+bike_ride_grade <- function(t, state, parameters, power) {
+  with(as.list(c(state, parameters)), {
+    grade = grade_fn(X)
+    cos_alpha = sqrt(1 - grade * grade) # we assume that grade is defined as sin(alpha)
+    dX <-  V
+    dV <-   ( (power /m) / pmax(0.01, abs(V) ) - 0.5 * rho_air * V * V * c_drag / m -  g_freefall * grade - g_freefall * cos_alpha * c_roll )
+    list(c(dX, dV))
+  })
+}
+
+out <- ode(y = state, times = times, func = function(t, state, parameters) bike_ride_grade(t, state, parameters, 200), parms = parameters)
+res = data.table(out)
+res[, grade    := approx(df_sim$distance, df_sim$grade,    X, yleft = 0, yright = 0, rule=2)$y]
+res[, altitude := approx(df_sim$distance, df_sim$altitude, X, yleft = 0, yright = 0, rule=2)$y]
+
+ggplot(res[res$X<=max(df_sim$distance)], aes(X, mph * V))     + geom_line()
+approx(res$X, res$time, max(df_sim$distance), rule=2)$y #1190.496 sec, at 200W, 238.099 kJ
+
+#power as function of speed
+objective_function <- function(power_x, power_v) {
+
+  bike_ride <-function(power_mult) {
+      bike_ride_parametric_power <- function(t, state, parameters, power_x, power_v) {
+      with(as.list(c(state, parameters)), {
+       grade = grade_fn(X)
+        cos_alpha = sqrt(1 - grade * grade) # we assume that grade is defined as sin(alpha)
+        power = 200 * power_mult * approx(power_x, power_v, X, rule=2, method = 'constant')$y
+        dX <-  V
+        dV <-   ( (power/m) / pmax(0.01, abs(V) ) - 0.5 * rho_air * V * V * c_drag / m -  g_freefall * grade - g_freefall * cos_alpha * c_roll )
+        list(c(dX, dV))
+      })
+    }
+    out <- ode(y = state, times = times, func = function(t, state, parameters) bike_ride_parametric_power(t, state, parameters, power_x, power_v), parms = parameters)
+    res = data.table(out)
+    res[, power := 200*power_mult * approx(power_x, power_v, X, rule=2,  method = 'constant')$y]
+    total_energy = res[res$X<=max(df_sim$distance), sum(power)]
+    c(mean(res$power, na.rm = TRUE), approx(res$X, res$time, max(df_sim$distance), rule=2)$y, power_mult, total_energy)
+  }
+  
+  power_mult = uniroot(function(x) bike_ride(x)[4] - 238.099e3, interval = c(0.5, 2), extendInt = 'yes' )$root
+  
+  return (bike_ride(power_mult))
+}
+#res = res[X<=max(df_sim$distance)]
+power_x = seq(0, max(df_sim$distance), length.out = 11) #121
+power_v = rep(1, length(power_x))
+
+plot(power_x, power_v)
+
+#read form file
+opt_res = fread(file.path(working_folder, 'Zwift/opt_power.csv'))
+power_x = opt_res$power_x 
+power_v = opt_res$power_v 
+
+#615.8855
+#power_v = c(1.9760593, 3.5556783, 1.6203171, 0.1409225, 1.3798462, 0.8666064)
+
+#best solution
+#588.576446
+objective_function(power_x, power_v) #1191 sec
+objective_function(c(0, 1e3), c(1, 1)) # 122.0462 sec 
+
+df_sim[, power     :=  200 *  9.987579e-01 * approx(power_x, power_v, distance, rule=2)$y] 
+res[,    power     :=  200 *  9.987579e-01 * approx(power_x, power_v, X, rule=2)$y]
+
+ggplot(df_sim, aes(distance, power)) + geom_line() + geom_vline(xintercept = c(1e3, 2e3, 3e3, 4e3), linetype = 'dashed')
+
+res[, grade    := approx(df_sim$distance, df_sim$grade,    X, yleft = 0, yright = 0, rule=2)$y]
+res[, altitude := approx(df_sim$distance, df_sim$altitude, X, yleft = 0, yright = 0, rule=2)$y]
+
+ggplot(res, aes(X, power)) + geom_line() + geom_vline(xintercept = c(1e3, 2e3, 3e3, 4e3), linetype = 'dashed') + geom_line(aes(X, altitude), color = 'blue')
+ggplot(res, aes(X, V)) + geom_line()
+ggplot(res, aes(X, altitude)) + geom_line()
+
+#using optimx
+ans8<-optimx(power_v,fn=function(x) objective_function(power_x, x)[2], control=list(all.methods=TRUE, save.failures=TRUE, trace=0), gs=10)
+
+#optim(power_v, function(x) objective_function(power_v, x)[2], method  = "Nelder-Mead", control = list(trace = TRUE, maxit = 30)) #2.000866
+#optim(power_lut, function(x) objective_function(power_v, x)[2], method  = "L-BFGS-B", lower = rep(100, length(power_v)), upper =  rep(600, length(power_v)), control = list(trace = 2, maxit = 40)) #2.000866
+
+opt_res = hjkb(power_v, function(x) objective_function(power_x, x)[2], lower = 0.1, upper = 2.0, control  = list(info = TRUE))
+opt_res = nmkb(power_v, function(x) objective_function(power_x, x)[2], lower = 0.1, upper = 2.0, control  = list(trace = TRUE)) #power_v = opt_res$par
+#opt_res = DEoptim(function(x) objective_function(power_x, x)[2], lower = rep(0.1, length(power_v)), upper = rep(4.0, length(power_v)), control=list(itermax=100, parallelType=1))
+opt_res = DEoptim(function(x) objective_function(power_x, x)[2], lower = rep(0.1, length(power_v)), upper = rep(2.0, length(power_v)), control=list(itermax=1000, parallelType=1, parVar = c('power_x', 'objective_function', 'parameters', 'state', 'times', 'grade_fn', 'df_sim'), packages = c('deSolve', 'data.table') ))
+
+#fwrite( data.table(power_x, power_v = opt_res$par), file.path(working_folder, 'Zwift/opt_power.csv'))
+fwrite( data.table(power_x, power_v = opt_res$optim$bestmem), file.path(working_folder, 'Zwift/opt_power_121.csv'))
+
+top_down_optimizer <-function(power_x, power_v){
+  for(i in seq(8)) {
+    opt_res = nmkb(power_v, function(x) objective_function(power_x, x)[2], lower = 0.1, upper = 2.0, control  = list(trace = TRUE, maxfeval = 100)) #power_v = opt_res$par
+    
+    power_x_new = seq(0, max(df_sim$distance), length.out = 2*(length(power_x) - 1) + 1 ) #121
+    power_v = approx(power_x, power_v,  power_x_new, rule=2, method = 'constant')$y
+    power_x = power_x_new
+    
+    print(opt_res)
+    print(power_x)
+  }
+  return (opt_res)
+} 
+
+opt_res = top_down_optimizer(power_x, power_v)
 ####
 custom_optimizer <-function(obj_func, power_v, lower, upper, maxit ){
   
@@ -365,9 +597,14 @@ rosenbrock <- function(x){
   }
 par0 <- rep(0, 10)
 
-hjkb(par0, rosenbrock, lower = -2, upper = 2, control  = list(info = TRUE))
-nmkb(par0, rosenbrock, lower = -2, upper = 2, control  = list(trace = TRUE))
-DEoptim(rosenbrock, lower = rep(-2, length(par0)), upper = rep(2, length(par0)), control=list(itermax=1000))
+hjkb(par0, rosenbrock, lower = -2, upper = 2, control  = list(info = TRUE)) #7420
+nmkb(par0, rosenbrock, lower = -2, upper = 2, control  = list(trace = TRUE)) #2001
+DEoptim(rosenbrock, lower = rep(-2, length(par0)), upper = rep(2, length(par0)), control=list(itermax=1000)) #nfeval - 100100
 DEoptim(rosenbrock, lower = rep(-2, length(par0)), upper = rep(2, length(par0)), control=list(itermax=1000, parallelType=1))
+
+ans8<-optimx(par0,fn=rosenbrock, control=list(all.methods=TRUE, save.failures=TRUE, trace=0),  lower = -2, upper = 2)
+
+optimx(par0,fn=rosenbrock, method = 'bobyqa', control=list(trace=1),  lower = -2, upper = 2)
+
 
 ```

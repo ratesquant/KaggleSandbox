@@ -19,6 +19,7 @@ library(caret)
 library(gridExtra)
 
 working_folder = 'D:/Github/KaggleSandbox'
+working_folder = '~/source/github/KaggleSandbox/'
 
 source(file.path(working_folder, 'Utils/common.R'))
 source(file.path(working_folder, 'Utils/rbf_utils.R'))

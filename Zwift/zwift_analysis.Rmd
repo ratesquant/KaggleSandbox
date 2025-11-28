@@ -40,16 +40,6 @@ foreach(name = zwift_fit_files, .combine=rbind ) %do% {
 }
 ```
 
-## Convert to CSV
-https://github.com/grimbough/FITfileR
-```{r convert_to_csv}
-zwift_fit_files = list.files(file.path(working_folder, 'Zwift/hr_comparison/'), pattern = '*.fit', full.names = TRUE)
-
-foreach(name = zwift_fit_files, .combine=rbind ) %do% {
-  df_temp <- data.frame(records(readFitFile(name)))
-  fwrite(df_temp, stri_join(name, ".csv"))
-}
-```
 
 ## strava files
 ```{r convert_to_csv}

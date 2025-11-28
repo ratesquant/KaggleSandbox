@@ -78,11 +78,14 @@ df[, date :=as.Date(stri_sub(file, 1, to=10 ))]
 ```
 ## Report
 ```{r report, fig.width = 14, fig.height = 8, dpi =  240, warning=FALSE}
+hr_max = 180
+
 df[heart_rate==0, heart_rate:=NA ]
 df[order(timestamp), heart_rate:=nafill(heart_rate, type="locf", fill=NA, nan=NA), by = .(file)]
 df[order(timestamp),power_5m_sd := frollapply(power, 5*60, sd, na.rm=TRUE), by = .(file)]
 df[order(timestamp),heart_rate_5m_sd := frollapply(heart_rate, 5*60, sd, na.rm=TRUE), by = .(file)]
 df[, power_bkt := cut(power, breaks = c(0, 150, 200, 250, 300, 400, 1000), ordered_result = TRUE, include.lowest = TRUE)]
+df[, heart_rate_bkt := cut(heart_rate, breaks = c(0, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)*hr_max, ordered_result = TRUE, include.lowest = TRUE)]
 
 df[order(timestamp), altitude_smooth := frollmean(altitude, 5, align = 'center'), by =.(file) ]
 df[order(timestamp), grade     := (shift(altitude_smooth,-1) - shift(altitude_smooth))/(shift(distance,-1) - shift(distance)), by =.(file) ]
@@ -110,6 +113,25 @@ df[order(timestamp),hr_20m_avg := frollmean(heart_rate, 20*60, na.rm=TRUE), by =
 df[order(timestamp),hr_1m_change := as.double(heart_rate -shift(heart_rate, 60)), by = .(file)]
 df[order(timestamp),hr_2m_change := as.double(heart_rate -shift(heart_rate, 60 * 2)), by = .(file)]
 
+
+### monthly summary 
+df[, month_date := date -day(date) + 1]
+
+df_monthly = df[, .(time_hours = .N/3600, 
+                    hr_blue_pct  = mean(heart_rate < 0.7*hr_max, na.rm= TRUE), 
+                    hr_green_pct  = mean(heart_rate < 0.8*hr_max & heart_rate >= 0.7*hr_max, na.rm= TRUE), 
+                    hr_yellow_pct = mean(heart_rate < 0.9*hr_max & heart_rate >= 0.8*hr_max, na.rm= TRUE),
+                    hr_red_pct    = mean( heart_rate >= 0.9*hr_max, na.rm= TRUE),
+                    power_ftp = 0.95*max(power_20m_avg, na.rm=TRUE),
+                    power_max_1  = max(power_1m_avg, na.rm=TRUE)), by =.(month_date)]
+
+df_monthly_m =  melt(df_monthly[,.(month_date, hr_green_pct, hr_yellow_pct, hr_red_pct, hr_blue_pct)], id.vars = 'month_date')
+ggplot(df_monthly_m, aes(month_date, value, group = variable, color = variable )) + geom_line() + geom_point() + scale_color_manual(values = c('green', 'yellow', 'red', 'blue')) + ggtitle('HR zones')
+ggplot(df_monthly_m, aes(month_date, value, group = variable, fill = variable )) + geom_area() + scale_fill_manual(values = c('green', 'yellow', 'red', 'blue')) + ggtitle('HR zones')
+ggplot(df_monthly, aes(month_date, time_hours)) + geom_line() + geom_point()
+ggplot(df_monthly, aes(month_date, power_ftp)) + geom_line() + geom_point()
+ggplot(df_monthly, aes(month_date, power_max_1)) + geom_line() + geom_point()
+
 #df[order(timestamp),hr_eq := 1.064e+02 + 2.224e-01 * power_70s_ewma , by = .(date)]
 #df[,hr_eq := 154.2635 -  0.4732869 * pmax(0,       211.8767 - power_70s_ewma) + 0.07484887 * pmax(0, power_70s_ewma -       211.8767) , by = .(date)]
 df[order(timestamp), cum_power := cumsum(1e-3*power), by =.(file)]  
@@ -125,6 +147,10 @@ df[,hr_eq := 145.5845
  
 df_agg = df[,.(.N, time=.N/60, kcal = 4.023349 * sum(power, na.rm= TRUE)/4200, date = max(date),
       power_avg = mean(power, na.rm= TRUE),
+      
+      hr_green_pct  = mean(heart_rate < 0.8*hr_max & heart_rate > 0.7*hr_max, na.rm= TRUE),
+      hr_green_time = sum(heart_rate < 0.8*hr_max & heart_rate > 0.7*hr_max, na.rm= TRUE),
+      
       power_max = max(power, na.rm= TRUE), 
       stop_time = sum(power<1), 
       power_max_1  = max(power_1m_avg, na.rm=TRUE),
@@ -148,8 +174,11 @@ df_agg = df_agg[N>300, ]
 
 kable(df_agg)
 
-ggplot(df_agg, aes(date, hr_1m_drop, label = sprintf('%d', floor(hr_1m_drop) ) ))           + geom_point() + geom_smooth(method = 'loess') + geom_text_repel(size = 3)
-ggplot(df_agg, aes(date, hr_2m_drop, label = sprintf('%d', floor(hr_2m_drop) ) ))           + geom_point() + geom_smooth(method = 'loess') + geom_text_repel(size = 3)
+ggplot(df_agg, aes(date, hr_1m_drop, label = sprintf('%.1f', hr_1m_drop ) ))           + geom_point() + geom_smooth(method = 'loess') + geom_text_repel(size = 3)
+ggplot(df_agg, aes(date, hr_2m_drop, label = sprintf('%.1f', hr_2m_drop ) ))           + geom_point() + geom_smooth(method = 'loess') + geom_text_repel(size = 3)
+ggplot(df_agg, aes(date, hr_green_time, label = sprintf('%.0f', hr_green_time ), size = time, weight = time ))         + geom_point() + geom_smooth(method = 'loess') + geom_text_repel(size = 3)
+ggplot(df_agg, aes(date, hr_green_pct, label = sprintf('%.2f', hr_green_pct ), weight = time ))           + geom_point() + geom_smooth(method = 'loess') + geom_text_repel(size = 3)
+
 
 ggplot(df_agg, aes(date, time, label = sprintf('%d', floor(time) ) ))           + geom_point() + geom_smooth(method = 'loess') + geom_text_repel(size = 3)
 ggplot(df_agg, aes(date, power_max_1, label = sprintf('%.1f', power_max_1), size = time, weight = time ))           + geom_point(alpha = 0.6) + geom_smooth(method = 'loess') + geom_text_repel(size = 3) + theme(legend.position = "None")
@@ -241,7 +270,7 @@ ggplot(dfs) + geom_line(aes(t/60, power)) + geom_line(aes(t/60, power_3m_avg), c
 ggplot(dfs) + geom_line(aes(t/60, heart_rate, color = 'heart_rate')) + geom_line(aes(t/60, hr_eq, color = 'hr_eq')) + facet_wrap(~file) + scale_color_manual(values = c('black', 'red')) + 
   geom_hline(yintercept = c(120, 140, 160), linetype = 'dashed', color = 'grey')
 
-ggplot(dfs) + geom_density(aes(heart_rate), adjust = 0.3) + facet_wrap(~file) + geom_vline(xintercept = c(120, 140, 160), linetype = 'dashed', color = 'grey')
+ggplot(dfs) + geom_density(aes(heart_rate), adjust = 0.3) + facet_wrap(~file) + geom_vline(xintercept = c(0.7, 0.8, 0.9)*hr_max, linetype = 'dashed', color = 'grey')
 ggplot(dfs) + geom_density(aes(power_10m_avg), adjust = 0.3) + facet_wrap(~file)
 ggplot(dfs) + geom_density(aes(power_20m_avg), adjust = 0.3) + facet_wrap(~file)
 ggplot(dfs) + geom_density(aes(power_100s_ewma/heart_rate), adjust = 0.3) + facet_wrap(~file)

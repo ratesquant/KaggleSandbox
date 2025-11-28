@@ -14,6 +14,10 @@ library(dfoptim)
 library(pso)
 library(optimx)
 library(DEoptim)
+library(proxy)
+library(MASS)
+library(data.table)
+library(ggplot2)
 
 # YMMV, MLSL
 library(nloptr)
@@ -48,6 +52,62 @@ res = optim(c(3), objective_1d, method = "Brent", lower = -6, upper = 6, control
 ```
 
 
+```{r rbf_optim}
+rbf_optim <- function(x0, obj_fun, lower=-2, upper=2, max_it = 100){
+
+  rbf_linear_kernel <- function(x) x
+  rbf_sqrt_kernel <- function(x) sqrt(x)
+  rbf_cubic_kernel <- function(x) x*x*x
+  kernel_fun <- rbf_cubic_kernel
+  #kernel_fun <- rbf_sqrt_kernel
+  
+  x0 <- c(0, 0)
+  n = length(x0) #number of parameters
+  n_mult = 10
+  xr = runif(n_mult*n * n, min = lower, max = upper)
+  
+  XM = matrix(c(x0, xr), nrow = n_mult*n + 1, byrow = TRUE)
+  Y = apply(XM, 1, obj_fun)
+    
+  for(i in 1:max_it) {
+    
+    M = cbind(1, kernel_fun(dist(XM, XM, method = 'L2')) ) 
+    #w = ginv(t(M) %*% M) %*% t(M) %*% Y #least squares
+    w = ginv(M) %*% Y  #solve
+    
+    if(FALSE){
+      nodes = X[1:3, ]
+      M = kernel_fun(dist(X, nodes, method = 'L2'))
+      pred = w[1] +  w[-1] %*% M
+    
+      xt = data.table( expand.grid(x = seq(-2, 2, by =0.1), y = seq(-2, 2, by =0.1)) )
+      xt[, f:= apply(xt, 1, obj_fun)]
+      M = kernel_fun(dist(XM, xt[,.(x, y)], method = 'L2'))
+      xt[, rbf:=as.numeric(w[1] +  w[-1] %*% M) ]
+      
+      ggplot(xt, aes(x, y, fill = asinh(f) )) + geom_tile()
+      ggplot(xt, aes(x, y, fill = asinh(rbf) )) + geom_tile() + geom_point(data = data.frame(XM), aes(X1, X2), color = 'red', inherit.aes = FALSE)+ scale_fill_distiller(palette ='YlGnBu')
+      ggplot(xt, aes(x, y, fill = asinh(f) )) + geom_tile()+ geom_point(data = data.frame(XM, Y), aes(X1, X2 ), color = 'red' , inherit.aes = FALSE) + scale_fill_distiller(palette ='YlGnBu')
+      #ggplot(xt, aes(x, y, fill = rbf )) + geom_tile() + geom_point(data = data.frame(XM), aes(X1, X2), color = 'red', inherit.aes = FALSE)
+    }
+    
+    #rbf solver
+    #XM[which.min(Y),]
+    #XM[sample.int(nrow(XM), 1),]
+    opt_par = optim(runif(n, min = lower, max = upper), function(x)  w[1] +  w[-1] %*% kernel_fun(dist(XM, matrix(x, nrow = 1), method = 'L2')) , method = 'L-BFGS-B', lower = lower, upper = upper)
+    
+    XM = rbind(XM, opt_par$par)
+    Y = c(Y, obj_fun(opt_par$par))
+    
+    print(sprintf('%d %f [%f %f]', i, obj_fun(opt_par$par), opt_par$par[1], opt_par$par[2]))
+  }
+  print(XM[which.min(Y),])
+  return (XM[which.min(Y),])
+}
+obj_fun <- function(x){  (1 - x[1])^2 + 100 * (x[2] - x[1] * x[1])^2  } # solution is c(1, 1)
+
+```
+
 ## 2D
 
 ```{r opt_2d}
@@ -75,7 +135,9 @@ res = mads(init_params, objective_2d,  lower=-10, upper=10, control = list(trace
 res = nmk(init_params, objective_2d, control = list(trace = TRUE))
 res = nmkb(init_params, objective_2d, control = list(trace = TRUE), lower=-10, upper=10) #does not work
 
-res = psoptim(init_params,objective_2d,lower=-10,upper=10,control=list(abstol=1e-8))
+nmkb(power_v, function(x) objective_function(power_x, x)[2], lower = 0.1, upper = 2.0, control  = list(trace = TRUE)) #p
+
+res = psoptim(init_params,objective_2d,lower=-10,upper=10,control=list(abstol=1e-8, trace = 1))
 
 optimx(init_params, objective_2d, control = list(all.methods = TRUE))
 optimx(init_params, objective_2d, method = "nmkb")

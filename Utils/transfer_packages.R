@@ -2,7 +2,7 @@
 .libPaths()[1] #path to the packages
 update.packages(.libPaths()[1]) #update all packages
 
-filename = file.path(Sys.getenv("HOME"), 'source/installed_packages_35.rda')
+filename = file.path(Sys.getenv("HOME"), 'installed_packages_4.4.0.rda')
 
 # run in previous R version
 tmp = installed.packages()
